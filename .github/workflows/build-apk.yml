@@ -2,7 +2,7 @@ name: Build Adownloader APK
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, rebuild-gecko-v2 ]
   workflow_dispatch:
 
 permissions:
@@ -51,10 +51,11 @@ jobs:
           path: Adownloader-v${{ env.APP_VERSION }}.apk
 
       - name: Publish rolling release
+        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="v${APP_VERSION}-build${{ github.run_number }}"
           gh release create "$TAG" "Adownloader-v${APP_VERSION}.apk" \
             --title "Adownloader v${APP_VERSION}" \
-            --notes "Hardware-accelerated browser stability build. Keeps network, Service Worker, fetch/XHR, DOM, Performance-resource and DownloadListener media detection while preventing automatic WebView crash/recreate loops."
+            --notes "GeckoView rebuild: self-contained browser engine, popup-first blocking, network WebExtension media detection and original-quality download pipeline."
