@@ -4,14 +4,14 @@ plugins {
 
 android {
     namespace = "com.adownloader.app"
-    compileSdk = 37
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.adownloader.app"
         minSdk = 29
-        targetSdk = 37
-        versionCode = 1
-        versionName = "0.1.0"
+        targetSdk = 36
+        versionCode = 2
+        versionName = "0.1.9"
     }
 
     buildTypes {
@@ -28,8 +28,4 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-}
-
-dependencies {
-    implementation("androidx.webkit:webkit:1.18.0")
 }
