@@ -1,0 +1,2 @@
+-keep class androidx.webkit.** { *; }
+-dontwarn org.chromium.**
