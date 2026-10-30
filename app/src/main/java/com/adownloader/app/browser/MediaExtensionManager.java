@@ -9,6 +9,7 @@ import org.mozilla.geckoview.GeckoResult;
 import org.mozilla.geckoview.GeckoRuntime;
 import org.mozilla.geckoview.WebExtension;
 
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -63,7 +64,9 @@ public final class MediaExtensionManager {
         Map<String, String> headers = new LinkedHashMap<>();
         JSONObject headerJson = json.optJSONObject("headers");
         if (headerJson != null) {
-            for (String key : headerJson.keySet()) {
+            Iterator<String> keys = headerJson.keys();
+            while (keys.hasNext()) {
+                String key = keys.next();
                 String value = headerJson.optString(key, "");
                 if (!value.isBlank()) headers.put(key, value);
             }
