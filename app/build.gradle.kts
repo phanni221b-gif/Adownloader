@@ -4,19 +4,30 @@ plugins {
 
 android {
     namespace = "com.adownloader.app"
-    compileSdk = 36
+    compileSdk {
+        version = release(37) {
+            minorApiLevel = 2
+        }
+    }
 
     defaultConfig {
         applicationId = "com.adownloader.app"
-        minSdk = 29
+        minSdk = 30
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.2.0"
+        versionCode = 8
+        versionName = "0.4.0"
+
+        ndk {
+            // Current release is optimized for modern Android phones such as Fold8.
+            // Removing x86/32-bit Gecko binaries cuts the APK size dramatically.
+            abiFilters += listOf(providers.gradleProperty("testAbi").getOrElse("arm64-v8a"))
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -28,8 +39,12 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    defaultConfig { testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
 }
 
 dependencies {
     implementation("org.mozilla.geckoview:geckoview:159.0.20261022150525")
+    testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
 }

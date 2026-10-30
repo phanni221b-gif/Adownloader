@@ -1,85 +1,95 @@
-const requestState = new Map();
+const NATIVE_APP = "adownloader";
+const requestHeaders = new Map();
 
-function safeHeaders(headers) {
+function lower(value) {
+  return (value || "").toLowerCase();
+}
+
+function looksLikeMedia(url, contentType, requestType) {
+  const u = lower(url);
+  const ct = lower(contentType);
+  if (u.includes(".m3u8") || u.includes(".mpd")) return true;
+  if (/\.(mp4|webm|m4v|mov|mkv|m4a|mp3|aac|ogg|opus)(\?|#|$)/i.test(u)) return true;
+  if (ct.startsWith("video/") || ct.startsWith("audio/")) return true;
+  if (ct.includes("mpegurl") || ct.includes("dash+xml")) return true;
+  return requestType === "media";
+}
+
+function headersToObject(list, mediaRequest) {
   const out = {};
-  if (!headers) return out;
-  for (const h of headers) {
-    if (!h || !h.name) continue;
-    const lower = String(h.name).toLowerCase();
-    if (lower === 'referer' || lower === 'user-agent' || lower === 'origin') {
-      out[h.name] = h.value || '';
+  if (!Array.isArray(list)) return out;
+  for (const item of list) {
+    if (!item || !item.name) continue;
+    const name = lower(item.name);
+    if (["referer", "origin", "user-agent"].includes(name) || (mediaRequest && name === "cookie")) {
+      out[item.name] = item.value || "";
     }
   }
   return out;
 }
 
-function send(payload) {
-  try {
-    browser.runtime.sendNativeMessage('adownloader', payload).catch(() => {});
-  } catch (_) {}
+function contentTypeFromHeaders(list) {
+  if (!Array.isArray(list)) return "";
+  const hit = list.find(h => h && lower(h.name) === "content-type");
+  return hit ? (hit.value || "") : "";
 }
 
-browser.webRequest.onBeforeRequest.addListener(
-  details => {
-    requestState.set(details.requestId, {
-      url: details.url,
-      pageUrl: details.originUrl || details.documentUrl || null,
-      requestHeaders: {}
-    });
-    send({
-      event: 'request',
-      url: details.url,
-      requestType: details.type,
-      page: details.originUrl || details.documentUrl || null
-    });
-  },
-  { urls: ['<all_urls>'] }
-);
+function sendCandidate(details, contentType, source) {
+  if (!details || !details.url) return;
+  if (!looksLikeMedia(details.url, contentType, details.type)) return;
+  const payload = {
+    kind: "candidate",
+    url: details.url,
+    contentType: contentType || "",
+    source: source || "webRequest",
+    pageUrl: details.originUrl || details.documentUrl || "",
+    headers: requestHeaders.get(details.requestId) || {}
+  };
+  browser.runtime.sendNativeMessage(NATIVE_APP, payload).catch(() => {});
+}
 
 browser.webRequest.onBeforeSendHeaders.addListener(
   details => {
-    const state = requestState.get(details.requestId) || { url: details.url };
-    state.requestHeaders = safeHeaders(details.requestHeaders);
-    requestState.set(details.requestId, state);
-    send({
-      event: 'request-headers',
-      url: details.url,
-      page: state.pageUrl || details.originUrl || details.documentUrl || null,
-      headers: state.requestHeaders
-    });
+    if (requestHeaders.size > 1024) requestHeaders.delete(requestHeaders.keys().next().value);
+    requestHeaders.set(details.requestId, headersToObject(details.requestHeaders, looksLikeMedia(details.url, "", details.type)));
   },
-  { urls: ['<all_urls>'] },
-  ['requestHeaders']
+  { urls: ["<all_urls>"] },
+  ["requestHeaders"]
+);
+
+browser.webRequest.onBeforeRequest.addListener(
+  details => sendCandidate(details, "", "network-request"),
+  { urls: ["<all_urls>"] }
 );
 
 browser.webRequest.onHeadersReceived.addListener(
   details => {
-    const state = requestState.get(details.requestId) || {};
-    let mime = null;
-    if (details.responseHeaders) {
-      for (const h of details.responseHeaders) {
-        if (h && h.name && String(h.name).toLowerCase() === 'content-type') {
-          mime = h.value || null;
-          break;
-        }
-      }
-    }
-    send({
-      event: 'response',
-      url: details.url,
-      page: state.pageUrl || details.originUrl || details.documentUrl || null,
-      mime: mime,
-      statusCode: details.statusCode,
-      headers: state.requestHeaders || {}
-    });
+    const contentType = contentTypeFromHeaders(details.responseHeaders);
+    sendCandidate(details, contentType, "network-response");
   },
-  { urls: ['<all_urls>'] },
-  ['responseHeaders']
+  { urls: ["<all_urls>"] },
+  ["responseHeaders"]
 );
 
-function cleanup(details) {
-  requestState.delete(details.requestId);
-}
+browser.webRequest.onCompleted.addListener(
+  details => requestHeaders.delete(details.requestId),
+  { urls: ["<all_urls>"] }
+);
 
-browser.webRequest.onCompleted.addListener(cleanup, { urls: ['<all_urls>'] });
-browser.webRequest.onErrorOccurred.addListener(cleanup, { urls: ['<all_urls>'] });
+browser.webRequest.onErrorOccurred.addListener(
+  details => requestHeaders.delete(details.requestId),
+  { urls: ["<all_urls>"] }
+);
+
+browser.runtime.onMessage.addListener((message, sender) => {
+  if (!message || message.kind !== "candidate" || !message.url) return;
+  const payload = {
+    kind: "candidate",
+    url: message.url,
+    contentType: message.contentType || "",
+    source: message.source || "page-scan",
+    pageUrl: (sender && sender.tab && sender.tab.url) || message.pageUrl || "",
+    headers: {}
+  };
+  browser.runtime.sendNativeMessage(NATIVE_APP, payload).catch(() => {});
+});

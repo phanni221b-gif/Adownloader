@@ -1,60 +1,87 @@
-name: Build Adownloader APK
-
+name: Build and verify Adownloader
 on:
   push:
-    branches: [ main ]
+    branches: [main, rebuild-gecko-v2, rebuild-gecko-release]
+  pull_request:
   workflow_dispatch:
-
 permissions:
-  contents: write
-
+  contents: read
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-
-      - name: Set up Gradle 9.6
-        uses: gradle/actions/setup-gradle@v4
+      - uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: '13114758'
+          packages: 'platform-tools build-tools;36.0.0 platforms;android-37.2'
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.6.0'
-
-      - name: Read app version
+      - name: Unit tests, lint, ARM64 release
+        run: gradle :app:testDebugUnitTest :app:lintRelease :app:assembleRelease --stacktrace
+      - name: Check packaged engine, ABI and launcher
         run: |
-          VERSION=$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1)
-          test -n "$VERSION"
-          echo "APP_VERSION=$VERSION" >> "$GITHUB_ENV"
-
-      - name: Restore launcher icon
-        run: |
-          mkdir -p app/src/main/res/mipmap-xxxhdpi
-          base64 -d ci/ic_launcher_xxxhdpi.webp.b64 > app/src/main/res/mipmap-xxxhdpi/ic_launcher.webp
-          test -s app/src/main/res/mipmap-xxxhdpi/ic_launcher.webp
-          file app/src/main/res/mipmap-xxxhdpi/ic_launcher.webp
-
-      - name: Build debug APK
-        run: gradle :app:assembleDebug --stacktrace
-
-      - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk "Adownloader-v${APP_VERSION}.apk"
-
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+          APK=app/build/outputs/apk/release/app-release-unsigned.apk
+          unzip -l "$APK" | grep 'lib/arm64-v8a/libxul.so'
+          if unzip -l "$APK" | grep -E 'lib/(x86|armeabi)'; then exit 1; fi
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | tee apk-badging.txt
+          grep "launchable-activity: name='com.adownloader.app.MainActivity'" apk-badging.txt
+          if grep -R -E 'import android.webkit|androidx.webkit|class (BrowserActivity|StableBrowserActivity|GeckoBrowserActivity)' app/src/main app/build.gradle.kts; then exit 1; fi
+          sha256sum "$APK" > unsigned.sha256
+      - uses: actions/upload-artifact@v4
         with:
-          name: Adownloader-APK-v${{ env.APP_VERSION }}
-          path: Adownloader-v${{ env.APP_VERSION }}.apk
-
-      - name: Publish rolling release
-        env:
-          GH_TOKEN: ${{ github.token }}
+          name: Adownloader-unsigned-arm64
+          path: |
+            app/build/outputs/apk/release/app-release-unsigned.apk
+            unsigned.sha256
+            apk-badging.txt
+            app/build/reports/tests/
+            app/build/reports/lint-results-release.html
+  android-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: '13114758'
+          packages: 'platform-tools build-tools;36.0.0 platforms;android-37.2'
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.0'
+      - name: Generate synthetic test media
         run: |
-          TAG="v${APP_VERSION}-build${{ github.run_number }}"
-          gh release create "$TAG" "Adownloader-v${APP_VERSION}.apk" \
-            --title "Adownloader v${APP_VERSION}" \
-            --notes "Hardware-accelerated browser stability build. Keeps network, Service Worker, fetch/XHR, DOM, Performance-resource and DownloadListener media detection while preventing automatic WebView crash/recreate loops."
+          if ! command -v ffmpeg; then sudo apt-get update && sudo apt-get install -y ffmpeg; fi
+          bash ci/generate-test-fixtures.sh
+      - name: Enable KVM for emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: gradle -PtestAbi=x86_64 :app:connectedDebugAndroidTest --stacktrace
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-integration-results
+          path: |
+            app/build/reports/androidTests/
+            app/build/outputs/androidTest-results/
+# The fixed private release key remains off GitHub. This workflow cannot publish an unsigned APK.
+
