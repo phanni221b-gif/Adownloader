@@ -17,6 +17,8 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
 import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -30,12 +32,6 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
-import androidx.webkit.JavaScriptReplyProxy
-import androidx.webkit.ServiceWorkerClientCompat
-import androidx.webkit.ServiceWorkerControllerCompat
-import androidx.webkit.WebMessageCompat
-import androidx.webkit.WebViewCompat
-import androidx.webkit.WebViewFeature
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.net.URI
@@ -52,7 +48,7 @@ class MainActivity : Activity() {
 
     private val prefs by lazy { getSharedPreferences("adownloader", MODE_PRIVATE) }
     private var adBlockEnabled: Boolean
-        get() = prefs.getBoolean("ad_block", true)
+        get() = prefs.getBoolean("ad_block", false)
         set(value) = prefs.edit().putBoolean("ad_block", value).apply()
     private var popupConfirmEnabled: Boolean
         get() = prefs.getBoolean("popup_confirm", true)
@@ -66,7 +62,6 @@ class MainActivity : Activity() {
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
 
         mediaSniffer = MediaSniffer { updateMediaButton(it.size) }
-        installServiceWorkerSniffer()
         buildUi()
         configureWebView()
         applyInsets()
@@ -80,18 +75,27 @@ class MainActivity : Activity() {
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
-        webView.saveState(outState)
+        if (::webView.isInitialized) webView.saveState(outState)
         super.onSaveInstanceState(outState)
     }
 
     override fun onDestroy() {
-        webView.destroy()
+        if (::webView.isInitialized) {
+            runCatching {
+                webView.stopLoading()
+                webView.removeJavascriptInterface("AdownloaderBridge")
+                webView.loadUrl("about:blank")
+                webView.clearHistory()
+                webView.removeAllViews()
+                webView.destroy()
+            }
+        }
         super.onDestroy()
     }
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        if (webView.canGoBack()) webView.goBack() else super.onBackPressed()
+        if (::webView.isInitialized && webView.canGoBack()) webView.goBack() else super.onBackPressed()
     }
 
     private fun buildUi() {
@@ -186,8 +190,7 @@ class MainActivity : Activity() {
             displayZoomControls = false
         }
         applyUserAgent(prefs.getString("ua_mode", "default") ?: "default")
-
-        installDocumentStartHooks()
+        webView.addJavascriptInterface(StableJsBridge(), "AdownloaderBridge")
 
         webView.webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
@@ -195,13 +198,16 @@ class MainActivity : Activity() {
                     address.setText(url)
                     mediaSniffer.clear()
                 }
+                injectMediaHook(view)
+            }
+
+            override fun onPageCommitVisible(view: WebView?, url: String?) {
+                injectMediaHook(view)
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 if (!url.isNullOrBlank()) address.setText(url)
-                if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
-                    view?.evaluateJavascript(MEDIA_HOOK_JS, null)
-                }
+                injectMediaHook(view)
             }
 
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest): Boolean {
@@ -222,6 +228,12 @@ class MainActivity : Activity() {
             override fun onReceivedError(view: WebView?, request: WebResourceRequest, error: WebResourceError) {
                 if (!request.isForMainFrame) return
                 runOnUiThread { showLoadError(request.url.toString(), error.errorCode, error.description.toString()) }
+            }
+
+            override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail): Boolean {
+                val lastUrl = view?.url
+                runOnUiThread { recoverWebView(lastUrl) }
+                return true
             }
         }
 
@@ -285,39 +297,35 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun installDocumentStartHooks() {
-        if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
-            WebViewCompat.addWebMessageListener(
-                webView,
-                "AdownloaderBridge",
-                mutableSetOf("*"),
-                object : WebViewCompat.WebMessageListener {
-                    override fun onPostMessage(
-                        view: WebView,
-                        message: WebMessageCompat,
-                        sourceOrigin: Uri,
-                        isMainFrame: Boolean,
-                        replyProxy: JavaScriptReplyProxy
-                    ) {
-                        message.data?.let { mediaSniffer.observeJs(it, sourceOrigin.toString()) }
-                    }
-                }
-            )
-        }
-        if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
-            WebViewCompat.addDocumentStartJavaScript(webView, MEDIA_HOOK_JS, mutableSetOf("*"))
+    private inner class StableJsBridge {
+        @JavascriptInterface
+        fun postMessage(message: String?) {
+            if (message.isNullOrBlank()) return
+            runOnUiThread {
+                mediaSniffer.observeJs(message, webView.url)
+            }
         }
     }
 
-    private fun installServiceWorkerSniffer() {
-        if (!WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_BASIC_USAGE)) return
-        ServiceWorkerControllerCompat.getInstance().setServiceWorkerClient(object : ServiceWorkerClientCompat() {
-            override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse? {
-                mediaSniffer.observeServiceWorker(request)
-                if (adBlockEnabled && AdBlocker.shouldBlock(request.url.toString(), mediaSniffer)) return emptyResponse()
-                return null
-            }
-        })
+    private fun injectMediaHook(view: WebView?) {
+        val target = view ?: return
+        target.post {
+            runCatching { target.evaluateJavascript(MEDIA_HOOK_JS, null) }
+        }
+    }
+
+    private fun recoverWebView(lastUrl: String?) {
+        Toast.makeText(this, "웹 화면을 복구했습니다", Toast.LENGTH_SHORT).show()
+        runCatching {
+            body.removeView(webView)
+            webView.removeJavascriptInterface("AdownloaderBridge")
+            webView.stopLoading()
+            webView.destroy()
+        }
+        webView = WebView(this)
+        body.addView(webView, 0, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        configureWebView()
+        webView.loadUrl(lastUrl?.takeIf { it.startsWith("http://") || it.startsWith("https://") } ?: "https://www.google.com")
     }
 
     private fun handlePopup(url: String) {
@@ -450,7 +458,7 @@ class MainActivity : Activity() {
 
     private fun showSettings() {
         val labels = arrayOf(
-            "광고/트래커 차단",
+            "내장 광고 차단 (외부 차단기 사용 시 끄기 권장)",
             "팝업 열기 전 확인",
             "기본 WebView User-Agent",
             "Chrome 모바일 User-Agent",
