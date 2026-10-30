@@ -2,9 +2,7 @@ package com.adownloader.app.browser;
 
 import android.content.Context;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-
+import org.mozilla.geckoview.GeckoResult;
 import org.mozilla.geckoview.GeckoRuntime;
 import org.mozilla.geckoview.GeckoSession;
 import org.mozilla.geckoview.GeckoView;
@@ -44,30 +42,27 @@ public final class BrowserSessionManager {
         GeckoSession newSession = new GeckoSession();
         newSession.setNavigationDelegate(new GeckoSession.NavigationDelegate() {
             @Override
-            public void onLocationChange(@NonNull GeckoSession geckoSession,
-                                         @Nullable String url,
-                                         @NonNull List<GeckoSession.PermissionDelegate.ContentPermission> perms,
-                                         @NonNull Boolean hasUserGesture) {
+            public void onLocationChange(GeckoSession geckoSession,
+                                         String url,
+                                         List<GeckoSession.PermissionDelegate.ContentPermission> perms,
+                                         Boolean hasUserGesture) {
                 if (listener != null && url != null) listener.onLocationChanged(url);
             }
 
             @Override
-            public void onCanGoBack(@NonNull GeckoSession geckoSession, boolean value) {
+            public void onCanGoBack(GeckoSession geckoSession, boolean value) {
                 canGoBack = value;
                 emitNavigationState();
             }
 
             @Override
-            public void onCanGoForward(@NonNull GeckoSession geckoSession, boolean value) {
+            public void onCanGoForward(GeckoSession geckoSession, boolean value) {
                 canGoForward = value;
                 emitNavigationState();
             }
 
-            @Nullable
             @Override
-            public org.mozilla.geckoview.GeckoResult<GeckoSession> onNewSession(
-                    @NonNull GeckoSession geckoSession,
-                    @NonNull String uri) {
+            public GeckoResult<GeckoSession> onNewSession(GeckoSession geckoSession, String uri) {
                 // Block first. The UI can explicitly reopen the URL in the current tab.
                 if (listener != null) listener.onPopupRequested(uri);
                 return null;
@@ -76,19 +71,19 @@ public final class BrowserSessionManager {
 
         newSession.setProgressDelegate(new GeckoSession.ProgressDelegate() {
             @Override
-            public void onProgressChange(@NonNull GeckoSession geckoSession, int progress) {
+            public void onProgressChange(GeckoSession geckoSession, int progress) {
                 if (listener != null) listener.onPageProgress(progress);
             }
         });
 
         newSession.setContentDelegate(new GeckoSession.ContentDelegate() {
             @Override
-            public void onCrash(@NonNull GeckoSession geckoSession) {
+            public void onCrash(GeckoSession geckoSession) {
                 if (listener != null) listener.onBrowserCrashed();
             }
 
             @Override
-            public void onKill(@NonNull GeckoSession geckoSession) {
+            public void onKill(GeckoSession geckoSession) {
                 if (listener != null) listener.onBrowserCrashed();
             }
         });
