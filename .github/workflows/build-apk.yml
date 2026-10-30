@@ -16,6 +16,10 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: '13114758'
+          packages: 'platform-tools build-tools;36.0.0 platforms;android-37.2'
+          log-accepted-android-sdk-licenses: false
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.6.0'
@@ -48,6 +52,10 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: '13114758'
+          packages: 'platform-tools build-tools;36.0.0 platforms;android-37.2'
+          log-accepted-android-sdk-licenses: false
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.6.0'
@@ -74,3 +82,4 @@ jobs:
           name: android-integration-results
           path: app/build/reports/androidTests/
 # The fixed private release key remains off GitHub. This workflow cannot publish an unsigned APK.
+
