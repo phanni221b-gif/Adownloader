@@ -12,10 +12,16 @@ android {
 
     defaultConfig {
         applicationId = "com.adownloader.app"
-        minSdk = 29
+        minSdk = 30
         targetSdk = 36
         versionCode = 7
         versionName = "0.3.0"
+
+        ndk {
+            // Current release is optimized for modern Android phones such as Fold8.
+            // Removing x86/32-bit Gecko binaries cuts the APK size dramatically.
+            abiFilters += listOf("arm64-v8a")
+        }
     }
 
     buildTypes {
