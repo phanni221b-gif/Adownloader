@@ -1,0 +1,10 @@
+.gradle/
+**/build/
+local.properties
+*.jks
+*.keystore
+signing.properties
+*.apk
+*.apks
+*.log
+app/src/androidTest/assets/fixtures/

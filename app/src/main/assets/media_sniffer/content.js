@@ -6,6 +6,7 @@
     if (url.startsWith("blob:") || url.startsWith("data:")) return;
     const key = source + "|" + url;
     if (sent.has(key)) return;
+    if (sent.size >= 500) sent.delete(sent.values().next().value);
     sent.add(key);
     browser.runtime.sendMessage({
       kind: "candidate",

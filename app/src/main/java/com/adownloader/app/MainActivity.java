@@ -52,6 +52,8 @@ public final class MainActivity extends Activity implements BrowserSessionManage
     private ProgressBar progressBar;
     private GeckoView geckoView;
     private String currentUrl = "https://www.google.com";
+    private android.window.OnBackInvokedCallback backGesture;
+    private boolean initialLoaded;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -66,20 +68,29 @@ public final class MainActivity extends Activity implements BrowserSessionManage
         new MediaExtensionManager(browser.getRuntime(), mediaDetector, new MediaExtensionManager.StatusListener() {
             @Override
             public void onExtensionReady() {
-                runOnUiThread(() -> Toast.makeText(MainActivity.this, "미디어 감지 준비 완료", Toast.LENGTH_SHORT).show());
+                runOnUiThread(() -> { loadInitialPage(); Toast.makeText(MainActivity.this, "미디어 감지 준비 완료", Toast.LENGTH_SHORT).show(); });
             }
 
             @Override
             public void onExtensionError(String message) {
-                runOnUiThread(() -> Toast.makeText(MainActivity.this, "미디어 감지 확장 초기화 실패", Toast.LENGTH_LONG).show());
+                runOnUiThread(() -> { loadInitialPage(); Toast.makeText(MainActivity.this, "미디어 감지 확장 초기화 실패", Toast.LENGTH_LONG).show(); });
             }
         }).install();
 
         requestNotificationPermissionIfNeeded();
-        browser.load(currentUrl);
+    }
+
+    private void loadInitialPage() {
+        if (initialLoaded || isDestroyed()) return;
+        initialLoaded = true;
+        Uri incoming = getIntent().getData();
+        if (incoming != null && ("https".equals(incoming.getScheme()) || "http".equals(incoming.getScheme()))) { currentUrl=incoming.toString(); browser.load(currentUrl); return; }
+        currentUrl = getPreferences(MODE_PRIVATE).getString("last_url", currentUrl);
+        if (!browser.restore(getPreferences(MODE_PRIVATE).getString("session", null))) browser.load(currentUrl);
     }
 
     private void configureWindow() {
+        getWindow().setDecorFitsSystemWindows(false);
         getWindow().setStatusBarColor(Color.WHITE);
         getWindow().setNavigationBarColor(Color.WHITE);
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
@@ -91,9 +102,8 @@ public final class MainActivity extends Activity implements BrowserSessionManage
         root.setBackgroundColor(Color.WHITE);
         root.setFitsSystemWindows(false);
         root.setOnApplyWindowInsetsListener((view, insets) -> {
-            int top = insets.getInsets(WindowInsets.Type.statusBars()).top;
-            int bottom = insets.getInsets(WindowInsets.Type.navigationBars()).bottom;
-            view.setPadding(0, top, 0, bottom);
+            android.graphics.Insets safe = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout() | WindowInsets.Type.ime());
+            view.setPadding(safe.left, safe.top, safe.right, safe.bottom);
             return insets;
         });
 
@@ -125,6 +135,8 @@ public final class MainActivity extends Activity implements BrowserSessionManage
                     (event != null && event.getKeyCode() == KeyEvent.KEYCODE_ENTER && event.getAction() == KeyEvent.ACTION_DOWN);
             if (go) {
                 browser.load(normalizeAddress(addressBar.getText().toString()));
+                addressBar.clearFocus();
+                ((android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(addressBar.getWindowToken(), 0);
                 return true;
             }
             return false;
@@ -151,6 +163,7 @@ public final class MainActivity extends Activity implements BrowserSessionManage
         browserFrame.addView(geckoView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         mediaButton = new Button(this);
+        mediaButton.setContentDescription("감지된 미디어");
         mediaButton.setText("▶ 0");
         mediaButton.setTextColor(Color.WHITE);
         mediaButton.setTextSize(13);
@@ -218,7 +231,7 @@ public final class MainActivity extends Activity implements BrowserSessionManage
 
     private void showAbout() {
         new AlertDialog.Builder(this)
-                .setTitle("Adownloader 0.3.0")
+                .setTitle("Adownloader 0.4.0")
                 .setMessage("GeckoView 자체 엔진 사용\nAndroid System WebView 비의존\n외부 광고차단 앱과 독립 동작")
                 .setPositiveButton("확인", null)
                 .show();
@@ -229,15 +242,20 @@ public final class MainActivity extends Activity implements BrowserSessionManage
                 .setTitle("설정")
                 .setMessage("광고/추적 필터는 유니콘 Pro, NordVPN 같은 시스템 차단기에 맡깁니다.\n\nAdownloader는 팝업 차단과 미디어 감지에 집중합니다.")
                 .setPositiveButton("확인", null)
+                .setNeutralButton("팝업 허용 초기화", (d,w) -> popupController.clearAllowed())
                 .show();
     }
 
     private void showDownloadsInfo() {
-        new AlertDialog.Builder(this)
-                .setTitle("다운로드")
-                .setMessage("다운로드는 백그라운드 Foreground Service에서 계속 진행되며 완료 시 알림이 표시됩니다.")
-                .setPositiveButton("확인", null)
-                .show();
+        java.util.ArrayList<JSONObject> rows = new java.util.ArrayList<>();
+        try { JSONObject all = new JSONObject(getSharedPreferences("downloads", MODE_PRIVATE).getString("items", "{}")); java.util.Iterator<String> keys=all.keys(); while(keys.hasNext()) rows.add(all.getJSONObject(keys.next())); } catch(Exception ignored) {}
+        rows.sort((a,b)->Long.compare(b.optLong("time"),a.optLong("time")));
+        String[] labels=new String[rows.size()];
+        for(int i=0;i<rows.size();i++) labels[i]=rows.get(i).optString("state")+" · "+android.text.format.DateFormat.format("MM-dd HH:mm", rows.get(i).optLong("time"));
+        AlertDialog.Builder dialog = new AlertDialog.Builder(this).setTitle("다운로드").setPositiveButton("닫기",null);
+        if(rows.isEmpty()) dialog.setMessage("아직 다운로드한 미디어가 없습니다. 영상 재생 후 분홍색 감지 버튼을 눌러 저장하세요.");
+        else dialog.setItems(labels,(d,index)->{String uri=rows.get(index).optString("uri");if(!uri.isEmpty())try{startActivity(new Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse(uri),"*/*").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));}catch(Exception ignored){Toast.makeText(this,"미디어 앱을 열 수 없습니다",Toast.LENGTH_SHORT).show();}});
+        dialog.show();
     }
 
     private void openMoviesFolder() {
@@ -277,18 +295,14 @@ public final class MainActivity extends Activity implements BrowserSessionManage
 
     private void confirmDownload(MediaCandidate item) {
         String type = item.getType().name();
-        String warning = item.getType() == MediaCandidate.MediaType.DASH
-                ? "DASH/MPD 다운로드 엔진은 다음 단계에서 별도 오디오·비디오 트랙 병합까지 연결합니다. 현재는 감지만 확인할 수 있습니다."
-                : "원본 스트림을 그대로 저장합니다. 재인코딩하지 않습니다.";
+        String warning = "가능한 최대 원본 화질을 선택합니다. 재인코딩 없이 저장·병합합니다. DRM, 라이브 및 지원하지 않는 목록은 저장하지 않습니다.";
 
         AlertDialog.Builder builder = new AlertDialog.Builder(this)
                 .setTitle(item.displayName())
                 .setMessage(warning + "\n\n" + item.getUrl())
                 .setNegativeButton("취소", null);
 
-        if (item.getType() != MediaCandidate.MediaType.DASH) {
-            builder.setPositiveButton("다운로드", (dialog, which) -> startDownload(item));
-        }
+        builder.setPositiveButton("다운로드", (dialog, which) -> startDownload(item));
         builder.show();
     }
 
@@ -308,7 +322,7 @@ public final class MainActivity extends Activity implements BrowserSessionManage
         if (input.isEmpty()) return currentUrl;
         if (input.startsWith("http://") || input.startsWith("https://")) return input;
         if (!input.contains(" ") && input.contains(".")) return "https://" + input;
-        return "https://www.google.com/search?q=" + URLEncoder.encode(input, StandardCharsets.UTF_8);
+        return "https://www.google.com/search?q=" + Uri.encode(input);
     }
 
     private void requestNotificationPermissionIfNeeded() {
@@ -320,6 +334,7 @@ public final class MainActivity extends Activity implements BrowserSessionManage
     @Override
     public void onLocationChanged(String url) {
         runOnUiThread(() -> {
+            if (!currentUrl.equals(url)) mediaDetector.reset();
             currentUrl = url;
             if (!addressBar.hasFocus()) addressBar.setText(url);
         });
@@ -330,6 +345,11 @@ public final class MainActivity extends Activity implements BrowserSessionManage
         runOnUiThread(() -> {
             backButton.setEnabled(canGoBack);
             forwardButton.setEnabled(canGoForward);
+            if (Build.VERSION.SDK_INT >= 33) {
+                if (backGesture != null) getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backGesture);
+                backGesture = null;
+                if (canGoBack) { backGesture = () -> browser.goBack(); getOnBackInvokedDispatcher().registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, backGesture); }
+            }
         });
     }
 
@@ -343,7 +363,7 @@ public final class MainActivity extends Activity implements BrowserSessionManage
 
     @Override
     public void onPopupRequested(String url) {
-        runOnUiThread(() -> popupController.onPopupRequested(url));
+        runOnUiThread(() -> popupController.onPopupRequested(url, currentUrl));
     }
 
     @Override
@@ -362,6 +382,7 @@ public final class MainActivity extends Activity implements BrowserSessionManage
     }
 
     @Override
+    @android.annotation.SuppressLint("GestureBackNavigation") // API 30–32 fallback; API 33+ uses OnBackInvokedDispatcher above.
     public void onBackPressed() {
         if (browser != null && browser.canGoBack()) browser.goBack();
         else super.onBackPressed();
@@ -371,6 +392,12 @@ public final class MainActivity extends Activity implements BrowserSessionManage
     protected void onDestroy() {
         if (browser != null) browser.close();
         super.onDestroy();
+    }
+
+    @Override protected void onResume() { super.onResume(); if(browser!=null)browser.setActive(true); }
+    @Override protected void onPause() {
+        if(browser!=null) { browser.setActive(false); getPreferences(MODE_PRIVATE).edit().putString("last_url", currentUrl).apply(); browser.save(state -> getPreferences(MODE_PRIVATE).edit().putString("session", state).apply()); }
+        super.onPause();
     }
 
     private int dp(int value) {

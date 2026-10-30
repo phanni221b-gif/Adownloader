@@ -34,13 +34,21 @@ public final class MediaDetector {
     public void capture(String url, String contentType, String source, String pageUrl, Map<String, String> headers) {
         if (url == null) return;
         String clean = url.trim();
-        if (clean.isEmpty() || clean.startsWith("data:") || clean.startsWith("blob:")) return;
+        if (!(clean.startsWith("https://") || clean.startsWith("http://"))) return;
+        String path;
+        try { path = java.net.URI.create(clean).getPath().toLowerCase(Locale.ROOT); } catch (Exception ignored) { return; }
+        if (path.endsWith(".m4s") || path.endsWith(".ts") || path.endsWith(".cmfv") || path.endsWith(".cmfa")) return;
 
         MediaCandidate.MediaType type = classify(clean, contentType);
         if (type == MediaCandidate.MediaType.UNKNOWN) return;
 
         String key = type.name() + "|" + clean;
-        if (seen.putIfAbsent(key, Boolean.TRUE) != null) return;
+        if (seen.putIfAbsent(key, Boolean.TRUE) != null) {
+            // Response headers arrive after the URL-only observation: retain the richer context.
+            for (MediaCandidate previous : candidates) if (previous.getUrl().equals(clean) && headers != null && !headers.isEmpty()) candidates.remove(previous);
+            if (headers == null || headers.isEmpty()) return;
+        }
+        if (candidates.size() >= 200) { MediaCandidate oldest = candidates.remove(0); seen.remove(oldest.getType().name()+"|"+oldest.getUrl()); }
 
         Map<String, String> safeHeaders = headers == null
                 ? Collections.emptyMap()

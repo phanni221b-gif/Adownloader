@@ -26,6 +26,9 @@ public final class BrowserSessionManager {
     private GeckoSession session;
     private boolean canGoBack;
     private boolean canGoForward;
+    private String latestState;
+    private String location;
+    private long intentionalNavigationUntil;
 
     public BrowserSessionManager(Context context, GeckoView geckoView, Listener listener) {
         this.geckoView = geckoView;
@@ -46,6 +49,7 @@ public final class BrowserSessionManager {
                                          String url,
                                          List<GeckoSession.PermissionDelegate.ContentPermission> perms,
                                          Boolean hasUserGesture) {
+                location = url;
                 if (listener != null && url != null) listener.onLocationChanged(url);
             }
 
@@ -65,7 +69,20 @@ public final class BrowserSessionManager {
             public GeckoResult<org.mozilla.geckoview.AllowOrDeny> onLoadRequest(
                     GeckoSession geckoSession,
                     GeckoSession.NavigationDelegate.LoadRequest request) {
+                if (request.hasUserGesture || request.isDirectNavigation) intentionalNavigationUntil = android.os.SystemClock.elapsedRealtime() + 10_000;
+                String scheme = android.net.Uri.parse(request.uri).getScheme();
+                if (!("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme) || "about".equalsIgnoreCase(scheme))) {
+                    if (listener != null) listener.onPopupRequested(request.uri);
+                    return GeckoResult.deny();
+                }
                 if (request.target == GeckoSession.NavigationDelegate.TARGET_WINDOW_NEW) {
+                    if (listener != null) listener.onPopupRequested(request.uri);
+                    return GeckoResult.deny();
+                }
+                // Permit normal link/login redirect chains. Gate unsolicited cross-site page takeovers.
+                if (!request.hasUserGesture && !request.isDirectNavigation && location != null &&
+                        android.os.SystemClock.elapsedRealtime() > intentionalNavigationUntil &&
+                        !sameHost(location, request.uri)) {
                     if (listener != null) listener.onPopupRequested(request.uri);
                     return GeckoResult.deny();
                 }
@@ -81,6 +98,7 @@ public final class BrowserSessionManager {
         });
 
         newSession.setProgressDelegate(new GeckoSession.ProgressDelegate() {
+            @Override public void onSessionStateChange(GeckoSession source, GeckoSession.SessionState state) { latestState = state.toString(); }
             @Override
             public void onProgressChange(GeckoSession geckoSession, int progress) {
                 if (listener != null) listener.onPageProgress(progress);
@@ -113,6 +131,7 @@ public final class BrowserSessionManager {
     }
 
     public void load(String url) {
+        intentionalNavigationUntil = android.os.SystemClock.elapsedRealtime() + 10_000;
         if (session != null && url != null && !url.isBlank()) session.loadUri(url);
     }
 
@@ -153,7 +172,23 @@ public final class BrowserSessionManager {
         session = null;
     }
 
+    public void setActive(boolean active) { if (session != null) session.setActive(active); }
+
+    public void save(java.util.function.Consumer<String> consumer) {
+        if (latestState != null) consumer.accept(latestState);
+    }
+
+    public boolean restore(String state) {
+        if (state == null) return false;
+        try { session.restoreState(GeckoSession.SessionState.fromString(state)); return true; }
+        catch (Exception ignored) { return false; }
+    }
+
     private void emitNavigationState() {
         if (listener != null) listener.onNavigationStateChanged(canGoBack, canGoForward);
+    }
+    private boolean sameHost(String first, String second) {
+        String a = android.net.Uri.parse(first).getHost(), b = android.net.Uri.parse(second).getHost();
+        return a != null && a.equalsIgnoreCase(b);
     }
 }

@@ -15,13 +15,13 @@ function looksLikeMedia(url, contentType, requestType) {
   return requestType === "media";
 }
 
-function headersToObject(list) {
+function headersToObject(list, mediaRequest) {
   const out = {};
   if (!Array.isArray(list)) return out;
   for (const item of list) {
     if (!item || !item.name) continue;
     const name = lower(item.name);
-    if (["referer", "origin", "user-agent", "cookie", "authorization"].includes(name)) {
+    if (["referer", "origin", "user-agent"].includes(name) || (mediaRequest && name === "cookie")) {
       out[item.name] = item.value || "";
     }
   }
@@ -50,7 +50,8 @@ function sendCandidate(details, contentType, source) {
 
 browser.webRequest.onBeforeSendHeaders.addListener(
   details => {
-    requestHeaders.set(details.requestId, headersToObject(details.requestHeaders));
+    if (requestHeaders.size > 1024) requestHeaders.delete(requestHeaders.keys().next().value);
+    requestHeaders.set(details.requestId, headersToObject(details.requestHeaders, looksLikeMedia(details.url, "", details.type)));
   },
   { urls: ["<all_urls>"] },
   ["requestHeaders"]
