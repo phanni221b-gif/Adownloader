@@ -62,8 +62,19 @@ public final class BrowserSessionManager {
             }
 
             @Override
+            public GeckoResult<org.mozilla.geckoview.AllowOrDeny> onLoadRequest(
+                    GeckoSession geckoSession,
+                    GeckoSession.NavigationDelegate.LoadRequest request) {
+                if (request.target == GeckoSession.NavigationDelegate.TARGET_WINDOW_NEW) {
+                    if (listener != null) listener.onPopupRequested(request.uri);
+                    return GeckoResult.deny();
+                }
+                return null;
+            }
+
+            @Override
             public GeckoResult<GeckoSession> onNewSession(GeckoSession geckoSession, String uri) {
-                // Block first. The UI can explicitly reopen the URL in the current tab.
+                // Fallback for popups that do not expose TARGET_WINDOW_NEW first.
                 if (listener != null) listener.onPopupRequested(uri);
                 return null;
             }
