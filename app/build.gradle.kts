@@ -4,7 +4,11 @@ plugins {
 
 android {
     namespace = "com.adownloader.app"
-    compileSdk = 36
+    compileSdk {
+        version = release(37) {
+            minorApiLevel = 2
+        }
+    }
 
     defaultConfig {
         applicationId = "com.adownloader.app"
@@ -31,7 +35,5 @@ android {
 }
 
 dependencies {
-    // Stable GeckoView is bundled with the APK, so the browser engine no longer
-    // depends on the phone's Android System WebView package.
     implementation("org.mozilla.geckoview:geckoview:159.0.20261022150525")
 }
