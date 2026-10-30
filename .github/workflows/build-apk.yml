@@ -1,0 +1,47 @@
+name: Build Adownloader APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle 9.6
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.0'
+
+      - name: Build debug APK
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: Rename APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk Adownloader-v0.1.${{ github.run_number }}.apk
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Adownloader-APK
+          path: Adownloader-v0.1.${{ github.run_number }}.apk
+
+      - name: Publish rolling release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v0.1.${{ github.run_number }}"
+          gh release create "$TAG" "Adownloader-v0.1.${{ github.run_number }}.apk" \
+            --title "Adownloader $TAG" \
+            --notes "Initial Adownloader development build. WebView media sniffing, popup confirmation, ad blocking, direct/HLS download, HLS remux fallback."
