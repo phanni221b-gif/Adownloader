@@ -18,13 +18,16 @@ public final class DownloadService extends Service {
     public static final String EXTRA_URL="url",EXTRA_TYPE="type",EXTRA_HEADERS="headers",EXTRA_FILENAME="filename";
     private static final String CHANNEL="adownloader_downloads";
     private static final int FOREGROUND_ID=3999;
-    private static final AtomicInteger NEXT_ID=new AtomicInteger(4000);
+    private static final AtomicInteger NEXT_ID=new AtomicInteger((int)(System.currentTimeMillis()/1000 % 1_000_000_000));
     private final ExecutorService executor=Executors.newSingleThreadExecutor();
     private final AtomicInteger pending=new AtomicInteger();
     private final Handler main=new Handler(Looper.getMainLooper());
+    private PowerManager.WakeLock wakeLock;
     @Override public IBinder onBind(Intent intent){return null;}
     @Override public void onCreate(){
         super.onCreate();getSystemService(NotificationManager.class).createNotificationChannel(new NotificationChannel(CHANNEL,"Adownloader 다운로드",NotificationManager.IMPORTANCE_LOW));
+        wakeLock=getSystemService(PowerManager.class).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"Adownloader:downloads");
+        wakeLock.acquire(6L*60*60*1000);
     }
     private Notification notification(String title,String text,boolean ongoing,int percent,PendingIntent action){
         Notification.Builder b=new Notification.Builder(this,CHANNEL).setSmallIcon(ongoing?android.R.drawable.stat_sys_download:android.R.drawable.stat_sys_download_done)
@@ -91,5 +94,5 @@ public final class DownloadService extends Service {
         }catch(Exception ignored){}
     }
     @Override public void onTimeout(int startId,int fgsType){executor.shutdownNow();stopForeground(STOP_FOREGROUND_REMOVE);stopSelf();}
-    @Override public void onDestroy(){executor.shutdown();super.onDestroy();}
+    @Override public void onDestroy(){executor.shutdown();if(wakeLock!=null&&wakeLock.isHeld())wakeLock.release();super.onDestroy();}
 }

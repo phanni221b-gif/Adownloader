@@ -80,6 +80,8 @@ jobs:
         if: always()
         with:
           name: android-integration-results
-          path: app/build/reports/androidTests/
+          path: |
+            app/build/reports/androidTests/
+            app/build/outputs/androidTest-results/
 # The fixed private release key remains off GitHub. This workflow cannot publish an unsigned APK.
 

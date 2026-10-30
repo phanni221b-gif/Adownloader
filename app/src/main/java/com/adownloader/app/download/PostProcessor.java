@@ -63,12 +63,12 @@ public final class PostProcessor {
             if(maxInput>64*1024*1024)throw new IOException("미디어 샘플 크기 제한 초과");
             ByteBuffer buffer=ByteBuffer.allocateDirect((int)maxInput);MediaCodec.BufferInfo info=new MediaCodec.BufferInfo();
             long firstTime=Long.MAX_VALUE;
-            for(MediaExtractor extractor:extractors)if(extractor.getSampleTime()>=0)firstTime=Math.min(firstTime,extractor.getSampleTime());
+            for(MediaExtractor extractor:extractors)if(extractor.getSampleTrackIndex()>=0)firstTime=Math.min(firstTime,extractor.getSampleTime());
             if(firstTime==Long.MAX_VALUE)throw new IOException("미디어 샘플 없음");
             muxer.start();started=true;
             while(true) {
                 int selected=-1;long earliest=Long.MAX_VALUE;
-                for(int i=0;i<extractors.size();i++){long time=extractors.get(i).getSampleTime();if(time>=0&&time<earliest){selected=i;earliest=time;}}
+                for(int i=0;i<extractors.size();i++){MediaExtractor candidate=extractors.get(i);long time=candidate.getSampleTime();if(candidate.getSampleTrackIndex()>=0&&time<earliest){selected=i;earliest=time;}}
                 if(selected<0)break;
                 MediaExtractor source=extractors.get(selected);int flags=source.getSampleFlags();
                 if((flags&MediaExtractor.SAMPLE_FLAG_ENCRYPTED)!=0)throw new IOException("DRM 샘플은 지원하지 않습니다");

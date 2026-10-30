@@ -41,6 +41,7 @@ public class DownloadIntegrationTest {
             byte[] body;String mime;
             if(path.equals("index.html")){body=("<!doctype html><title>Adownloader test</title><video preload='auto' controls src='"+base+"direct.mp4'></video>").getBytes(java.nio.charset.StandardCharsets.UTF_8);mime="text/html";}
             else{body=fixture(path);mime=path.endsWith("mp4")?"video/mp4":path.endsWith("m3u8")?"application/vnd.apple.mpegurl":path.endsWith("mpd")?"application/dash+xml":"application/octet-stream";}
+            if(path.endsWith(".ts"))Thread.sleep(100);
             int start=0,end=body.length-1;
             if(range!=null){String[] bounds=range.replace("bytes=","").split("-");start=Integer.parseInt(bounds[0]);if(bounds.length>1)end=Math.min(end,Integer.parseInt(bounds[1]));}
             String header="HTTP/1.1 "+(range==null?"200 OK":"206 Partial Content")+"\r\nContent-Type: "+mime+"\r\nContent-Length: "+(end-start+1)+"\r\nAccept-Ranges: bytes\r\n"+(range==null?"":"Content-Range: bytes "+start+"-"+end+"/"+body.length+"\r\n")+"Connection: close\r\n\r\n";
@@ -60,6 +61,22 @@ public class DownloadIntegrationTest {
     }
     @Test public void dashSeparateTracksMuxAndSeek()throws Exception {
         DownloadEngine engine=engine();try{DownloadEngine.Result result=engine.download(base+"manifest.mpd",MediaCandidate.MediaType.DASH,Collections.emptyMap());PostProcessor.inspect(result.file,3,true,true);}finally{engine.cleanup();}
+    }
+    @Test public void hlsExternalAudioIsIncluded()throws Exception {
+        DownloadEngine engine=engine();try{DownloadEngine.Result result=engine.download(base+"master.m3u8",MediaCandidate.MediaType.HLS,Collections.emptyMap());PostProcessor.inspect(result.file,3,true,true);}finally{engine.cleanup();}
+    }
+    @Test public void queuedForegroundDownloadsFinishAfterBrowserCloses()throws Exception {
+        android.app.Instrumentation instrumentation=InstrumentationRegistry.getInstrumentation();Context context=instrumentation.getTargetContext();
+        instrumentation.getUiAutomation().executeShellCommand("pm grant com.adownloader.app android.permission.POST_NOTIFICATIONS").close();
+        android.content.SharedPreferences prefs=context.getSharedPreferences("downloads",0);prefs.edit().clear().commit();
+        Activity activity=instrumentation.startActivitySync(new Intent(context,MainActivity.class).setData(Uri.parse(base+"index.html")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        instrumentation.waitForIdleSync();
+        for(int i=0;i<2;i++)context.startForegroundService(new Intent(context,DownloadService.class).setAction(DownloadService.ACTION_DOWNLOAD).putExtra(DownloadService.EXTRA_URL,base+"playlist.m3u8").putExtra(DownloadService.EXTRA_TYPE,"HLS"));
+        instrumentation.runOnMainSync(activity::finish);
+        long deadline=System.currentTimeMillis()+60_000;int complete=0;
+        while(System.currentTimeMillis()<deadline){org.json.JSONObject items=new org.json.JSONObject(prefs.getString("items","{}"));complete=0;Iterator<String> keys=items.keys();while(keys.hasNext())if("완료".equals(items.getJSONObject(keys.next()).optString("state")))complete++;if(complete==2)break;Thread.sleep(250);}
+        assertEquals("Both queued foreground jobs must finish after Activity closure",2,complete);
+        org.json.JSONObject items=new org.json.JSONObject(prefs.getString("items","{}"));Iterator<String> keys=items.keys();while(keys.hasNext()){String uri=items.getJSONObject(keys.next()).optString("uri");if(!uri.isEmpty())context.getContentResolver().delete(Uri.parse(uri),null,null);}
     }
     @Test public void geckoLaunchAndNativeMediaBridge()throws Exception {
         android.app.Instrumentation instrumentation=InstrumentationRegistry.getInstrumentation();Context context=instrumentation.getTargetContext();
