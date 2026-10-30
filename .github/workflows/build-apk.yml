@@ -25,23 +25,30 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
+      - name: Restore launcher icon
+        run: |
+          mkdir -p app/src/main/res/mipmap-xxxhdpi
+          base64 -d ci/ic_launcher_xxxhdpi.webp.b64 > app/src/main/res/mipmap-xxxhdpi/ic_launcher.webp
+          test -s app/src/main/res/mipmap-xxxhdpi/ic_launcher.webp
+          file app/src/main/res/mipmap-xxxhdpi/ic_launcher.webp
+
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
 
       - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk Adownloader-v0.1.${{ github.run_number }}.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk Adownloader-v0.1.9-${{ github.run_number }}.apk
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Adownloader-APK
-          path: Adownloader-v0.1.${{ github.run_number }}.apk
+          name: Adownloader-APK-v0.1.9
+          path: Adownloader-v0.1.9-${{ github.run_number }}.apk
 
       - name: Publish rolling release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="v0.1.${{ github.run_number }}"
-          gh release create "$TAG" "Adownloader-v0.1.${{ github.run_number }}.apk" \
+          TAG="v0.1.9-${{ github.run_number }}"
+          gh release create "$TAG" "Adownloader-v0.1.9-${{ github.run_number }}.apk" \
             --title "Adownloader $TAG" \
-            --notes "Initial Adownloader development build. WebView media sniffing, popup confirmation, ad blocking, direct/HLS download, HLS remux fallback."
+            --notes "Stability build: proper launcher mipmap icon, removed AndroidX WebKit compatibility layer, standard Android WebView bridge, renderer-crash recovery, popup confirmation, direct/HLS media detection and download."
