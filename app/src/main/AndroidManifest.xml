@@ -15,7 +15,7 @@
         android:theme="@style/Theme.Adownloader">
 
         <activity
-            android:name=".GeckoBrowserActivity"
+            android:name=".MainActivity"
             android:hardwareAccelerated="true"
             android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
             android:windowSoftInputMode="stateUnspecified|adjustResize"
@@ -26,10 +26,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
-        <activity android:name=".StableBrowserActivity" android:hardwareAccelerated="true" android:exported="false" />
-        <activity android:name=".MainActivity" android:hardwareAccelerated="true" android:exported="false" />
-        <activity android:name=".PlayerActivity" android:hardwareAccelerated="true" android:exported="false" />
 
         <service
             android:name=".DownloadService"
