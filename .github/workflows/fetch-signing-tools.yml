@@ -1,0 +1,29 @@
+name: Fetch APK signing tools
+
+on:
+  push:
+    branches: [ rebuild-gecko-v2 ]
+    paths:
+      - '.github/workflows/fetch-signing-tools.yml'
+  workflow_dispatch:
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download apksig-go v1.1.0
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 3 \
+            https://github.com/agusibrahim/apksig-go/releases/download/v1.1.0/apksig-go_v1.1.0_linux_amd64.tar.gz \
+            -o apksig-go.tar.gz
+          echo 'dda1ef085229514900a2ded2420d4f3e8e03a621cab21e922900269a53a205f7  apksig-go.tar.gz' | sha256sum -c -
+          mkdir tools
+          tar -xzf apksig-go.tar.gz -C tools
+          find tools -maxdepth 2 -type f -print
+
+      - name: Upload signer binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: apksig-go-v1.1.0-linux-amd64
+          path: tools/
