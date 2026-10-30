@@ -10,8 +10,8 @@ android {
         applicationId = "com.adownloader.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.2.0"
+        versionCode = 7
+        versionName = "0.3.0"
     }
 
     buildTypes {
@@ -31,5 +31,7 @@ android {
 }
 
 dependencies {
+    // Stable GeckoView is bundled with the APK, so the browser engine no longer
+    // depends on the phone's Android System WebView package.
     implementation("org.mozilla.geckoview:geckoview:159.0.20261022150525")
 }
