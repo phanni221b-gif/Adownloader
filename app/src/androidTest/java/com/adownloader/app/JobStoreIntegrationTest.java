@@ -143,4 +143,55 @@ public class JobStoreIntegrationTest {
       prefs.edit().putString("items", backup).commit();
     }
   }
+
+  @Test
+  public void queuePriorityAndOwnershipAreDurable() throws Exception {
+    long first = job(), second = job(), third = job();
+    store.prioritize(third);
+    assertEquals(third, store.claim().id);
+    assertTrue(DownloadJobStore.ownedHere(store.get(third)));
+    assertEquals(first, store.claim().id);
+    assertEquals(second, store.claim().id);
+    assertNull(store.claim());
+    store
+        .getWritableDatabase()
+        .execSQL("UPDATE jobs SET owner='previous-process-same-pid' WHERE id=" + first);
+    store.reconcile();
+    assertEquals(DownloadJobStore.State.PAUSED, store.get(first).state);
+    assertEquals(DownloadJobStore.State.PREPARING, store.get(second).state);
+    assertFalse(
+        store.transition(
+            first, DownloadJobStore.State.DOWNLOADING, DownloadJobStore.State.FINALIZING));
+    store.state(first, DownloadJobStore.State.CANCELED, "");
+    assertFalse(
+        store.transition(
+            first, DownloadJobStore.State.PREPARING, DownloadJobStore.State.DOWNLOADING));
+  }
+
+  @Test
+  public void encryptedThousandSegmentPlanFitsAndIsBounded() throws Exception {
+    long id = job();
+    JSONObject request = store.request(id);
+    JSONArray parts = new JSONArray();
+    for (int i = 0; i < 1000; i++)
+      parts.put(
+          new JSONObject()
+              .put(
+                  "url",
+                  "https://cdn.example.test/asset/segment-"
+                      + i
+                      + ".m4s?Signature="
+                      + "A".repeat(1500))
+              .put("range", i * 4096));
+    request.put("stress-plan", parts);
+    store.writeContext(id, request);
+    assertEquals(1000, store.request(id).getJSONArray("stress-plan").length());
+    try (Cursor c =
+        store
+            .getReadableDatabase()
+            .rawQuery("SELECT length(secret) FROM jobs WHERE id=?", new String[] {"" + id})) {
+      assertTrue(c.moveToFirst());
+      assertTrue(c.getLong(0) < 1024 * 1024);
+    }
+  }
 }

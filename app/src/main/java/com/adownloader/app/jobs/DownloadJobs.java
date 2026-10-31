@@ -117,26 +117,37 @@ public final class DownloadJobs {
       host.wake();
       return;
     }
-    if (Build.VERSION.SDK_INT >= 34) {
-      JobScheduler scheduler = context.getSystemService(JobScheduler.class);
-      if (scheduler.getPendingJob(6001) != null) return;
-      JobInfo info =
-          new JobInfo.Builder(6001, new ComponentName(context, TransferJobService.class))
-              .setUserInitiated(true)
-              .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
-              .setPersisted(true)
-              .setRequiresStorageNotLow(true)
-              .build();
-      if (scheduler.schedule(info) != JobScheduler.RESULT_SUCCESS)
-        commands.execute(
-            () -> {
-              for (DownloadJobStore.Job job : store.list())
-                if (job.state == DownloadJobStore.State.QUEUED) {
-                  store.state(job.id, DownloadJobStore.State.PAUSED, "");
-                  JobNotifications.status(context, store.get(job.id));
-                }
-            });
-    } else context.startForegroundService(new Intent(context, DownloadService.class));
+    try {
+      if (Build.VERSION.SDK_INT >= 34) {
+        JobScheduler scheduler = context.getSystemService(JobScheduler.class);
+        if (scheduler.getPendingJob(6001) != null) return;
+        JobInfo info =
+            new JobInfo.Builder(6001, new ComponentName(context, TransferJobService.class))
+                .setUserInitiated(true)
+                .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
+                .setPersisted(true)
+                .setRequiresStorageNotLow(true)
+                .build();
+        if (scheduler.schedule(info) != JobScheduler.RESULT_SUCCESS)
+          commands.execute(
+              () -> {
+                for (DownloadJobStore.Job job : store.list())
+                  if (job.state == DownloadJobStore.State.QUEUED) {
+                    store.state(job.id, DownloadJobStore.State.PAUSED, "");
+                    JobNotifications.status(context, store.get(job.id));
+                  }
+              });
+      } else context.startForegroundService(new Intent(context, DownloadService.class));
+    } catch (SecurityException | IllegalStateException restricted) {
+      commands.execute(
+          () -> {
+            for (DownloadJobStore.Job job : store.list())
+              if (job.state == DownloadJobStore.State.QUEUED) {
+                store.state(job.id, DownloadJobStore.State.PAUSED, "OS_STOP");
+                JobNotifications.status(context, store.get(job.id));
+              }
+          });
+    }
   }
 
   public synchronized void drain(Runnable finished) {
@@ -178,16 +189,28 @@ public final class DownloadJobs {
         active.put(job.id, control);
         try {
           new JobRunner(context, store).run(job, control);
+        } catch (RuntimeException unexpected) {
+          store.state(job.id, DownloadJobStore.State.FAILED, "UNKNOWN");
         } finally {
-          active.remove(job.id);
-          if (deferredResume.remove(job.id)) {
-            DownloadJobStore.Job current = store.get(job.id);
-            if (current.state == DownloadJobStore.State.PAUSED
-                || current.state == DownloadJobStore.State.FAILED) {
-              prepareRetry(current);
-              store.state(job.id, DownloadJobStore.State.QUEUED, "");
-            }
-          }
+          commands
+              .submit(
+                  () -> {
+                    active.remove(job.id);
+                    if (deferredResume.remove(job.id)) {
+                      DownloadJobStore.Job current = store.get(job.id);
+                      if (current != null
+                          && (current.state == DownloadJobStore.State.PAUSED
+                              || current.state == DownloadJobStore.State.FAILED)) {
+                        try {
+                          prepareRetry(current);
+                          store.state(job.id, DownloadJobStore.State.QUEUED, "");
+                        } catch (Exception failure) {
+                          store.state(job.id, DownloadJobStore.State.FAILED, "STORAGE");
+                        }
+                      }
+                    }
+                  })
+              .get();
         }
       }
     } catch (Exception unavailable) {
@@ -229,7 +252,9 @@ public final class DownloadJobs {
   private void prepareRetry(DownloadJobStore.Job job) throws Exception {
     if (job.state == DownloadJobStore.State.FAILED && job.error.equals("STORAGE")) {
       JSONObject request = store.request(job.id);
-      store.cleanup(job.id);
+      if (!store.cleanup(job.id))
+        throw new com.adownloader.app.download.DownloadError(
+            com.adownloader.app.download.DownloadError.Category.STORAGE);
       request.remove("plan");
       request.remove("directFiles");
       store.writeContext(job.id, request);
@@ -270,7 +295,10 @@ public final class DownloadJobs {
               }
             }
           } catch (Exception e) {
-            store.state(id, DownloadJobStore.State.NEEDS_REFRESH, "AUTH");
+            if (e instanceof DownloadError
+                && ((DownloadError) e).category == DownloadError.Category.STORAGE)
+              store.state(id, DownloadJobStore.State.FAILED, "STORAGE");
+            else store.state(id, DownloadJobStore.State.NEEDS_REFRESH, "AUTH");
           } finally {
             TransferControl latest = active.get(id);
             if (latest != null && (action.equals("PAUSE") || action.equals("CANCEL")))

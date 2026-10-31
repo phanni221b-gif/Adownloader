@@ -32,7 +32,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(json.dumps(data).encode(),'application/json')
         if path=='/page': return self.reply(b'<!doctype html><title>Recovery fixture</title><h1>Recovery test</h1>','text/html')
         with LOCK: COUNTS[path]=COUNTS.get(path,0)+1
-        if path=='/process/direct':
+        if path=='/process/fail-once' and COUNTS[path]==1: return self.send_error(500)
+        if path in ('/process/direct','/process/fail-once'):
             offset=0; value=self.headers.get('Range')
             if value and self.headers.get('If-Range')==ETAG:
                 try: offset=int(value.removeprefix('bytes=').split('-')[0])

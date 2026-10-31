@@ -26,12 +26,12 @@ public final class JobNotifications {
         context, 0, intent, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
   }
 
-  private static PendingIntent resume(Context context, long id) {
+  private static PendingIntent resume(Context context, long id, boolean page) {
     return PendingIntent.getActivity(
         context,
         0,
         new Intent(context, MainActivity.class)
-            .setAction("RESUME_JOB")
+            .setAction(page ? "OPEN_JOB_PAGE" : "RESUME_JOB")
             .setData(Uri.parse("adownloader://resume/" + id))
             .putExtra("job", id)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP),
@@ -63,6 +63,7 @@ public final class JobNotifications {
   }
 
   public static void status(Context context, DownloadJobStore.Job job) {
+    if (job == null) return;
     channel(context);
     Notification.Builder builder =
         new Notification.Builder(context, CHANNEL)
@@ -84,7 +85,12 @@ public final class JobNotifications {
     } else {
       builder
           .setContentText(message(job.error, job.state))
-          .addAction(new Notification.Action.Builder(null, "재개", resume(context, job.id)).build())
+          .addAction(
+              new Notification.Action.Builder(
+                      null,
+                      job.state == DownloadJobStore.State.NEEDS_REFRESH ? "원래 페이지" : "재개",
+                      resume(context, job.id, job.state == DownloadJobStore.State.NEEDS_REFRESH))
+                  .build())
           .addAction(
               new Notification.Action.Builder(null, "취소", action(context, job.id, "CANCEL"))
                   .build());
@@ -105,6 +111,8 @@ public final class JobNotifications {
     if (state == DownloadJobStore.State.PAUSED) return "일시정지됨 · 이어받을 수 있습니다.";
     if (state == DownloadJobStore.State.NEEDS_REFRESH) return "영상 주소가 만료되었습니다. 원래 페이지를 다시 열어 주세요.";
     switch (error) {
+      case "CLEANUP_PENDING":
+        return "임시 파일 정리를 다음 실행에서 다시 시도합니다.";
       case "STORAGE":
         return "저장 공간 또는 임시 파일을 확인해 주세요.";
       case "DRM":

@@ -187,4 +187,110 @@ public class ProcessRecoveryTest {
   public void recoverDash() throws Exception {
     recover("dash", false);
   }
+
+  private long enqueue(DownloadJobs jobs, String path) throws Exception {
+    CountDownLatch ready = new CountDownLatch(1);
+    long[] id = {-1};
+    instrumentation.runOnMainSync(
+        () ->
+            jobs.enqueue(
+                new MediaCandidate(
+                    BASE + path,
+                    MediaCandidate.MediaType.VIDEO,
+                    "test",
+                    BASE + "/page",
+                    Collections.emptyMap(),
+                    System.currentTimeMillis()),
+                value -> {
+                  id[0] = value;
+                  ready.countDown();
+                }));
+    assertTrue(ready.await(15, TimeUnit.SECONDS));
+    assertTrue(id[0] > 0);
+    return id[0];
+  }
+
+  private DownloadJobStore.Job await(DownloadJobs jobs, long id, DownloadJobStore.State expected)
+      throws Exception {
+    long end = System.currentTimeMillis() + 60000;
+    while (System.currentTimeMillis() < end) {
+      DownloadJobStore.Job job = jobs.store.get(id);
+      if (job.state == expected && !jobs.isExecuting(id)) return job;
+      if (expected == DownloadJobStore.State.COMPLETED
+          && (job.state == DownloadJobStore.State.FAILED
+              || job.state == DownloadJobStore.State.NEEDS_REFRESH))
+        fail("Unexpected failure: " + job.error);
+      Thread.sleep(25);
+    }
+    throw new AssertionError("State timeout: " + jobs.store.get(id).state);
+  }
+
+  private void checkpoint(DownloadJobs jobs, long id) throws Exception {
+    long end = System.currentTimeMillis() + 15000;
+    while (System.currentTimeMillis() < end) {
+      if (jobs.store.get(id).bytes >= 1024 * 1024) return;
+      Thread.sleep(25);
+    }
+    fail("No progress");
+  }
+
+  private void action(DownloadJobs jobs, long id, String action) throws Exception {
+    CountDownLatch done = new CountDownLatch(1);
+    instrumentation.runOnMainSync(() -> jobs.action(id, action, done::countDown));
+    assertTrue(done.await(15, TimeUnit.SECONDS));
+  }
+
+  @Test
+  public void pauseCancelRetry() throws Exception {
+    DownloadJobs jobs = launch();
+    get("/reset");
+    long first = enqueue(jobs, "/process/direct");
+    checkpoint(jobs, first);
+    action(jobs, first, "PAUSE");
+    DownloadJobStore.Job paused = await(jobs, first, DownloadJobStore.State.PAUSED);
+    assertTrue(paused.bytes > 0);
+    assertTrue(jobs.store.directory(first).listFiles().length > 0);
+    action(jobs, first, "RESUME");
+    DownloadJobStore.Job complete = await(jobs, first, DownloadJobStore.State.COMPLETED);
+    assertEquals("", complete.pending);
+    JSONArray ranges = get("/stats").getJSONArray("ranges");
+    boolean resumed = false;
+    for (int i = 0; i < ranges.length(); i++) resumed |= ranges.getLong(i) > 0;
+    assertTrue(resumed);
+    context.getContentResolver().delete(Uri.parse(complete.uri), null, null);
+    long canceled = enqueue(jobs, "/process/direct");
+    checkpoint(jobs, canceled);
+    File workspace = jobs.store.directory(canceled);
+    android.content.ContentValues values = new android.content.ContentValues();
+    values.put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, "cancel-pending.mp4");
+    values.put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "video/mp4");
+    values.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1);
+    Uri pending =
+        context
+            .getContentResolver()
+            .insert(android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values);
+    assertNotNull(pending);
+    jobs.store.pending(canceled, pending.toString());
+    action(jobs, canceled, "CANCEL");
+    DownloadJobStore.Job stopped = await(jobs, canceled, DownloadJobStore.State.CANCELED);
+    assertEquals("", stopped.pending);
+    assertFalse(workspace.exists());
+    try (android.database.Cursor cursor =
+        context.getContentResolver().query(pending, null, null, null, null)) {
+      assertTrue(cursor == null || !cursor.moveToFirst());
+    }
+    long retry = enqueue(jobs, "/process/fail-once");
+    DownloadJobStore.Job failed = await(jobs, retry, DownloadJobStore.State.FAILED);
+    assertEquals("SERVER", failed.error);
+    action(jobs, retry, "RETRY");
+    DownloadJobStore.Job retried = await(jobs, retry, DownloadJobStore.State.COMPLETED);
+    context.getContentResolver().delete(Uri.parse(retried.uri), null, null);
+    assertEquals(2, get("/stats").getJSONObject("counts").getInt("/process/fail-once"));
+    long immediate = enqueue(jobs, "/process/direct");
+    checkpoint(jobs, immediate);
+    action(jobs, immediate, "PAUSE");
+    action(jobs, immediate, "RESUME");
+    DownloadJobStore.Job resumedJob = await(jobs, immediate, DownloadJobStore.State.COMPLETED);
+    context.getContentResolver().delete(Uri.parse(resumedJob.uri), null, null);
+  }
 }

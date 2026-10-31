@@ -170,4 +170,54 @@ public class DirectTransferTest {
       assertEquals(DownloadError.Category.NETWORK, expected.category);
     }
   }
+
+  @Test
+  public void completedUnknownLengthSurvivesPublicationInterruption() throws Exception {
+    File file = File.createTempFile("unknown-complete", ".part");
+    try {
+      Files.write(file.toPath(), body);
+      DirectTransfer.State prior =
+          new DirectTransfer.State(body.length, -1, "", "", hash(body), true, false);
+      requestedRange = "NOT_REQUESTED";
+      try (java.io.RandomAccessFile target = new java.io.RandomAccessFile(file, "rw")) {
+        DirectTransfer.copy(
+            new HttpSource(url(), Collections.emptyMap()),
+            url(),
+            target.getChannel(),
+            prior,
+            state -> assertTrue(state.complete),
+            new TransferControl());
+      }
+      assertEquals("NOT_REQUESTED", requestedRange);
+      assertArrayEquals(body, Files.readAllBytes(file.toPath()));
+    } finally {
+      file.delete();
+    }
+  }
+
+  @Test
+  public void noValidatorRestartsSafelyInsteadOfAppending() throws Exception {
+    File file = File.createTempFile("unvalidated-resume", ".part");
+    try {
+      byte[] prefix = Arrays.copyOf(body, 4096);
+      Files.write(file.toPath(), prefix);
+      DirectTransfer.State prior =
+          new DirectTransfer.State(prefix.length, body.length, "", "", hash(prefix), false, false);
+      DirectTransfer.State[] saved = {null};
+      try (RandomAccessFile target = new RandomAccessFile(file, "rw")) {
+        DirectTransfer.copy(
+            new HttpSource(url(), Collections.emptyMap()),
+            url(),
+            target.getChannel(),
+            prior,
+            state -> saved[0] = state,
+            new TransferControl());
+      }
+      assertTrue(saved[0].restarted);
+      assertNull(requestedRange);
+      assertArrayEquals(body, Files.readAllBytes(file.toPath()));
+    } finally {
+      file.delete();
+    }
+  }
 }

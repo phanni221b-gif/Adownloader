@@ -27,3 +27,5 @@ for kind in Direct Hls Dash; do
   adb shell am force-stop com.adownloader.app
   run_case "recover$kind"
 done
+
+run_case pauseCancelRetry

@@ -295,17 +295,25 @@ public final class MainActivity extends AppCompatActivity
                 return;
               }
               selectPage(R.id.nav_browser);
-              browser.load(url);
+              if (initialLoaded) browser.load(url);
+              else {
+                currentUrl = url;
+                getIntent().setData(Uri.parse(url));
+              }
             });
   }
 
   private void handleJobIntent() {
-    if ("RESUME_JOB".equals(getIntent().getAction())) {
+    if ("RESUME_JOB".equals(getIntent().getAction())
+        || "OPEN_JOB_PAGE".equals(getIntent().getAction())) {
       long id = getIntent().getLongExtra("job", -1);
       getIntent().removeExtra("job");
       if (id > 0) {
-        com.adownloader.app.jobs.DownloadJobs.get(this).action(id, "RESUME", null);
-        selectPage(R.id.nav_downloads);
+        if ("OPEN_JOB_PAGE".equals(getIntent().getAction())) openJobPage(id);
+        else {
+          com.adownloader.app.jobs.DownloadJobs.get(this).action(id, "RESUME", null);
+          selectPage(R.id.nav_downloads);
+        }
       }
     }
   }

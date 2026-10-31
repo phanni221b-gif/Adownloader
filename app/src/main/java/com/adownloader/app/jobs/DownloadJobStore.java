@@ -252,8 +252,8 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
       throw new IllegalArgumentException("Not terminal");
     for (Job job : list())
       if (job.state == state) {
-        cleanup(job.id);
-        getWritableDatabase().delete("jobs", "id=?", new String[] {"" + job.id});
+        if (cleanup(job.id))
+          getWritableDatabase().delete("jobs", "id=?", new String[] {"" + job.id});
       }
     changed();
   }
@@ -316,6 +316,7 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
     v.put("percent", 100);
     v.put("updated", System.currentTimeMillis());
     v.putNull("secret");
+    v.putNull("pending");
     update(v, "id=? AND state='FINALIZING'", new String[] {"" + id});
   }
 
@@ -346,24 +347,42 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
     }
   }
 
-  public synchronized void cleanup(long id) {
-    Job j = get(id);
-    if (j != null && !j.pending.isEmpty() && j.state != State.COMPLETED)
+  public synchronized boolean cleanup(long id) {
+    Job job = get(id);
+    if (job == null) return true;
+    boolean pendingDone = true, filesDone = true;
+    if (!job.pending.isEmpty() && job.state != State.COMPLETED) {
       try {
-        context.getContentResolver().delete(Uri.parse(j.pending), null, null);
-      } catch (Exception ignored) {
+        Uri uri = Uri.parse(job.pending);
+        context.getContentResolver().delete(uri, null, null);
+        try (Cursor c =
+            context
+                .getContentResolver()
+                .query(uri, new String[] {MediaStore.MediaColumns._ID}, null, null, null)) {
+          pendingDone = c == null || !c.moveToFirst();
+        }
+      } catch (Exception failure) {
+        pendingDone = false;
       }
+    }
     try {
-      delete(directory(id));
-    } catch (IOException ignored) {
+      delete(new File(context.getFilesDir(), getDatabaseName().replace(".db", "") + "/" + id));
+    } catch (IOException failure) {
+      filesDone = false;
     }
-    getWritableDatabase().delete("parts", "job=?", new String[] {"" + id});
-    if (j != null && j.state != State.COMPLETED) {
-      ContentValues v = new ContentValues();
-      if (j.state == State.CANCELED) v.putNull("secret");
-      v.putNull("pending");
-      update(v, "id=?", new String[] {"" + id});
+    if (filesDone) getWritableDatabase().delete("parts", "job=?", new String[] {"" + id});
+    ContentValues values = new ContentValues();
+    if (pendingDone) values.putNull("pending");
+    if (job.state == State.CANCELED) values.putNull("secret");
+    if (!pendingDone || !filesDone) {
+      values.put("error", "CLEANUP_PENDING");
+      values.put("phase", "임시 파일 정리 대기");
+    } else if (job.error.equals("CLEANUP_PENDING")) {
+      values.put("error", "");
+      values.put("phase", "");
     }
+    if (values.size() > 0) update(values, "id=?", new String[] {"" + id});
+    return pendingDone && filesDone;
   }
 
   private static void delete(File f) throws IOException {
@@ -378,7 +397,7 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
 
   public synchronized void reconcile() {
     for (Job j : list()) {
-      if (j.state == State.CANCELED) {
+      if (j.state == State.CANCELED || j.state == State.COMPLETED) {
         cleanup(j.id);
         continue;
       }

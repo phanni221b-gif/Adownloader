@@ -92,13 +92,13 @@ public final class DirectTransfer {
       throw new DownloadError(DownloadError.Category.STORAGE);
     target.truncate(done);
     target.position(done);
-    if (prior.complete && done > 0 && done == prior.total) {
+    if (prior.complete && done > 0 && (prior.total < 0 || done == prior.total)) {
       checkpoint.save(prior);
       return;
     }
     String validator =
         !prior.etag.isEmpty() && !prior.etag.startsWith("W/") ? prior.etag : prior.modified;
-    HttpURLConnection connection = source.resume(url, done, validator);
+    HttpURLConnection connection = source.resume(url, validator.isEmpty() ? 0 : done, validator);
     long total = -1;
     String etag = "", modified = "";
     try {
