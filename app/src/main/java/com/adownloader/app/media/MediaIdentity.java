@@ -14,8 +14,7 @@ public final class MediaIdentity {
     return hash(type + "|" + url);
   }
 
-  public static String logical(
-      MediaCandidate.MediaType type, String url, String page, String mime) {
+  public static String logical(MediaCandidate.MediaType type, String url, String page) {
     try {
       URI uri = URI.create(url);
       if (uri.getUserInfo() != null) return exact(type, url);

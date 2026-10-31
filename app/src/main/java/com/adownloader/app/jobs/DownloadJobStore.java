@@ -115,7 +115,7 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
       values.put("type", type);
       values.put("name", name);
       values.put("host", host == null ? "" : host);
-      values.put("has_page", request.has("page") ? 1 : 0);
+      values.put("has_page", hasPage(request) ? 1 : 0);
       values.put("state", State.QUEUED.name());
       values.put("created", now);
       values.put("updated", now);
@@ -285,6 +285,17 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
     return update(values, "id=? AND state=?", new String[] {"" + id, from.name()}) == 1;
   }
 
+  private static boolean hasPage(JSONObject request) {
+    try {
+      java.net.URI uri = java.net.URI.create(request.optString("page"));
+      return java.util.Set.of("http", "https").contains(uri.getScheme())
+          && uri.getHost() != null
+          && uri.getUserInfo() == null;
+    } catch (Exception invalid) {
+      return false;
+    }
+  }
+
   public synchronized Job needsRefresh(String identity) {
     try (Cursor c =
         getReadableDatabase()
@@ -306,6 +317,7 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
       writeContext(id, request);
       ContentValues values = new ContentValues();
       values.put("state", State.QUEUED.name());
+      values.put("has_page", hasPage(request) ? 1 : 0);
       values.put("error", "");
       values.put("name", name);
       values.put("phase", restart ? "새 주소 확인 · 처음부터 다시 받기" : "새 주소로 이어받기");

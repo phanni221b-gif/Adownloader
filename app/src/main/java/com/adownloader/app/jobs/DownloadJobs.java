@@ -378,6 +378,9 @@ public final class DownloadJobs {
         || failure instanceof TransferControl.Stopped) return;
     String message = "새 주소를 확인하지 못했습니다. 페이지에서 영상을 다시 재생해 주세요.";
     if (failure instanceof DownloadError
+        && ((DownloadError) failure).category == DownloadError.Category.UNSUPPORTED_FORMAT)
+      message = "이전 원본 화질과 구성을 유지하는 새 주소를 확인하지 못했습니다. 다른 영상은 미디어 목록에서 새로 선택해 주세요.";
+    if (failure instanceof DownloadError
         && ((DownloadError) failure).category == DownloadError.Category.STORAGE) {
       store.state(id, DownloadJobStore.State.FAILED, "STORAGE");
       message = "저장 공간 또는 임시 파일을 확인해 주세요.";

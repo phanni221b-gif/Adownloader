@@ -17,6 +17,12 @@ public class MediaIdentityTest {
           "network-response",
           "https://example.test/watch",
           Map.of("Cookie", "session=" + i));
+    detector.capture(
+        "https://cdn.example.test/files/movie-123.mp4?quality=2160&token=0",
+        "",
+        "performance-resource",
+        "https://example.test/watch",
+        Map.of());
     assertEquals(1, detector.snapshot().size());
     MediaCandidate newest = detector.snapshot().get(0);
     assertTrue(newest.getUrl().endsWith("token=99"));
@@ -89,5 +95,66 @@ public class MediaIdentityTest {
           "https://example.test",
           Map.of());
     assertEquals(200, d.snapshot().size());
+  }
+
+  @Test
+  public void repeatedSemanticQueryOrderIsNotNormalizedAway() {
+    MediaDetector d = new MediaDetector(null);
+    d.capture(
+        "https://cdn.test/movie-123.mp4?id=1&id=2&token=a",
+        "video/mp4",
+        "network-response",
+        "https://example.test",
+        Map.of());
+    d.capture(
+        "https://cdn.test/movie-123.mp4?id=2&id=1&token=b",
+        "video/mp4",
+        "network-response",
+        "https://example.test",
+        Map.of());
+    assertEquals(2, d.snapshot().size());
+  }
+
+  @Test
+  public void responseMimeOverridesAMisleadingFilename() {
+    MediaDetector d = new MediaDetector(null);
+    d.capture(
+        "https://cdn.test/login.mp4",
+        "text/html",
+        "network-response",
+        "https://example.test",
+        Map.of());
+    assertTrue(d.snapshot().isEmpty());
+    d.capture(
+        "https://cdn.test/audio.mp4",
+        "audio/mp4",
+        "network-response",
+        "https://example.test",
+        Map.of());
+    assertEquals(MediaCandidate.MediaType.AUDIO, d.snapshot().get(0).getType());
+    d.capture(
+        "https://cdn.test/video.m3u8",
+        "video/mp4",
+        "network-response",
+        "https://example.test",
+        Map.of());
+    assertEquals(MediaCandidate.MediaType.VIDEO, d.snapshot().get(1).getType());
+  }
+
+  @Test
+  public void confirmedAudioReplacesADomVideoGuess() {
+    MediaDetector d = new MediaDetector(null);
+    String url = "https://cdn.test/file.mp4";
+    d.capture(url, "", "dom-media", "https://example.test", Map.of());
+    d.capture(
+        url,
+        "audio/mp4",
+        "network-response",
+        "https://example.test",
+        Map.of("Cookie", "request=actual"));
+    d.capture(url, "", "performance-resource", "https://example.test", Map.of());
+    assertEquals(1, d.snapshot().size());
+    assertEquals(MediaCandidate.MediaType.AUDIO, d.snapshot().get(0).getType());
+    assertEquals("request=actual", d.snapshot().get(0).getHeaders().get("Cookie"));
   }
 }

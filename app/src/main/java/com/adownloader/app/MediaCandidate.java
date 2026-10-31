@@ -53,9 +53,7 @@ public final class MediaCandidate {
     this.metadata =
         Collections.unmodifiableMap(
             new LinkedHashMap<>(metadata == null ? Collections.emptyMap() : metadata));
-    this.identityKey =
-        com.adownloader.app.media.MediaIdentity.logical(
-            this.type, url, pageUrl, this.metadata.get("mime"));
+    this.identityKey = com.adownloader.app.media.MediaIdentity.logical(this.type, url, pageUrl);
   }
 
   public String getUrl() {

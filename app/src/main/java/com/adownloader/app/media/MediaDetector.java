@@ -50,6 +50,18 @@ public final class MediaDetector {
     if (path.matches(".*[.](m4s|ts|cmfv|cmfa)$")) return;
     MediaCandidate.MediaType type = classify(path, mime);
     if (type == MediaCandidate.MediaType.UNKNOWN) return;
+    for (Iterator<Map.Entry<String, MediaCandidate>> iterator = groups.entrySet().iterator();
+        iterator.hasNext(); ) {
+      MediaCandidate prior = iterator.next().getValue();
+      if (prior.getUrl().equals(clean) && prior.getType() != type) {
+        if ("network-response".equals(prior.getSource()) && !"network-response".equals(source))
+          return;
+        if ("network-response".equals(source) && !"network-response".equals(prior.getSource())) {
+          exact.remove(prior.getExactKey());
+          iterator.remove();
+        }
+      }
+    }
     Map<String, String> safe = new LinkedHashMap<>();
     if (headers != null)
       headers.forEach(
@@ -67,6 +79,11 @@ public final class MediaDetector {
         new MediaCandidate(clean, type, source, page, safe, System.currentTimeMillis(), meta);
     String exactKey = next.getExactKey(), key = exact.getOrDefault(exactKey, next.getIdentityKey());
     MediaCandidate previous = groups.get(key);
+    boolean authoritative =
+        previous != null
+            && "network-response".equals(previous.getSource())
+            && !"network-response".equals(source);
+    if (authoritative && !previous.getUrl().equals(clean)) return;
     if (previous != null && previous.getUrl().equals(clean)) {
       Map<String, String> merged = new LinkedHashMap<>(previous.getHeaders());
       merged.putAll(safe);
@@ -79,7 +96,7 @@ public final class MediaDetector {
           new MediaCandidate(
               clean,
               type,
-              source,
+              authoritative ? previous.getSource() : source,
               page == null ? previous.getPageUrl() : page,
               merged,
               System.currentTimeMillis(),
@@ -131,13 +148,23 @@ public final class MediaDetector {
   }
 
   private static MediaCandidate.MediaType classify(String path, String contentType) {
-    String mime = contentType == null ? "" : contentType.toLowerCase(Locale.ROOT);
-    if (path.endsWith(".m3u8") || mime.contains("mpegurl")) return MediaCandidate.MediaType.HLS;
-    if (path.endsWith(".mpd") || mime.contains("dash+xml")) return MediaCandidate.MediaType.DASH;
-    if (mime.startsWith("video/") || path.matches(".*[.](mp4|webm|m4v|mov|mkv)$"))
-      return MediaCandidate.MediaType.VIDEO;
-    if (mime.startsWith("audio/") || path.matches(".*[.](m4a|mp3|aac|ogg|opus)$"))
-      return MediaCandidate.MediaType.AUDIO;
+    String mime =
+        contentType == null ? "" : contentType.toLowerCase(Locale.ROOT).split(";", 2)[0].trim();
+    if (mime.contains("mpegurl")) return MediaCandidate.MediaType.HLS;
+    if (mime.contains("dash+xml")) return MediaCandidate.MediaType.DASH;
+    if (mime.startsWith("video/")) return MediaCandidate.MediaType.VIDEO;
+    if (mime.startsWith("audio/")) return MediaCandidate.MediaType.AUDIO;
+    if (!mime.isEmpty()
+        && !Set.of(
+                "application/octet-stream",
+                "application/force-download",
+                "binary/octet-stream",
+                "application/mp4")
+            .contains(mime)) return MediaCandidate.MediaType.UNKNOWN;
+    if (path.endsWith(".m3u8")) return MediaCandidate.MediaType.HLS;
+    if (path.endsWith(".mpd")) return MediaCandidate.MediaType.DASH;
+    if (path.matches(".*[.](mp4|webm|m4v|mov|mkv)$")) return MediaCandidate.MediaType.VIDEO;
+    if (path.matches(".*[.](m4a|mp3|aac|ogg|opus)$")) return MediaCandidate.MediaType.AUDIO;
     return MediaCandidate.MediaType.UNKNOWN;
   }
 }

@@ -456,7 +456,7 @@ public final class MainActivity extends AppCompatActivity
                             activity,
                             R.drawable.ic_download,
                             "새 주소로 이어서 진행",
-                            "기존 파일과 영상 구성을 검증합니다. 구성이 다르면 안전하게 다시 시작합니다.",
+                            "같은 영상인지 확인한 뒤 재개합니다. 영상 구성이 다르면 다시 받으며, 낮은 화질로는 자동 변경하지 않습니다.",
                             "취소",
                             "연결하고 재개",
                             () ->
