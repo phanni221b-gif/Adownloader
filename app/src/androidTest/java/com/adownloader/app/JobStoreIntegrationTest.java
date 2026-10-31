@@ -205,5 +205,24 @@ public class JobStoreIntegrationTest {
     store.close();
     store = new DownloadJobStore(context, "store-tests.db");
     assertEquals(1000, store.request(id).getJSONArray("stress-plan").length());
+    byte[] changed;
+    try (Cursor c =
+        store
+            .getReadableDatabase()
+            .rawQuery("SELECT data FROM contexts WHERE job=? AND part=0", new String[] {"" + id})) {
+      assertTrue(c.moveToFirst());
+      changed = c.getBlob(0);
+    }
+    changed[100] ^= 1;
+    ContentValues values = new ContentValues();
+    values.put("data", changed);
+    store
+        .getWritableDatabase()
+        .update("contexts", values, "job=? AND part=0", new String[] {"" + id});
+    try {
+      store.request(id);
+      fail("Modified ciphertext must not be accepted");
+    } catch (java.security.GeneralSecurityException expected) {
+    }
   }
 }

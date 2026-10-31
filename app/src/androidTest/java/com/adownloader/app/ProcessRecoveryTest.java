@@ -87,7 +87,7 @@ public class ProcessRecoveryTest {
                 .getReadableDatabase()
                 .rawQuery("SELECT COUNT(*) FROM parts WHERE job=?", new String[] {"" + id[0]})) {
           cursor.moveToFirst();
-          committed = cursor.getInt(0) > 0;
+          committed = cursor.getInt(0) >= (type == MediaCandidate.MediaType.DASH ? 2 : 1);
         }
       if (committed) {
         assertNotEquals(DownloadJobStore.State.COMPLETED, job.state);
@@ -115,7 +115,7 @@ public class ProcessRecoveryTest {
     if (!direct) {
       List<ManifestParser.Track> plan =
           PlanCodec.decode(jobs.store.request(id).getJSONArray("plan"));
-      firstPart = Uri.parse(plan.get(0).parts.get(0).url).getPath();
+      firstPart = Uri.parse(plan.get(0).parts.get(kind.equals("dash") ? 1 : 0).url).getPath();
     }
     instrumentation.runOnMainSync(() -> jobs.action(id, "RESUME", null));
     long deadline = System.currentTimeMillis() + 60000;
