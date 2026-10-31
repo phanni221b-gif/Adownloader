@@ -27,7 +27,7 @@ public final class UiSheets {
             BottomSheetBehavior<?> behavior=dialog.getBehavior();
             behavior.setMaxWidth(Math.min(bounds.width(),dp(activity,640)));
             behavior.setMaxHeight((int)(bounds.height()*0.88f));
-            if(tall)content.getLayoutParams().height=(int)(bounds.height()*0.78f);
+            if(tall)content.getLayoutParams().height=ViewGroup.LayoutParams.WRAP_CONTENT;
             content.requestLayout();
         };
         content.addOnLayoutChangeListener((v,l,t,r,b,oldL,oldT,oldR,oldB)->resize.run());

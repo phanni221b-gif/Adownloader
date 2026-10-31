@@ -1,5 +1,5 @@
 <resources>
-    <style name="Theme.Adownloader" parent="Theme.Material3.DayNight.NoActionBar">
+    <style name="Base.Theme.Adownloader" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="colorPrimary">@color/brand</item>
         <item name="colorOnPrimary">@color/on_brand</item>
         <item name="colorPrimaryContainer">@color/brand_soft</item>
@@ -23,22 +23,33 @@
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:enforceNavigationBarContrast">false</item>
         <item name="android:fontFamily">sans</item>
-        <item name="android:windowLightStatusBar">true</item>
-        <item name="android:windowLightNavigationBar">true</item>
         <item name="android:windowActionModeOverlay">true</item>
         <item name="bottomSheetDialogTheme">@style/ThemeOverlay.Adownloader.Sheet</item>
         <item name="shapeAppearanceSmallComponent">@style/Shape.Adownloader</item>
         <item name="shapeAppearanceMediumComponent">@style/Shape.Adownloader</item>
+    </style>
+    <style name="Theme.Adownloader" parent="Base.Theme.Adownloader">
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
     </style>
     <style name="Shape.Adownloader" parent="ShapeAppearance.Material3.Corner.Medium">
         <item name="cornerSize">14dp</item>
     </style>
     <style name="ThemeOverlay.Adownloader.Sheet" parent="ThemeOverlay.Material3.BottomSheetDialog">
         <item name="bottomSheetStyle">@style/Widget.Adownloader.Sheet</item>
+        <item name="colorSurface">@color/surface</item>
+        <item name="colorSurfaceContainerLow">@color/surface</item>
+        <item name="elevationOverlayEnabled">false</item>
     </style>
     <style name="Widget.Adownloader.Sheet" parent="Widget.Material3.BottomSheet.Modal">
         <item name="shapeAppearanceOverlay">@style/Shape.Adownloader.Sheet</item>
         <item name="backgroundTint">@color/surface</item>
+        <item name="paddingBottomSystemWindowInsets">false</item>
+        <item name="paddingTopSystemWindowInsets">false</item>
+        <item name="paddingLeftSystemWindowInsets">false</item>
+        <item name="paddingRightSystemWindowInsets">false</item>
+        <item name="marginLeftSystemWindowInsets">false</item>
+        <item name="marginRightSystemWindowInsets">false</item>
     </style>
     <style name="Shape.Adownloader.Sheet">
         <item name="cornerFamily">rounded</item>

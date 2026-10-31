@@ -114,10 +114,10 @@ public final class RecordsController implements SharedPreferences.OnSharedPrefer
     }
     private void thumbnail(ImageView view,JSONObject row){
         String uri=row.optString("uri");view.setTag(uri);view.setImageResource(R.drawable.ic_media);view.setImageTintList(android.content.res.ColorStateList.valueOf(activity.getColor(R.color.ink_muted)));
-        view.setPadding(0,0,0,0);
+        int padding=UiSheets.dp(activity,12);view.setPadding(padding,padding,padding,padding);view.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         if(uri.isEmpty())return;Bitmap cached=thumbnails.get(uri);
-        if(cached!=null){view.setImageTintList(null);view.setImageBitmap(cached);return;}
-        images.execute(()->{try{Bitmap bitmap=activity.getContentResolver().loadThumbnail(Uri.parse(uri),new Size(480,270),null);thumbnails.put(uri,bitmap);main.post(()->{if(!disposed&&uri.equals(view.getTag())){view.setImageTintList(null);view.setImageBitmap(bitmap);}});}catch(Exception ignored){}});
+        if(cached!=null){view.setImageTintList(null);view.setPadding(0,0,0,0);view.setScaleType(ImageView.ScaleType.CENTER_CROP);view.setImageBitmap(cached);return;}
+        images.execute(()->{try{Bitmap bitmap=activity.getContentResolver().loadThumbnail(Uri.parse(uri),new Size(480,270),null);thumbnails.put(uri,bitmap);main.post(()->{if(!disposed&&uri.equals(view.getTag())){view.setImageTintList(null);view.setPadding(0,0,0,0);view.setScaleType(ImageView.ScaleType.CENTER_CROP);view.setImageBitmap(bitmap);}});}catch(Exception ignored){}});
     }
     private String date(JSONObject row){return android.text.format.DateFormat.format("MM.dd HH:mm",row.optLong("time")).toString();}
     private String facts(JSONObject row){List<String> values=new ArrayList<>();if(row.optLong("height")>0)values.add(row.optLong("height")+"p");if(row.optLong("bytes")>0)values.add(DownloadHistory.size(activity,row.optLong("bytes")));values.add(date(row));return android.text.TextUtils.join(" · ",values);}
