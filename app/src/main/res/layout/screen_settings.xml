@@ -1,0 +1,29 @@
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:fillViewport="true">
+    <LinearLayout android:id="@+id/settings_content" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="24dp">
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="설정" android:textAppearance="@style/UiTitle" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="28dp" android:text="브라우저" android:textAppearance="@style/UiSection" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/setting_popups" style="@style/UiSetting" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="팝업 허용 사이트 관리" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/setting_reset_popups" style="@style/UiSetting" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="팝업 허용 기록 초기화" />
+        <View android:layout_width="match_parent" android:layout_height="1dp" android:background="@color/outline" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="24dp" android:text="다운로드" android:textAppearance="@style/UiSection" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:text="최고 원본 화질 자동 선택" android:textColor="@color/ink" android:textSize="16sp" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:text="Movies / Adownloader\nMusic / Adownloader" android:textAppearance="@style/UiBody" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/setting_background" style="@style/UiSetting" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="백그라운드 다운로드 상태" />
+        <TextView android:id="@+id/background_state" android:layout_width="match_parent" android:layout_height="wrap_content" android:textAppearance="@style/UiBody" android:layout_marginBottom="20dp" />
+        <View android:layout_width="match_parent" android:layout_height="1dp" android:background="@color/outline" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="24dp" android:text="화면" android:textAppearance="@style/UiSection" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/setting_theme" style="@style/UiSetting" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="테마 · 시스템 설정" />
+        <View android:layout_width="match_parent" android:layout_height="1dp" android:background="@color/outline" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="24dp" android:text="개인정보" android:textAppearance="@style/UiSection" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:layout_marginBottom="24dp" android:text="계정, 클라우드 저장, 광고 분석을 사용하지 않습니다." android:textAppearance="@style/UiBody" />
+        <View android:layout_width="match_parent" android:layout_height="1dp" android:background="@color/outline" />
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="24dp">
+            <ImageView android:layout_width="48dp" android:layout_height="48dp" android:src="@drawable/adownloader_launcher_artwork" android:importantForAccessibility="no" />
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="16dp" android:orientation="vertical">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Adownloader" android:textColor="@color/ink" android:textSize="18sp" android:textStyle="bold" />
+                <TextView android:id="@+id/app_version" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textAppearance="@style/UiBody" />
+            </LinearLayout>
+        </LinearLayout>
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:text="GeckoView 159 · DRM 우회 기능 없음" android:textAppearance="@style/UiBody" />
+    </LinearLayout>
+</ScrollView>

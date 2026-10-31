@@ -1,10 +1,94 @@
 <resources>
-    <style name="Theme.Adownloader" parent="android:style/Theme.Material.Light.NoActionBar">
+    <style name="Base.Theme.Adownloader" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/brand</item>
+        <item name="colorOnPrimary">@color/on_brand</item>
+        <item name="colorPrimaryContainer">@color/brand_soft</item>
+        <item name="colorOnPrimaryContainer">@color/brand</item>
+        <item name="colorSecondary">@color/brand</item>
+        <item name="colorSecondaryContainer">@color/brand_soft</item>
+        <item name="colorOnSecondaryContainer">@color/brand</item>
+        <item name="android:colorBackground">@color/canvas</item>
+        <item name="colorSurface">@color/surface</item>
+        <item name="colorSurfaceDim">@color/surface_muted</item>
+        <item name="colorSurfaceBright">@color/surface</item>
+        <item name="colorSurfaceContainerLowest">@color/surface</item>
+        <item name="colorSurfaceContainerLow">@color/canvas</item>
+        <item name="colorSurfaceContainer">@color/surface_muted</item>
+        <item name="colorSurfaceContainerHigh">@color/surface_muted</item>
+        <item name="colorSurfaceContainerHighest">@color/surface_muted</item>
+        <item name="colorOnSurface">@color/ink</item>
+        <item name="colorOnSurfaceVariant">@color/ink_muted</item>
+        <item name="colorOutline">@color/outline</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
         <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#D81B60</item>
-        <item name="android:navigationBarColor">#FFFFFF</item>
-        <item name="android:statusBarColor">#FFFFFF</item>
-        <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowActionModeOverlay">true</item>
+        <item name="bottomSheetDialogTheme">@style/ThemeOverlay.Adownloader.Sheet</item>
+        <item name="shapeAppearanceSmallComponent">@style/Shape.Adownloader</item>
+        <item name="shapeAppearanceMediumComponent">@style/Shape.Adownloader</item>
+    </style>
+    <style name="Theme.Adownloader" parent="Base.Theme.Adownloader">
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+    <style name="Shape.Adownloader" parent="ShapeAppearance.Material3.Corner.Medium">
+        <item name="cornerSize">14dp</item>
+    </style>
+    <style name="ThemeOverlay.Adownloader.Sheet" parent="ThemeOverlay.Material3.BottomSheetDialog">
+        <item name="bottomSheetStyle">@style/Widget.Adownloader.Sheet</item>
+        <item name="colorSurface">@color/surface</item>
+        <item name="colorSurfaceContainerLow">@color/surface</item>
+        <item name="elevationOverlayEnabled">false</item>
+    </style>
+    <style name="Widget.Adownloader.Sheet" parent="Widget.Material3.BottomSheet.Modal">
+        <item name="shapeAppearanceOverlay">@style/Shape.Adownloader.Sheet</item>
+        <item name="backgroundTint">@color/surface</item>
+        <item name="paddingBottomSystemWindowInsets">false</item>
+        <item name="paddingTopSystemWindowInsets">false</item>
+        <item name="paddingLeftSystemWindowInsets">false</item>
+        <item name="paddingRightSystemWindowInsets">false</item>
+        <item name="marginLeftSystemWindowInsets">false</item>
+        <item name="marginRightSystemWindowInsets">false</item>
+    </style>
+    <style name="Shape.Adownloader.Sheet">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSizeTopLeft">24dp</item>
+        <item name="cornerSizeTopRight">24dp</item>
+    </style>
+    <style name="UiIconButton">
+        <item name="android:layout_width">44dp</item>
+        <item name="android:layout_height">48dp</item>
+        <item name="android:background">?attr/selectableItemBackgroundBorderless</item>
+        <item name="android:padding">11dp</item>
+        <item name="tint">@color/icon_tint</item>
+        <item name="android:focusable">true</item>
+    </style>
+    <style name="UiTitle" parent="TextAppearance.Material3.HeadlineMedium">
+        <item name="android:textColor">@color/ink</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+    <style name="UiBody" parent="TextAppearance.Material3.BodyMedium">
+        <item name="android:textColor">@color/ink_muted</item>
+    </style>
+    <style name="UiSection" parent="TextAppearance.Material3.LabelLarge">
+        <item name="android:textColor">@color/brand</item>
+    </style>
+    <style name="UiAction" parent="Widget.Material3.Button">
+        <item name="cornerRadius">14dp</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:textAllCaps">false</item>
+    </style>
+    <style name="UiTextAction" parent="Widget.Material3.Button.TextButton">
+        <item name="android:minHeight">48dp</item>
+        <item name="android:textAllCaps">false</item>
+    </style>
+    <style name="UiSetting" parent="Widget.Material3.Button.TextButton">
+        <item name="android:gravity">start|center_vertical</item>
+        <item name="android:paddingLeft">0dp</item>
+        <item name="android:paddingRight">0dp</item>
+        <item name="android:minHeight">56dp</item>
+        <item name="android:textColor">@color/ink</item>
+        <item name="android:textAllCaps">false</item>
     </style>
 </resources>

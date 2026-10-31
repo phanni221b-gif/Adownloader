@@ -1,0 +1,6 @@
+<resources>
+    <style name="Widget.Adownloader.NavIndicator" parent="Widget.Material3.BottomNavigationView.ActiveIndicator">
+        <item name="android:color">@color/brand_soft</item>
+        <item name="android:height">28dp</item>
+    </style>
+</resources>

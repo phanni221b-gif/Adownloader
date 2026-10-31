@@ -1,0 +1,6 @@
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@+id/menu_home" android:title="홈" />
+    <item android:id="@+id/menu_reload" android:title="새로고침" />
+    <item android:id="@+id/menu_clear_media" android:title="감지 목록 비우기" />
+    <item android:id="@+id/menu_settings" android:title="설정" />
+</menu>

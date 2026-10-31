@@ -37,7 +37,7 @@ CI also runs Android 36 x86_64 integration tests (`-PtestAbi=x86_64` is for the 
 The private RSA-4096 key is never in this repository, logs, artifacts or Releases. It is retained separately with a Windows-DPAPI protected password. The public certificate and SHA-256 fingerprint accompany each release. Signing is intentionally local; GitHub has no signing secret configured by this change. CI only uploads explicitly unsigned build artifacts and never publishes them as installable Releases.
 
 ```powershell
-./ci/sign-release.ps1 -UnsignedApk app/build/outputs/apk/release/app-release-unsigned.apk -OutputApk Adownloader-v0.4.0-arm64.apk -AndroidSdk <SDK-path> -KeyDirectory <private-key-directory>
+./ci/sign-release.ps1 -UnsignedApk app/build/outputs/apk/release/app-release-unsigned.apk -OutputApk Adownloader-v0.5.0-arm64.apk -AndroidSdk <SDK-path> -KeyDirectory <private-key-directory>
 ```
 
 The script reuses the existing key, refuses to regenerate it, aligns native libraries to 16 KiB, signs with APK v2/v3 and verifies the result. Android 11+ does not require v1 signing. Keep the keystore and a recoverable password backup for all future updates. DPAPI password files can only be decrypted under the same Windows account/machine; export a password backup to a password manager before migrating PCs. A new key cannot update an old installation signed by another key.
@@ -46,3 +46,11 @@ Publish only the verified signed APK, checksum, public certificate, verification
 
 Mozilla integration reference: https://firefox-source-docs.mozilla.org/mobile/android/geckoview/consumer/web-extensions.html
 Android media APIs: https://developer.android.com/reference/android/media/MediaMuxer
+
+## v0.5 UI layer
+
+Four XML-backed screens share one retained GeckoView. MainActivity owns only shell/lifecycle wiring; ui/ controllers own media sheets, downloads/library, settings and UI telemetry. Switching sections never creates a browser session. Light/dark configuration changes rebind the shell while reparenting the same GeckoView. Actual system/cutout/keyboard insets are applied once at the shell.
+
+DownloadService only exports UI progress and safe host/type/MediaStore metadata into the existing private bounded history; its completion intent also respects the default external player. DownloadEngine, HttpSource, ManifestParser, PostProcessor, BrowserSessionManager, MediaExtensionManager, MediaDetector and extension scripts are unchanged from v0.4. PopupController retains its policy with a bottom-sheet presentation and repeat-request debounce. No browser cookies or request URLs are persisted in download history.
+
+UI automation additionally verifies sheets, address navigation, browser-session identity across sections/themes/window resizing, actual completed-file library and external ACTION_VIEW, popup block/open-once/site grants, and relaunch persistence. The CI integration artifact includes phone/Fold-size screenshots in light and dark themes. These are emulator sizes, not a physical Galaxy Fold8 certification. Unknown byte totals/speeds/ETA are deliberately omitted rather than invented; current engine callbacks expose phase and percent. Audio/video container and quality selection are unchanged.

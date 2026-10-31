@@ -1,0 +1,6 @@
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@+id/nav_browser" android:title="브라우저" android:icon="@drawable/ic_browser" />
+    <item android:id="@+id/nav_downloads" android:title="다운로드" android:icon="@drawable/ic_download" />
+    <item android:id="@+id/nav_library" android:title="플레이어" android:icon="@drawable/ic_play" />
+    <item android:id="@+id/nav_settings" android:title="설정" android:icon="@drawable/ic_settings" />
+</menu>

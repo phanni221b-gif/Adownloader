@@ -1,0 +1,12 @@
+<resources>
+    <color name="brand">#BF246F</color>
+    <color name="brand_soft">#FBE7F0</color>
+    <color name="canvas">#FAFAFB</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="surface_muted">#F0F1F4</color>
+    <color name="ink">#202027</color>
+    <color name="ink_muted">#62636E</color>
+    <color name="outline">#E1E2E7</color>
+    <color name="danger">#BA3038</color>
+    <color name="on_brand">#FFFFFF</color>
+</resources>

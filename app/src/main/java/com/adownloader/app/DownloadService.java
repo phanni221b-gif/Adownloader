@@ -40,10 +40,11 @@ public final class DownloadService extends Service {
         if(url==null || type==null){if(pending.get()==0)stopSelf();return START_NOT_STICKY;}
         int id=NEXT_ID.getAndIncrement();pending.incrementAndGet();
         startForeground(FOREGROUND_ID,notification("Adownloader","다운로드 준비 중",true,0,null));
-        save(id,"대기 중",null);
+        com.adownloader.app.ui.DownloadHistory.begin(this,id,android.net.Uri.parse(url).getHost(),type);
         executor.execute(()->{
             DownloadEngine engine=new DownloadEngine(getCacheDir(),(text,percent)->{
                 getSystemService(NotificationManager.class).notify(FOREGROUND_ID,notification("Adownloader",text,true,percent,null));
+                com.adownloader.app.ui.DownloadHistory.progress(this,id,text,percent);
             });
             try{
                 Map<String,String> headers=new LinkedHashMap<>();
@@ -52,7 +53,7 @@ public final class DownloadService extends Service {
                 DownloadEngine.Result result=engine.download(url,MediaCandidate.MediaType.valueOf(type),headers);
                 Uri uri=publish(result,id);save(id,"완료",uri.toString());
                 Intent open=new Intent(Intent.ACTION_VIEW).setDataAndType(uri,result.mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                PendingIntent action=PendingIntent.getActivity(this,id,Intent.createChooser(open,"미디어 열기"),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
+                PendingIntent action=PendingIntent.getActivity(this,id,open,PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
                 getSystemService(NotificationManager.class).notify(id,notification("다운로드 완료","탭해서 미디어 열기",false,100,action));
             }catch(Exception error){
                 // Do not put signed URLs, cookies or server messages in notifications or logs.
@@ -65,12 +66,7 @@ public final class DownloadService extends Service {
         });
         return START_NOT_STICKY;
     }
-    private String safeReason(Exception error){
-        String message=error.getMessage();
-        if(message==null || message.contains("://") || message.length()>100)return "네트워크 또는 미디어 형식을 확인해 주세요";
-        if(error instanceof IllegalArgumentException && error.getCause()!=null)return "지원하지 않는 미디어 목록 형식";
-        return message;
-    }
+    private String safeReason(Exception error){ return com.adownloader.app.ui.DownloadHistory.userError(error.getMessage()); }
     private Uri publish(DownloadEngine.Result result,int id)throws Exception{
         boolean audio=result.mime.startsWith("audio/");
         ContentValues values=new ContentValues();values.put(MediaStore.MediaColumns.DISPLAY_NAME,"Adownloader_"+System.currentTimeMillis()+"_"+id+result.extension);
@@ -84,15 +80,7 @@ public final class DownloadService extends Service {
             values.clear();values.put(MediaStore.MediaColumns.IS_PENDING,0);getContentResolver().update(uri,values,null,null);return uri;
         }catch(Exception error){getContentResolver().delete(uri,null,null);throw error;}
     }
-    private synchronized void save(int id,String state,String uri){
-        android.content.SharedPreferences prefs=getSharedPreferences("downloads",MODE_PRIVATE);
-        try{
-            JSONObject all=new JSONObject(prefs.getString("items","{}"));JSONObject item=new JSONObject();item.put("state",state);item.put("time",System.currentTimeMillis());if(uri!=null)item.put("uri",uri);all.put(Integer.toString(id),item);
-            List<String> keys=new ArrayList<>();Iterator<String> iterator=all.keys();while(iterator.hasNext())keys.add(iterator.next());
-            keys.sort((a,b)->Long.compare(all.optJSONObject(a).optLong("time"),all.optJSONObject(b).optLong("time")));
-            while(keys.size()>100)all.remove(keys.remove(0));prefs.edit().putString("items",all.toString()).apply();
-        }catch(Exception ignored){}
-    }
+    private void save(int id,String state,String uri){ com.adownloader.app.ui.DownloadHistory.state(this,id,state,uri); }
     @Override public void onTimeout(int startId,int fgsType){executor.shutdownNow();stopForeground(STOP_FOREGROUND_REMOVE);stopSelf();}
     @Override public void onDestroy(){executor.shutdown();if(wakeLock!=null&&wakeLock.isHeld())wakeLock.release();super.onDestroy();}
 }

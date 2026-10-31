@@ -1,1 +1,3 @@
-<inset xmlns:android="http://schemas.android.com/apk/res/android" android:drawable="@drawable/adownloader_bitmap_icon" android:inset="18%" />
+<inset xmlns:android="http://schemas.android.com/apk/res/android" android:inset="18%">
+    <bitmap android:src="@drawable/adownloader_launcher_artwork" android:gravity="fill" />
+</inset>
