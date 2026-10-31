@@ -123,16 +123,23 @@ public final class RecordsController implements SharedPreferences.OnSharedPrefer
 
   @Override
   public void onSharedPreferenceChanged(SharedPreferences shared, String key) {
-    main.removeCallbacks(reload);
+    main.post(this::scheduleReload);
+  }
+
+  private boolean reloadPosted;
+
+  private void scheduleReload() {
+    if (disposed || reloadPosted) return;
+    reloadPosted = true;
     main.postDelayed(reload, 250);
   }
 
-  private final Runnable reload = () -> refresh(false);
-  private final Runnable jobChanged =
+  private final Runnable reload =
       () -> {
-        main.removeCallbacks(reload);
-        main.postDelayed(reload, 250);
+        reloadPosted = false;
+        refresh(false);
       };
+  private final Runnable jobChanged = () -> main.post(this::scheduleReload);
 
   public void refresh(boolean force) {
     if (disposed) return;

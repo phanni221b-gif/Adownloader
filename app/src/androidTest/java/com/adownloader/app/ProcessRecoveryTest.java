@@ -207,6 +207,9 @@ public class ProcessRecoveryTest {
                 }));
     assertTrue(ready.await(15, TimeUnit.SECONDS));
     assertTrue(id[0] > 0);
+    ContentValues name = new ContentValues();
+    name.put("name", "Fixture " + id[0]);
+    jobs.store.getWritableDatabase().update("jobs", name, "id=?", new String[] {"" + id[0]});
     return id[0];
   }
 
@@ -295,12 +298,23 @@ public class ProcessRecoveryTest {
   }
 
   private void tap(String resource, String text) throws Exception {
+    tapJob(-1, resource, text);
+  }
+
+  private void tapJob(long job, String resource, String text) throws Exception {
     androidx.test.uiautomator.Configurator.getInstance().setWaitForIdleTimeout(0);
     androidx.test.uiautomator.UiDevice device =
         androidx.test.uiautomator.UiDevice.getInstance(instrumentation);
     androidx.test.uiautomator.BySelector selector =
         androidx.test.uiautomator.By.res("com.adownloader.app", resource);
     if (text != null) selector = selector.text(text);
+    if (job > 0)
+      selector =
+          selector.hasAncestor(
+              androidx.test.uiautomator.By.res("com.adownloader.app", "download_row")
+                  .hasDescendant(
+                      androidx.test.uiautomator.By.res("com.adownloader.app", "item_title")
+                          .text("Fixture " + job)));
     androidx.test.uiautomator.UiObject2 view =
         device.wait(androidx.test.uiautomator.Until.findObject(selector), 10000);
     assertNotNull("Missing actionable UI: " + resource, view);
@@ -328,14 +342,14 @@ public class ProcessRecoveryTest {
     long first = enqueue(jobs, "/process/direct");
     checkpoint(jobs, first);
     tap("nav_downloads", null);
-    tap("item_primary", "일시정지");
+    tapJob(first, "item_primary", "일시정지");
     await(jobs, first, DownloadJobStore.State.PAUSED);
-    tap("item_primary", "재개");
+    tapJob(first, "item_primary", "재개");
     DownloadJobStore.Job complete = await(jobs, first, DownloadJobStore.State.COMPLETED);
     context.getContentResolver().delete(Uri.parse(complete.uri), null, null);
     long canceled = enqueue(jobs, "/process/direct");
     checkpoint(jobs, canceled);
-    tap("item_secondary", "취소");
+    tapJob(canceled, "item_secondary", "취소");
     tap("action_confirm", "취소");
     assertTrue(
         "Cancel confirmation must be dismissed",
