@@ -30,6 +30,29 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
     public int percent, segment, segments, pid;
     public String identity, type, name, host, phase, error, pending, uri, etag, modified, hash;
     public State state;
+    public boolean hasPage;
+  }
+
+  private static final java.util.concurrent.CopyOnWriteArraySet<Runnable> listeners =
+      new java.util.concurrent.CopyOnWriteArraySet<>();
+
+  public static void observe(Runnable listener) {
+    listeners.add(listener);
+  }
+
+  public static void unobserve(Runnable listener) {
+    listeners.remove(listener);
+  }
+
+  private static void changed() {
+    for (Runnable listener : listeners) listener.run();
+  }
+
+  private int update(ContentValues values, String where, String[] args) {
+    SQLiteDatabase database = getWritableDatabase();
+    int count = database.update("jobs", values, where, args);
+    changed();
+    return count;
   }
 
   private final Context context;
@@ -58,8 +81,9 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
             + " NOT NULL,updated INTEGER NOT NULL,bytes INTEGER NOT NULL DEFAULT 0,total"
             + " INTEGER,percent INTEGER NOT NULL DEFAULT 0,segment INTEGER NOT NULL DEFAULT"
             + " 0,segments INTEGER,phase TEXT NOT NULL DEFAULT '',error TEXT NOT NULL DEFAULT"
-            + " '',pending TEXT,uri TEXT,pid INTEGER NOT NULL DEFAULT 0,etag TEXT,modified"
-            + " TEXT,hash TEXT,secret BLOB)");
+            + " '',has_page INTEGER NOT NULL DEFAULT 0,priority INTEGER NOT NULL DEFAULT 0,pending"
+            + " TEXT,uri TEXT,pid INTEGER NOT NULL DEFAULT 0,etag TEXT,modified TEXT,hash"
+            + " TEXT,secret BLOB)");
     db.execSQL("CREATE INDEX jobs_queue ON jobs(state,created)");
     db.execSQL(
         "CREATE TABLE parts(job INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,track"
@@ -84,6 +108,7 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
       values.put("type", type);
       values.put("name", name);
       values.put("host", host == null ? "" : host);
+      values.put("has_page", request.has("page") ? 1 : 0);
       values.put("state", State.QUEUED.name());
       values.put("created", now);
       values.put("updated", now);
@@ -93,6 +118,7 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
       return id;
     } finally {
       db.endTransaction();
+      changed();
     }
   }
 
@@ -111,7 +137,7 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
       throw new DownloadError(DownloadError.Category.MANIFEST_INVALID);
     ContentValues values = new ContentValues();
     values.put("secret", secrets.seal(id, text));
-    getWritableDatabase().update("jobs", values, "id=?", new String[] {"" + id});
+    update(values, "id=?", new String[] {"" + id});
   }
 
   public synchronized Job get(long id) {
@@ -127,8 +153,9 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
         getReadableDatabase()
             .rawQuery(
                 "SELECT * FROM jobs ORDER BY CASE state WHEN 'PREPARING' THEN 0 WHEN 'DOWNLOADING'"
-                    + " THEN 0 WHEN 'FINALIZING' THEN 0 WHEN 'QUEUED' THEN 1 ELSE 2 END,created"
-                    + " DESC",
+                    + " THEN 0 WHEN 'FINALIZING' THEN 0 WHEN 'QUEUED' THEN 1 ELSE 2 END,CASE WHEN"
+                    + " state='QUEUED' THEN priority END DESC,CASE WHEN state='QUEUED' THEN created"
+                    + " END ASC,created DESC",
                 null)) {
       while (cursor.moveToNext()) jobs.add(read(cursor));
     }
@@ -159,6 +186,7 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
     j.modified = str(c, "modified");
     j.hash = str(c, "hash");
     j.pid = (int) num(c, "pid");
+    j.hasPage = num(c, "has_page") != 0;
     return j;
   }
 
@@ -177,7 +205,9 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
     try {
       long id = -1;
       try (Cursor c =
-          db.rawQuery("SELECT id FROM jobs WHERE state='QUEUED' ORDER BY created LIMIT 1", null)) {
+          db.rawQuery(
+              "SELECT id FROM jobs WHERE state='QUEUED' ORDER BY priority DESC,created,id LIMIT 1",
+              null)) {
         if (c.moveToFirst()) id = c.getLong(0);
       }
       if (id < 0) return null;
@@ -193,15 +223,39 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
     }
   }
 
+  public synchronized boolean transition(long id, State from, State to) {
+    ContentValues values = new ContentValues();
+    values.put("state", to.name());
+    values.put("updated", System.currentTimeMillis());
+    return update(values, "id=? AND state=?", new String[] {"" + id, from.name()}) == 1;
+  }
+
+  public synchronized void prioritize(long id) {
+    getWritableDatabase()
+        .execSQL(
+            "UPDATE jobs SET priority=(SELECT COALESCE(MAX(priority),0)+1 FROM jobs) WHERE id=? AND"
+                + " state='QUEUED'",
+            new Object[] {id});
+    changed();
+  }
+
+  public synchronized void clearTerminal(State state) {
+    if (state != State.COMPLETED && state != State.FAILED && state != State.CANCELED)
+      throw new IllegalArgumentException("Not terminal");
+    for (Job job : list())
+      if (job.state == state) {
+        cleanup(job.id);
+        getWritableDatabase().delete("jobs", "id=?", new String[] {"" + job.id});
+      }
+    changed();
+  }
+
   public synchronized boolean state(long id, State state, String error) {
     ContentValues v = new ContentValues();
     v.put("state", state.name());
     v.put("error", error == null ? "" : error);
     v.put("updated", System.currentTimeMillis());
-    return getWritableDatabase()
-            .update(
-                "jobs", v, "id=? AND state NOT IN ('COMPLETED','CANCELED')", new String[] {"" + id})
-        > 0;
+    return update(v, "id=? AND state NOT IN ('COMPLETED','CANCELED')", new String[] {"" + id}) > 0;
   }
 
   public synchronized void progress(
@@ -215,12 +269,7 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
     v.put("segment", segment);
     if (segments > 0) v.put("segments", segments);
     v.put("updated", System.currentTimeMillis());
-    getWritableDatabase()
-        .update(
-            "jobs",
-            v,
-            "id=? AND state IN ('PREPARING','DOWNLOADING','FINALIZING')",
-            new String[] {"" + id});
+    update(v, "id=? AND state IN ('PREPARING','DOWNLOADING','FINALIZING')", new String[] {"" + id});
   }
 
   public synchronized void directCheckpoint(long id, DirectTransfer.State s) throws Exception {
@@ -248,7 +297,7 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
   public synchronized void pending(long id, String uri) {
     ContentValues v = new ContentValues();
     v.put("pending", uri);
-    getWritableDatabase().update("jobs", v, "id=?", new String[] {"" + id});
+    update(v, "id=?", new String[] {"" + id});
   }
 
   public synchronized void complete(long id, String uri, String name) {
@@ -259,7 +308,7 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
     v.put("percent", 100);
     v.put("updated", System.currentTimeMillis());
     v.putNull("secret");
-    getWritableDatabase().update("jobs", v, "id=? AND state='FINALIZING'", new String[] {"" + id});
+    update(v, "id=? AND state='FINALIZING'", new String[] {"" + id});
   }
 
   public File directory(long id) throws IOException {
@@ -301,11 +350,11 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
     } catch (IOException ignored) {
     }
     getWritableDatabase().delete("parts", "job=?", new String[] {"" + id});
-    if (j != null && j.state == State.CANCELED) {
+    if (j != null && j.state != State.COMPLETED) {
       ContentValues v = new ContentValues();
-      v.putNull("secret");
+      if (j.state == State.CANCELED) v.putNull("secret");
       v.putNull("pending");
-      getWritableDatabase().update("jobs", v, "id=?", new String[] {"" + id});
+      update(v, "id=?", new String[] {"" + id});
     }
   }
 
@@ -340,7 +389,7 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
           if (c != null && c.moveToFirst() && c.getInt(0) == 0) {
             ContentValues v = new ContentValues();
             v.put("state", State.FINALIZING.name());
-            getWritableDatabase().update("jobs", v, "id=?", new String[] {"" + j.id});
+            update(v, "id=?", new String[] {"" + j.id});
             try (android.os.ParcelFileDescriptor descriptor =
                 context.getContentResolver().openFileDescriptor(Uri.parse(j.pending), "r")) {
               if (descriptor == null) throw new IOException("MISSING");

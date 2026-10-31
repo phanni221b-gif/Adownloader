@@ -83,16 +83,45 @@ public final class JobJournal implements EngineCheckpoint {
 
   @Override
   public boolean verified(File file, int track, int part) throws Exception {
-    String expected = store.partHash(id, track, part, file.length());
-    if (expected == null) return false;
-    if (!file.isFile() || !hash(file).equals(expected))
-      throw new DownloadError(DownloadError.Category.STORAGE);
-    return true;
+    try (android.database.Cursor cursor =
+        store
+            .getReadableDatabase()
+            .rawQuery(
+                "SELECT bytes,hash FROM parts WHERE job=? AND track=? AND part=?",
+                new String[] {"" + id, "" + track, "" + part})) {
+      if (!cursor.moveToFirst()) return false;
+      if (!file.isFile()
+          || file.length() != cursor.getLong(0)
+          || !hash(file).equals(cursor.getString(1)))
+        throw new DownloadError(DownloadError.Category.STORAGE);
+      return true;
+    }
   }
 
   @Override
   public void saved(File file, int track, int part) throws Exception {
     store.part(id, track, part, file.length(), hash(file));
+    int total = 0;
+    List<ManifestParser.Track> plan = loadPlan();
+    if (plan != null) for (ManifestParser.Track item : plan) total += item.parts.size();
+    try (android.database.Cursor cursor =
+        store
+            .getReadableDatabase()
+            .rawQuery(
+                "SELECT COALESCE(SUM(bytes),0),COUNT(*) FROM parts WHERE job=?",
+                new String[] {"" + id})) {
+      if (cursor.moveToFirst()) {
+        DownloadJobStore.Job job = store.get(id);
+        store.progress(
+            id,
+            job.phase,
+            total > 0 ? cursor.getInt(1) * 100 / total : 0,
+            cursor.getLong(0),
+            -1,
+            cursor.getInt(1),
+            total);
+      }
+    }
   }
 
   @Override
@@ -133,7 +162,7 @@ public final class JobJournal implements EngineCheckpoint {
             store.writeContext(id, current);
             store.progress(
                 id,
-                checkpoint.restarted ? "파일 변경 · 처음부터 다시 받는 중" : "원본 저장 중",
+                checkpoint.restarted ? "이어받기 불가 · 처음부터 다시 받는 중" : "원본 저장 중",
                 checkpoint.total > 0 ? (int) (checkpoint.bytes * 100 / checkpoint.total) : 0,
                 checkpoint.bytes,
                 checkpoint.total,

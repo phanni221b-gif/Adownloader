@@ -21,6 +21,17 @@ public final class TransferControl {
   }
 
   private volatile Stop stop = Stop.NONE;
+  private volatile boolean userRequested;
+
+  public boolean userRequested() {
+    return userRequested;
+  }
+
+  public void userStop(Stop reason) {
+    userRequested = true;
+    stop(reason);
+  }
+
   private volatile HttpURLConnection active;
 
   public void stop(Stop reason) {
