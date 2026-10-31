@@ -92,6 +92,9 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
         "CREATE TABLE parts(job INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,track"
             + " INTEGER NOT NULL,part INTEGER NOT NULL,bytes INTEGER NOT NULL,hash TEXT NOT"
             + " NULL,PRIMARY KEY(job,track,part))");
+    db.execSQL(
+        "CREATE TABLE contexts(job INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,part"
+            + " INTEGER NOT NULL,data BLOB NOT NULL,PRIMARY KEY(job,part))");
     db.execSQL("CREATE TABLE flags(name TEXT PRIMARY KEY)");
   }
 
@@ -126,24 +129,67 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
   }
 
   public synchronized JSONObject request(long id) throws Exception {
+    byte[] encrypted;
+    SQLiteDatabase db = getReadableDatabase();
     try (Cursor cursor =
-        getReadableDatabase()
-            .rawQuery("SELECT secret FROM jobs WHERE id=?", new String[] {"" + id})) {
+        db.rawQuery("SELECT secret FROM jobs WHERE id=?", new String[] {"" + id})) {
       if (!cursor.moveToFirst()) throw new IOException("JOB_MISSING");
-      return new JSONObject(secrets.open(id, cursor.getBlob(0)));
+      encrypted = cursor.getBlob(0);
     }
+    if (encrypted == null) {
+      ByteArrayOutputStream joined = new ByteArrayOutputStream();
+      try (Cursor cursor =
+          db.rawQuery(
+              "SELECT part,data FROM contexts WHERE job=? ORDER BY part", new String[] {"" + id})) {
+        int index = 0;
+        while (cursor.moveToNext()) {
+          if (cursor.getInt(0) != index++)
+            throw new java.security.GeneralSecurityException("CONTEXT_INVALID");
+          byte[] piece = cursor.getBlob(1);
+          if (piece == null
+              || piece.length > 512 * 1024
+              || joined.size() + (long) piece.length > 9 * 1024 * 1024)
+            throw new java.security.GeneralSecurityException("CONTEXT_TOO_LARGE");
+          joined.write(piece);
+        }
+      }
+      encrypted = joined.toByteArray();
+    }
+    return new JSONObject(secrets.open(id, encrypted));
   }
 
   public synchronized void writeContext(long id, JSONObject request) throws Exception {
     String text = request.toString();
     if (text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 8 * 1024 * 1024)
       throw new DownloadError(DownloadError.Category.MANIFEST_INVALID);
-    ContentValues values = new ContentValues();
     byte[] encrypted = secrets.seal(id, text);
-    if (encrypted.length > 1024 * 1024)
+    if (encrypted.length > 9 * 1024 * 1024)
       throw new DownloadError(DownloadError.Category.MANIFEST_INVALID);
-    values.put("secret", encrypted);
-    update(values, "id=?", new String[] {"" + id});
+    SQLiteDatabase db = getWritableDatabase();
+    db.beginTransaction();
+    try {
+      db.delete("contexts", "job=?", new String[] {"" + id});
+      ContentValues values = new ContentValues();
+      if (encrypted.length <= 512 * 1024) values.put("secret", encrypted);
+      else {
+        values.putNull("secret");
+        int part = 0;
+        for (int offset = 0; offset < encrypted.length; offset += 512 * 1024) {
+          ContentValues piece = new ContentValues();
+          piece.put("job", id);
+          piece.put("part", part++);
+          piece.put(
+              "data",
+              java.util.Arrays.copyOfRange(
+                  encrypted, offset, Math.min(encrypted.length, offset + 512 * 1024)));
+          db.insertOrThrow("contexts", null, piece);
+        }
+      }
+      db.update("jobs", values, "id=?", new String[] {"" + id});
+      db.setTransactionSuccessful();
+    } finally {
+      db.endTransaction();
+    }
   }
 
   public synchronized Job get(long id) {
@@ -317,7 +363,15 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
     v.put("updated", System.currentTimeMillis());
     v.putNull("secret");
     v.putNull("pending");
-    update(v, "id=? AND state='FINALIZING'", new String[] {"" + id});
+    SQLiteDatabase db = getWritableDatabase();
+    db.beginTransaction();
+    try {
+      if (update(v, "id=? AND state='FINALIZING'", new String[] {"" + id}) == 1)
+        db.delete("contexts", "job=?", new String[] {"" + id});
+      db.setTransactionSuccessful();
+    } finally {
+      db.endTransaction();
+    }
   }
 
   public File directory(long id) throws IOException {
@@ -373,7 +427,10 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
     if (filesDone) getWritableDatabase().delete("parts", "job=?", new String[] {"" + id});
     ContentValues values = new ContentValues();
     if (pendingDone) values.putNull("pending");
-    if (job.state == State.CANCELED) values.putNull("secret");
+    if (job.state == State.CANCELED || job.state == State.COMPLETED) {
+      values.putNull("secret");
+      getWritableDatabase().delete("contexts", "job=?", new String[] {"" + id});
+    }
     if (!pendingDone || !filesDone) {
       values.put("error", "CLEANUP_PENDING");
       values.put("phase", "임시 파일 정리 대기");

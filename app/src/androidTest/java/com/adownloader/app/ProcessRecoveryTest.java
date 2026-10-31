@@ -293,4 +293,35 @@ public class ProcessRecoveryTest {
     DownloadJobStore.Job resumedJob = await(jobs, immediate, DownloadJobStore.State.COMPLETED);
     context.getContentResolver().delete(Uri.parse(resumedJob.uri), null, null);
   }
+
+  private void tap(String resource, String text) throws Exception {
+    androidx.test.uiautomator.UiDevice device =
+        androidx.test.uiautomator.UiDevice.getInstance(instrumentation);
+    androidx.test.uiautomator.BySelector selector =
+        androidx.test.uiautomator.By.res("com.adownloader.app", resource);
+    if (text != null) selector = selector.text(text);
+    androidx.test.uiautomator.UiObject2 view =
+        device.wait(androidx.test.uiautomator.Until.findObject(selector), 10000);
+    assertNotNull("Missing actionable UI: " + resource, view);
+    view.click();
+  }
+
+  @Test
+  public void uiPauseResumeCancel() throws Exception {
+    DownloadJobs jobs = launch();
+    long first = enqueue(jobs, "/process/direct");
+    checkpoint(jobs, first);
+    tap("nav_downloads", null);
+    tap("item_primary", "일시정지");
+    await(jobs, first, DownloadJobStore.State.PAUSED);
+    tap("item_primary", "재개");
+    DownloadJobStore.Job complete = await(jobs, first, DownloadJobStore.State.COMPLETED);
+    context.getContentResolver().delete(Uri.parse(complete.uri), null, null);
+    long canceled = enqueue(jobs, "/process/direct");
+    checkpoint(jobs, canceled);
+    tap("item_secondary", "취소");
+    tap("action_confirm", "취소");
+    DownloadJobStore.Job stopped = await(jobs, canceled, DownloadJobStore.State.CANCELED);
+    assertEquals("", stopped.pending);
+  }
 }

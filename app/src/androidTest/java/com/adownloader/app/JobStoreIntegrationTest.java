@@ -173,7 +173,10 @@ public class JobStoreIntegrationTest {
     long id = job();
     JSONObject request = store.request(id);
     JSONArray parts = new JSONArray();
-    for (int i = 0; i < 1000; i++)
+    java.util.Random random = new java.util.Random(719);
+    for (int i = 0; i < 1000; i++) {
+      byte[] token = new byte[1500];
+      random.nextBytes(token);
       parts.put(
           new JSONObject()
               .put(
@@ -181,17 +184,26 @@ public class JobStoreIntegrationTest {
                   "https://cdn.example.test/asset/segment-"
                       + i
                       + ".m4s?Signature="
-                      + "A".repeat(1500))
+                      + android.util.Base64.encodeToString(
+                          token, android.util.Base64.URL_SAFE | android.util.Base64.NO_WRAP))
               .put("range", i * 4096));
+    }
     request.put("stress-plan", parts);
     store.writeContext(id, request);
     assertEquals(1000, store.request(id).getJSONArray("stress-plan").length());
     try (Cursor c =
         store
             .getReadableDatabase()
-            .rawQuery("SELECT length(secret) FROM jobs WHERE id=?", new String[] {"" + id})) {
+            .rawQuery(
+                "SELECT COUNT(*),MAX(length(data)),SUM(length(data)) FROM contexts WHERE job=?",
+                new String[] {"" + id})) {
       assertTrue(c.moveToFirst());
-      assertTrue(c.getLong(0) < 1024 * 1024);
+      assertTrue(c.getInt(0) >= 2);
+      assertTrue(c.getInt(1) <= 512 * 1024);
+      assertTrue(c.getLong(2) > 1024 * 1024);
     }
+    store.close();
+    store = new DownloadJobStore(context, "store-tests.db");
+    assertEquals(1000, store.request(id).getJSONArray("stress-plan").length());
   }
 }

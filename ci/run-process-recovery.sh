@@ -29,3 +29,5 @@ for kind in Direct Hls Dash; do
 done
 
 run_case pauseCancelRetry
+
+run_case uiPauseResumeCancel
