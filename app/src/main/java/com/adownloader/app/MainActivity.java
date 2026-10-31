@@ -38,6 +38,7 @@ public final class MainActivity extends AppCompatActivity implements BrowserSess
     private LinearProgressIndicator progress;
     private String currentUrl="https://www.google.com";
     private boolean initialLoaded,canBack,canForward,dark,started;
+    private float shellDensity,shellFontScale;
     private int selected=R.id.nav_browser,pageProgress=100,mediaCount;
     private final Handler handler=new Handler(Looper.getMainLooper());
     private boolean detectionNoticePending;
@@ -73,6 +74,7 @@ public final class MainActivity extends AppCompatActivity implements BrowserSess
         if(geckoView.getParent() instanceof android.view.ViewGroup)((android.view.ViewGroup)geckoView.getParent()).removeView(geckoView);
         setContentView(R.layout.activity_main);root=findViewById(R.id.app_root);
         dark=(getResources().getConfiguration().uiMode&Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES;
+        shellDensity=getResources().getDisplayMetrics().density;shellFontScale=getResources().getConfiguration().fontScale;
         getWindow().getInsetsController().setSystemBarsAppearance(dark?0:WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS|WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS|WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);
         ((FrameLayout)findViewById(R.id.gecko_host)).addView(geckoView,new FrameLayout.LayoutParams(-1,-1));
         root.setOnApplyWindowInsetsListener((view,insets)->{
@@ -117,7 +119,7 @@ public final class MainActivity extends AppCompatActivity implements BrowserSess
     @Override public void onPopupRequested(String url){runOnUiThread(()->popups.onPopupRequested(url,currentUrl));}
     @Override public void onBrowserCrashed(){runOnUiThread(()->UiSheets.action(this,R.drawable.ic_browser,"페이지가 종료되었습니다","새 세션에서 현재 페이지를 다시 열 수 있습니다.","닫기","다시 열기",()->browser.recover(currentUrl),null,null));}
     @Override public void onCandidateAdded(MediaCandidate item,int count){runOnUiThread(()->{boolean first=mediaCount==0&&count>0;mediaCount=count;updateMediaBadge();if(first&&!detectionNoticePending){detectionNoticePending=true;handler.postDelayed(()->{detectionNoticePending=false;if(mediaCount>0&&selected==R.id.nav_browser)notice("동영상 "+mediaCount+"개 감지됨");},700);}});}
-    @Override public void onConfigurationChanged(Configuration config){super.onConfigurationChanged(config);boolean now=(getResources().getConfiguration().uiMode&Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES;if(root!=null&&now!=dark)bindShell();else if(records!=null){records.resize();root.requestApplyInsets();}}
+    @Override public void onConfigurationChanged(Configuration config){super.onConfigurationChanged(config);boolean now=(getResources().getConfiguration().uiMode&Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES;if(root!=null&&(now!=dark||shellDensity!=getResources().getDisplayMetrics().density||shellFontScale!=getResources().getConfiguration().fontScale))bindShell();else if(records!=null){records.resize();root.requestApplyInsets();}}
     @Override protected void onSaveInstanceState(Bundle state){state.putInt("selected",selected);super.onSaveInstanceState(state);}
     @Override protected void onResume(){super.onResume();started=true;if(browser!=null)browser.setActive(selected==R.id.nav_browser);if(records!=null)records.refresh(false);if(settings!=null)settings.refresh();}
     @Override protected void onPause(){started=false;if(browser!=null){browser.setActive(false);getPreferences(MODE_PRIVATE).edit().putString("last_url",currentUrl).apply();browser.save(state->getPreferences(MODE_PRIVATE).edit().putString("session",state).apply());}super.onPause();}
