@@ -74,6 +74,7 @@ public class UiFlowTest {
     @Test public void popupBlockOnceAndInitiatingSiteGrant()throws Exception{
         Object original=session();
         for(int action=0;action<3;action++){
+            if(action>0)Thread.sleep(2600); // Respect the UI's repeated-popup debounce window.
             UiObject2 link=device.wait(Until.findObject(By.text("새 창 테스트")),10000);assertNotNull(link);link.click();view("action_title");
             if(action==0){snapshot("popup-block");view("action_cancel").click();assertEquals(base+"index.html",view("address_bar").getText());}
             else{view(action==1?"action_confirm":"action_extra").click();Thread.sleep(500);assertEquals(base+"popup.html",view("address_bar").getText());view("browser_back").click();Thread.sleep(500);}

@@ -49,8 +49,8 @@ public final class DownloadHistory {
     }
     public static String userError(String error){
         String text=error==null?"":error;
-        if(text.contains("DRM")||text.contains("SAMPLE-AES"))return "보호된 영상은 다운로드할 수 없습니다.";
-        if(text.contains("HTTP 401")||text.contains("HTTP 403"))return "이 영상에 접근할 수 없습니다. 사이트에서 재생 가능한지 확인하세요.";
+        if(text.contains("DRM")||text.contains("SAMPLE-AES")||text.contains("보호된 영상"))return "보호된 영상은 다운로드할 수 없습니다.";
+        if(text.contains("HTTP 401")||text.contains("HTTP 403")||text.contains("영상에 접근"))return "이 영상에 접근할 수 없습니다. 사이트에서 재생 가능한지 확인하세요.";
         if(text.contains("공간")||text.contains("ENOSPC"))return "저장 공간이 부족합니다.";
         if(text.contains("HTTP")||text.contains("네트워크")||text.contains("timeout")||text.contains("Host")||text.contains("연결"))return "연결이 끊겼습니다. 네트워크 상태를 확인해 주세요.";
         if(text.contains("중단"))return "다운로드가 중단되었습니다. 다시 시작해 주세요.";

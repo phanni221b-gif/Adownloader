@@ -34,6 +34,7 @@ public final class RecordsController implements SharedPreferences.OnSharedPrefer
     private final LibraryAdapter libraryAdapter=new LibraryAdapter();
     private final SharedPreferences prefs;
     private List<JSONObject> all=new ArrayList<>();
+    private List<JSONObject> ownedVideos=new ArrayList<>();
     private boolean disposed,loading,pendingRefresh;
     private int filter=R.id.filter_all;
     public RecordsController(Activity activity){
@@ -63,8 +64,23 @@ public final class RecordsController implements SharedPreferences.OnSharedPrefer
         io.execute(()->{
             List<JSONObject> rows=DownloadHistory.read(activity);
             for(JSONObject row:rows)if(DownloadHistory.done(row))enrich(row,force);
-            main.post(()->{if(disposed)return;all=rows;loading=false;render();downloadRefresh.setRefreshing(false);libraryRefresh.setRefreshing(false);if(pendingRefresh){pendingRefresh=false;refresh(false);}});
+            List<JSONObject> videos=loadOwnedVideos(rows);
+            main.post(()->{if(disposed)return;all=rows;ownedVideos=videos;loading=false;render();downloadRefresh.setRefreshing(false);libraryRefresh.setRefreshing(false);if(pendingRefresh){pendingRefresh=false;refresh(false);}});
         });
+    }
+    private List<JSONObject> loadOwnedVideos(List<JSONObject> history){
+        Map<String,JSONObject> videos=new LinkedHashMap<>();
+        for(JSONObject row:history)if(DownloadHistory.done(row)&&row.optBoolean("available")&&!row.optString("mime").startsWith("audio/"))videos.put(row.optString("uri"),row);
+        String[] columns={MediaStore.Video.Media._ID,MediaStore.Video.Media.DISPLAY_NAME,MediaStore.Video.Media.SIZE,MediaStore.Video.Media.MIME_TYPE,MediaStore.Video.Media.DATE_ADDED,MediaStore.Video.Media.DURATION,MediaStore.Video.Media.WIDTH,MediaStore.Video.Media.HEIGHT};
+        String selection=MediaStore.MediaColumns.OWNER_PACKAGE_NAME+"=? AND "+MediaStore.MediaColumns.RELATIVE_PATH+" LIKE ?";
+        try(Cursor cursor=activity.getContentResolver().query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,columns,selection,new String[]{activity.getPackageName(),android.os.Environment.DIRECTORY_MOVIES+"/Adownloader/%"},MediaStore.Video.Media.DATE_ADDED+" DESC")){
+            while(cursor!=null&&cursor.moveToNext()){
+                String uri=ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,cursor.getLong(0)).toString();
+                if(videos.containsKey(uri))continue;
+                JSONObject row=new JSONObject();row.put("uri",uri);row.put("name",cursor.getString(1));row.put("bytes",cursor.getLong(2));row.put("mime",cursor.getString(3));row.put("time",cursor.getLong(4)*1000);row.put("duration",cursor.getLong(5));row.put("width",cursor.getInt(6));row.put("height",cursor.getInt(7));row.put("available",true);videos.put(uri,row);
+            }
+        }catch(Exception ignored){} // Own-URI history remains available on providers with a restricted owner query.
+        List<JSONObject> result=new ArrayList<>(videos.values());result.sort((a,b)->Long.compare(b.optLong("time"),a.optLong("time")));return result;
     }
     private void enrich(JSONObject row,boolean force){
         String uri=row.optString("uri");if(uri.isEmpty())return;
@@ -86,10 +102,9 @@ public final class RecordsController implements SharedPreferences.OnSharedPrefer
     }
     private void render(){
         if(disposed)return;
-        List<JSONObject> visible=new ArrayList<>(),videos=new ArrayList<>();int active=0,complete=0,failed=0;
+        List<JSONObject> visible=new ArrayList<>(),videos=ownedVideos;int active=0,complete=0,failed=0;
         for(JSONObject row:all){boolean running=DownloadHistory.active(row),done=DownloadHistory.done(row);if(running)active++;else if(done)complete++;else failed++;
             if(filter==R.id.filter_all||(filter==R.id.filter_active&&running)||(filter==R.id.filter_done&&done)||(filter==R.id.filter_failed&&!running&&!done))visible.add(row);
-            if(done&&row.optBoolean("available")&&!row.optString("mime").startsWith("audio/"))videos.add(row);
         }
         downloadAdapter.rows=visible;libraryAdapter.rows=videos;downloadAdapter.notifyDataSetChanged();libraryAdapter.notifyDataSetChanged();
         downloadEmpty.setVisibility(visible.isEmpty()?View.VISIBLE:View.GONE);libraryEmpty.setVisibility(videos.isEmpty()?View.VISIBLE:View.GONE);
@@ -114,11 +129,12 @@ public final class RecordsController implements SharedPreferences.OnSharedPrefer
             JSONObject row=rows.get(position);boolean active=DownloadHistory.active(row),done=DownloadHistory.done(row);
             holder.title.setText(row.optString("name","동영상 다운로드"));
             String host=row.optString("host"),type=row.optString("type");
+            if(type.equals("VIDEO"))type=row.optString("mime").contains("mp4")?"MP4":row.optString("mime").contains("webm")?"WEBM":"동영상";else if(type.equals("AUDIO"))type="오디오";
             String state=active?row.optString("state"):done?"완료":"실패";
             holder.subtitle.setText(state+(type.isEmpty()?"":" · "+type)+(host.isEmpty()?"":" · "+host));
             holder.subtitle.setTextColor(activity.getColor(!active&&!done?R.color.danger:R.color.ink_muted));
             holder.progress.setVisibility(active?View.VISIBLE:View.GONE);holder.progress.setIndeterminate(active&&!row.has("percent"));if(row.has("percent"))holder.progress.setProgressCompat(row.optInt("percent"),true);
-            String phase=row.optString("phase","준비 중");holder.detail.setText(active?phase+(row.has("percent")?" · "+row.optInt("percent")+"%":""):done?facts(row):DownloadHistory.userError(row.optString("state")));
+            String phase=row.optString("phase","준비 중");holder.detail.setText(active?phase+(row.has("percent")?" · "+row.optInt("percent")+"%":""):done?facts(row):DownloadHistory.userError(row.optString("state").startsWith("실패")?row.optString("state"):"중단"));
             holder.open.setVisibility(done&&row.optBoolean("available")?View.VISIBLE:View.GONE);
             holder.open.setOnClickListener(v->MediaOpener.open(activity,row.optString("uri"),row.optString("mime")));
             if(done&&!row.optBoolean("available"))holder.detail.setText("파일을 찾을 수 없습니다. 기기에서 삭제되었을 수 있습니다.");

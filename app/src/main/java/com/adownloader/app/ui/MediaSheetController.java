@@ -43,6 +43,7 @@ public final class MediaSheetController {
             View empty=content.findViewById(R.id.sheet_empty);empty.setVisibility(View.VISIBLE);
             ((TextView)empty.findViewById(R.id.empty_title)).setText("아직 감지된 미디어가 없습니다.");
             ((TextView)empty.findViewById(R.id.empty_message)).setText("페이지에서 영상을 재생하면 자동으로 감지합니다.");
+            ((android.widget.ImageView)empty.findViewById(R.id.empty_icon)).setImageResource(R.drawable.ic_media);
         }
         dialog=UiSheets.show(activity,content,true);content.findViewById(R.id.sheet_close).setOnClickListener(v->dialog.dismiss());
         for(MediaCandidate item:candidates)if(!information.containsKey(item.getUrl())){

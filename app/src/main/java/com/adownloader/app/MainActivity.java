@@ -112,7 +112,7 @@ public final class MainActivity extends AppCompatActivity implements BrowserSess
         startForegroundService(intent);Snackbar.make(root,"다운로드를 시작했습니다.",Snackbar.LENGTH_SHORT).setAnchorView(findViewById(R.id.main_navigation)).setAction("보기",v->selectPage(R.id.nav_downloads)).show();
     }
     private void updateMediaBadge(){media.setText(mediaCount==0?"":Integer.toString(mediaCount));media.setContentDescription(mediaCount==0?"감지된 미디어":"감지된 미디어 "+mediaCount+"개");}
-    private void notice(String text){if(root!=null&&!isDestroyed())Snackbar.make(root,text,Snackbar.LENGTH_SHORT).setAnchorView(findViewById(R.id.main_navigation)).show();}
+    private void notice(String text){if(root!=null&&!isDestroyed())Snackbar.make(root,text,Snackbar.LENGTH_SHORT).setAnchorView(findViewById(selected==R.id.nav_browser?R.id.media_action:R.id.main_navigation)).show();}
     @Override public void onLocationChanged(String url){runOnUiThread(()->{if(detector!=null&&!Uri.parse(currentUrl).buildUpon().fragment(null).build().equals(Uri.parse(url).buildUpon().fragment(null).build()))detector.reset();currentUrl=url;if(!address.hasFocus())address.setText(url);});}
     @Override public void onNavigationStateChanged(boolean canBack,boolean canForward){this.canBack=canBack;this.canForward=canForward;runOnUiThread(()->{back.setEnabled(canBack);forward.setEnabled(canForward);});}
     @Override public void onPageProgress(int value){pageProgress=value;runOnUiThread(()->{progress.setProgressCompat(value,true);progress.setVisibility(value>=100?View.INVISIBLE:View.VISIBLE);});}
