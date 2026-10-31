@@ -85,7 +85,10 @@ public final class MainActivity extends AppCompatActivity implements BrowserSess
         });
         address=findViewById(R.id.address_bar);address.setText(currentUrl);
         address.setOnEditorActionListener((view,action,event)->{
-            if(action==EditorInfo.IME_ACTION_GO||(event!=null&&event.getKeyCode()==KeyEvent.KEYCODE_ENTER&&event.getAction()==KeyEvent.ACTION_DOWN)){
+            boolean enter=event!=null&&(event.getKeyCode()==KeyEvent.KEYCODE_ENTER||event.getKeyCode()==KeyEvent.KEYCODE_NUMPAD_ENTER);
+            // TextView dispatches both key edges with the configured IME action: submit only once.
+            if(enter&&event.getAction()==KeyEvent.ACTION_DOWN)return true;
+            if((enter&&event.getAction()==KeyEvent.ACTION_UP)||(event==null&&(action==EditorInfo.IME_ACTION_GO||action==EditorInfo.IME_ACTION_SEARCH||action==EditorInfo.IME_ACTION_DONE))){
                 navigate(address.getText().toString());address.clearFocus();((InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(address.getWindowToken(),0);return true;
             }return false;
         });

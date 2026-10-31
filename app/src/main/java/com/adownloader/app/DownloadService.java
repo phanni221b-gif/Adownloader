@@ -53,7 +53,7 @@ public final class DownloadService extends Service {
                 DownloadEngine.Result result=engine.download(url,MediaCandidate.MediaType.valueOf(type),headers);
                 Uri uri=publish(result,id);save(id,"완료",uri.toString());
                 Intent open=new Intent(Intent.ACTION_VIEW).setDataAndType(uri,result.mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                PendingIntent action=PendingIntent.getActivity(this,id,Intent.createChooser(open,"미디어 열기"),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
+                PendingIntent action=PendingIntent.getActivity(this,id,open,PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
                 getSystemService(NotificationManager.class).notify(id,notification("다운로드 완료","탭해서 미디어 열기",false,100,action));
             }catch(Exception error){
                 // Do not put signed URLs, cookies or server messages in notifications or logs.

@@ -18,14 +18,23 @@ public final class UiSheets {
             v.setPadding(left+safe.left,top,right+safe.right,bottom+safe.bottom);return insets;
         });
         dialog.setContentView(content);
-        dialog.setOnShowListener(d->{
+        int[] previousBounds={-1,-1,-1};
+        Runnable resize=()->{
             android.graphics.Rect bounds=activity.getWindowManager().getCurrentWindowMetrics().getBounds();
+            int density=activity.getResources().getDisplayMetrics().densityDpi;
+            if(previousBounds[0]==bounds.width()&&previousBounds[1]==bounds.height()&&previousBounds[2]==density)return;
+            previousBounds[0]=bounds.width();previousBounds[1]=bounds.height();previousBounds[2]=density;
             BottomSheetBehavior<?> behavior=dialog.getBehavior();
             behavior.setMaxWidth(Math.min(bounds.width(),dp(activity,640)));
             behavior.setMaxHeight((int)(bounds.height()*0.88f));
-            if(tall) content.getLayoutParams().height=(int)(bounds.height()*0.78f);
-            behavior.setState(BottomSheetBehavior.STATE_EXPANDED);
-            behavior.setSkipCollapsed(true);content.requestApplyInsets();
+            if(tall)content.getLayoutParams().height=(int)(bounds.height()*0.78f);
+            content.requestLayout();
+        };
+        content.addOnLayoutChangeListener((v,l,t,r,b,oldL,oldT,oldR,oldB)->resize.run());
+        dialog.setOnShowListener(d->{
+            resize.run();
+            dialog.getBehavior().setState(BottomSheetBehavior.STATE_EXPANDED);
+            dialog.getBehavior().setSkipCollapsed(true);content.requestApplyInsets();
         });
         dialog.show();return dialog;
     }

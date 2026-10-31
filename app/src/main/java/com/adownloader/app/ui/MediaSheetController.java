@@ -30,7 +30,7 @@ public final class MediaSheetController {
     }
     public static String name(MediaCandidate item,int index){
         String segment=Uri.parse(item.getUrl()).getLastPathSegment();
-        if(segment!=null&&segment.length()<70&&segment.matches("(?i).+\\.(mp4|webm|m4a|mp3|mov)$"))return segment;
+        if(segment!=null&&segment.length()<70&&segment.matches("(?i).+\\.(mp4|webm|m4a|mp3|mov)$"))return String.format(Locale.ROOT,"%02d",index+1)+" · "+segment;
         return "영상 "+String.format(Locale.ROOT,"%02d",index+1);
     }
     public void show(List<MediaCandidate> candidates){

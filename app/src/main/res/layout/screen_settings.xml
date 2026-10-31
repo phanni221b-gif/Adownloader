@@ -7,7 +7,7 @@
         <View android:layout_width="match_parent" android:layout_height="1dp" android:background="@color/outline" />
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="24dp" android:text="다운로드" android:textAppearance="@style/UiSection" />
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:text="최고 원본 화질 자동 선택" android:textColor="@color/ink" android:textSize="16sp" />
-        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:text="동영상 / Adownloader\n오디오 / Adownloader" android:textAppearance="@style/UiBody" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:text="Movies / Adownloader\nMusic / Adownloader" android:textAppearance="@style/UiBody" />
         <com.google.android.material.button.MaterialButton android:id="@+id/setting_background" style="@style/UiSetting" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="백그라운드 다운로드 상태" />
         <TextView android:id="@+id/background_state" android:layout_width="match_parent" android:layout_height="wrap_content" android:textAppearance="@style/UiBody" android:layout_marginBottom="20dp" />
         <View android:layout_width="match_parent" android:layout_height="1dp" android:background="@color/outline" />
