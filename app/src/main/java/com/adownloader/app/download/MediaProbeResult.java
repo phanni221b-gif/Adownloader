@@ -49,6 +49,7 @@ public final class MediaProbeResult {
       ManifestParser.Track t = new ManifestParser.Track();
       t.audio = track.audio;
       t.duration = track.duration;
+      t.bitRate = track.bitRate;
       t.width = track.width;
       t.height = track.height;
       t.frameRate = track.frameRate;

@@ -88,6 +88,7 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
             + " TEXT,uri TEXT,pid INTEGER NOT NULL DEFAULT 0,etag TEXT,modified TEXT,hash"
             + " TEXT,owner TEXT NOT NULL DEFAULT '',secret BLOB)");
     db.execSQL("CREATE INDEX jobs_queue ON jobs(state,created)");
+    db.execSQL("CREATE INDEX jobs_refresh ON jobs(state,identity)");
     db.execSQL(
         "CREATE TABLE parts(job INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,track"
             + " INTEGER NOT NULL,part INTEGER NOT NULL,bytes INTEGER NOT NULL,hash TEXT NOT"
@@ -282,6 +283,47 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
     values.put("state", to.name());
     values.put("updated", System.currentTimeMillis());
     return update(values, "id=? AND state=?", new String[] {"" + id, from.name()}) == 1;
+  }
+
+  public synchronized Job needsRefresh(String identity) {
+    try (Cursor c =
+        getReadableDatabase()
+            .rawQuery(
+                "SELECT id FROM jobs WHERE state='NEEDS_REFRESH' AND identity=? ORDER BY updated"
+                    + " DESC LIMIT 1",
+                new String[] {identity})) {
+      return c.moveToFirst() ? get(c.getLong(0)) : null;
+    }
+  }
+
+  public synchronized boolean refreshed(long id, JSONObject request, String name, boolean restart)
+      throws Exception {
+    SQLiteDatabase db = getWritableDatabase();
+    db.beginTransaction();
+    try {
+      Job job = get(id);
+      if (job == null || job.state != State.NEEDS_REFRESH) return false;
+      writeContext(id, request);
+      ContentValues values = new ContentValues();
+      values.put("state", State.QUEUED.name());
+      values.put("error", "");
+      values.put("name", name);
+      values.put("phase", restart ? "새 주소 확인 · 처음부터 다시 받기" : "새 주소로 이어받기");
+      values.put("updated", System.currentTimeMillis());
+      if (restart) {
+        values.put("bytes", 0);
+        values.putNull("total");
+        values.put("percent", 0);
+        values.put("segment", 0);
+        values.putNull("segments");
+      }
+      db.update("jobs", values, "id=? AND state='NEEDS_REFRESH'", new String[] {"" + id});
+      db.setTransactionSuccessful();
+      return true;
+    } finally {
+      db.endTransaction();
+      changed();
+    }
   }
 
   public synchronized void prioritize(long id) {

@@ -12,6 +12,7 @@ public final class PlanCodec {
           new JSONObject()
               .put("duration", track.duration)
               .put("audio", track.audio)
+              .put("bitrate", track.bitRate)
               .put("width", track.width)
               .put("height", track.height)
               .put("fps", track.frameRate)
@@ -40,6 +41,7 @@ public final class PlanCodec {
       ManifestParser.Track track = new ManifestParser.Track();
       track.audio = row.getBoolean("audio");
       track.duration = row.getDouble("duration");
+      track.bitRate = row.optLong("bitrate");
       track.width = row.optInt("width");
       track.height = row.optInt("height");
       track.frameRate = row.optDouble("fps", 0);

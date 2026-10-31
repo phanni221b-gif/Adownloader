@@ -34,6 +34,7 @@ public final class ManifestParser {
     public double duration;
     public boolean audio;
     public int width, height;
+    public long bitRate;
     public double frameRate;
     public String representation = "", codecs = "", language = "";
   }
@@ -239,6 +240,7 @@ public final class ManifestParser {
     Track track = new Track();
     track.audio = audio;
     track.duration = seconds;
+    track.bitRate = number(rep, "bandwidth", 0);
     track.representation = rep.getAttribute("id");
     track.codecs = inherit(rep, adaptation, "codecs");
     track.language = inherit(rep, adaptation, "lang");

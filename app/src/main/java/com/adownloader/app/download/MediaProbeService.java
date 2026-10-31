@@ -180,6 +180,7 @@ public final class MediaProbeService implements AutoCloseable {
               track.width = Integer.parseInt(size[0]);
               track.height = Integer.parseInt(size[1]);
             }
+            track.bitRate = Long.parseLong(attrs.getOrDefault("BANDWIDTH", "0"));
             track.frameRate = Double.parseDouble(attrs.getOrDefault("FRAME-RATE", "0"));
             track.codecs = attrs.getOrDefault("CODECS", "");
             track.representation = selection.video;

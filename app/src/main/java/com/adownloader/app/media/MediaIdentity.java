@@ -40,7 +40,7 @@ public final class MediaIdentity {
                   || (aws && key.startsWith("x-amz-"));
           if (!volatileKey) parts.add(part);
         }
-      Collections.sort(parts);
+
       return hash(
           type
               + "|"
