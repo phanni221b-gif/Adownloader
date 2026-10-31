@@ -25,6 +25,7 @@ import org.mozilla.geckoview.GeckoView;
 public final class MainActivity extends AppCompatActivity
     implements BrowserSessionManager.Listener, MediaDetector.Listener {
   private BrowserSessionManager browser;
+  private MediaExtensionManager mediaExtension;
   private PopupController popups;
   private MediaDetector detector;
   private RecordsController records;
@@ -54,7 +55,8 @@ public final class MainActivity extends AppCompatActivity
     detector = new MediaDetector(this);
     browser = new BrowserSessionManager(this, geckoView, this);
     popups = new PopupController(this, browser::load);
-    new MediaExtensionManager(
+    mediaExtension =
+        new MediaExtensionManager(
             browser.getRuntime(),
             detector,
             new MediaExtensionManager.StatusListener() {
@@ -71,8 +73,8 @@ public final class MainActivity extends AppCompatActivity
                       notice("영상 감지를 준비하지 못했습니다. 앱을 다시 열어 주세요.");
                     });
               }
-            })
-        .install();
+            });
+    mediaExtension.install();
     getOnBackPressedDispatcher()
         .addCallback(
             this,
@@ -269,9 +271,11 @@ public final class MainActivity extends AppCompatActivity
   }
 
   private void startDownload(MediaCandidate item) {
+    MediaCandidate current = detector.latest(item.getIdentityKey());
+    MediaCandidate selected = current == null ? item : current;
     com.adownloader.app.jobs.DownloadJobs.get(this)
         .enqueue(
-            item,
+            selected,
             id -> {
               if (isDestroyed()) return;
               Snackbar.make(
@@ -464,6 +468,7 @@ public final class MainActivity extends AppCompatActivity
     handler.removeCallbacksAndMessages(null);
     if (records != null) records.close();
     if (mediaSheet != null) mediaSheet.close();
+    if (mediaExtension != null) mediaExtension.close();
     if (browser != null) browser.close();
     super.onDestroy();
   }
