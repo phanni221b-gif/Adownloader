@@ -99,8 +99,8 @@ public final class MainActivity extends AppCompatActivity implements BrowserSess
             boolean enter=event!=null&&(event.getKeyCode()==KeyEvent.KEYCODE_ENTER||event.getKeyCode()==KeyEvent.KEYCODE_NUMPAD_ENTER);
             // TextView dispatches both key edges with the configured IME action: submit only once.
             if(enter&&event.getAction()==KeyEvent.ACTION_DOWN)return true;
-            if((enter&&event.getAction()==KeyEvent.ACTION_UP)||(event==null&&(action==EditorInfo.IME_ACTION_GO||action==EditorInfo.IME_ACTION_SEARCH||action==EditorInfo.IME_ACTION_DONE))){
-                navigate(address.getText().toString());address.clearFocus();((InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(address.getWindowToken(),0);return true;
+            if((enter&&event.getAction()==KeyEvent.ACTION_UP)||event==null){
+                submitAddress();return true;
             }return false;
         });
         back=findViewById(R.id.browser_back);forward=findViewById(R.id.browser_forward);back.setEnabled(canBack);forward.setEnabled(canForward);
@@ -115,6 +115,18 @@ public final class MainActivity extends AppCompatActivity implements BrowserSess
         String value=raw==null?"":raw.trim();if(value.isEmpty())return;
         if(!(value.startsWith("https://")||value.startsWith("http://")))value=!value.contains(" ")&&value.contains(".")?"https://"+value:"https://www.google.com/search?q="+Uri.encode(value);
         browser.load(value);
+    }
+    private void submitAddress(){
+        String input=address.getText().toString();address.clearFocus();geckoView.requestFocus();
+        ((InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(address.getWindowToken(),0);
+        if(input.trim().isEmpty())address.setText(currentUrl);else navigate(input);
+    }
+    @Override public boolean dispatchKeyEvent(KeyEvent event){
+        if(address!=null&&address.hasFocus()&&(event.getKeyCode()==KeyEvent.KEYCODE_ENTER||event.getKeyCode()==KeyEvent.KEYCODE_NUMPAD_ENTER)){
+            if(event.getAction()==KeyEvent.ACTION_UP)submitAddress();
+            return true;
+        }
+        return super.dispatchKeyEvent(event);
     }
     private void selectPage(int id){((BottomNavigationView)findViewById(R.id.main_navigation)).setSelectedItemId(id);}
     private void showPage(int id){
