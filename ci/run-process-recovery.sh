@@ -18,7 +18,16 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
 run_case() {
   local method="$1"
-  adb shell am instrument -w -e externalRecovery true -e class "com.adownloader.app.ProcessRecoveryTest#$method" com.adownloader.app.test/androidx.test.runner.AndroidJUnitRunner | tee "process-recovery-results/$method.txt"
+  echo "RECOVERY_CASE $method"
+  if ! timeout 150s adb shell am instrument -w -e externalRecovery true -e class "com.adownloader.app.ProcessRecoveryTest#$method" com.adownloader.app.test/androidx.test.runner.AndroidJUnitRunner | tee "process-recovery-results/$method.txt"; then
+    adb shell 'kill -3 $(pidof com.adownloader.app)' || true
+    sleep 2
+    adb logcat -d > "process-recovery-results/$method-logcat.txt"
+    adb shell dumpsys activity lastanr > "process-recovery-results/$method-anr.txt"
+    adb shell screencap -p /sdcard/Download/recovery-failure.png
+    adb pull /sdcard/Download/recovery-failure.png "process-recovery-results/$method.png"
+    return 1
+  fi
   grep -q 'OK (1 test)' "process-recovery-results/$method.txt"
   if grep -qE 'FAILURES|INSTRUMENTATION_FAILED|Process crashed' "process-recovery-results/$method.txt"; then return 1; fi
 }

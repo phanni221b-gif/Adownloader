@@ -295,6 +295,7 @@ public class ProcessRecoveryTest {
   }
 
   private void tap(String resource, String text) throws Exception {
+    androidx.test.uiautomator.Configurator.getInstance().setWaitForIdleTimeout(0);
     androidx.test.uiautomator.UiDevice device =
         androidx.test.uiautomator.UiDevice.getInstance(instrumentation);
     androidx.test.uiautomator.BySelector selector =
