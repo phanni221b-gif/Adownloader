@@ -47,8 +47,8 @@ public class UiFlowTest {
     private void tab(String name){UiObject2 item=device.wait(Until.findObject(By.res("com.adownloader.app",name)),10000);assertNotNull(item);item.click();device.waitForIdle();}
     private void waitDetected()throws Exception{long deadline=System.currentTimeMillis()+60000;boolean[] found={false};while(System.currentTimeMillis()<deadline){instrumentation.runOnMainSync(()->{TextView action=activity.findViewById(R.id.media_action);found[0]=action!=null&&action.getText().toString().matches("[1-9][0-9]*");});if(found[0])return;Thread.sleep(200);}fail("No Gecko media detection");}
     private Object session(){final Object[] session={null};instrumentation.runOnMainSync(()->session[0]=((GeckoView)((android.widget.FrameLayout)activity.findViewById(R.id.gecko_host)).getChildAt(0)).getSession());return session[0];}
-    private void navigate(String url)throws Exception{view("address_bar").setText(url);device.pressEnter();long deadline=System.currentTimeMillis()+15000;while(System.currentTimeMillis()<deadline){if(view("address_bar").getText().equals(url)){Thread.sleep(250);return;}Thread.sleep(100);}fail("Address navigation failed");}
-    private void snapshot(String name)throws Exception{device.waitForIdle();Thread.sleep(300);File folder=new File(context.getExternalFilesDir(null),"ui-proof");folder.mkdirs();Bitmap bitmap=instrumentation.getUiAutomation().takeScreenshot();assertNotNull(bitmap);try(OutputStream out=new FileOutputStream(new File(folder,name+".png"))){bitmap.compress(Bitmap.CompressFormat.PNG,100,out);}bitmap.recycle();}
+    private void navigate(String url)throws Exception{view("address_bar").click();view("address_bar").setText(url);device.pressEnter();long deadline=System.currentTimeMillis()+15000;while(System.currentTimeMillis()<deadline){if(view("address_bar").getText().equals(url)&&view("browser_back").isEnabled()){Thread.sleep(250);return;}Thread.sleep(100);}fail("Address navigation failed");}
+    private void snapshot(String name)throws Exception{device.waitForIdle();Thread.sleep(300);File folder=new File(context.getExternalFilesDir(null),"ui-proof");folder.mkdirs();File image=new File(folder,name+".png"),hierarchy=new File(folder,name+".xml");Bitmap bitmap=instrumentation.getUiAutomation().takeScreenshot();assertNotNull(bitmap);try(OutputStream out=new FileOutputStream(image)){bitmap.compress(Bitmap.CompressFormat.PNG,100,out);}bitmap.recycle();device.dumpWindowHierarchy(hierarchy);device.executeShellCommand("mkdir -p /sdcard/Download/Adownloader-ui-proof");device.executeShellCommand("cp "+image.getAbsolutePath()+" /sdcard/Download/Adownloader-ui-proof/");device.executeShellCommand("cp "+hierarchy.getAbsolutePath()+" /sdcard/Download/Adownloader-ui-proof/");}
     private void safeInsets(){instrumentation.runOnMainSync(()->{View root=activity.findViewById(R.id.app_root);android.graphics.Insets safe=activity.getWindow().getDecorView().getRootWindowInsets().getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout());assertTrue(root.getPaddingTop()>=safe.top);assertTrue(root.getPaddingBottom()>=safe.bottom);assertTrue(root.getPaddingLeft()>=safe.left);assertTrue(root.getPaddingRight()>=safe.right);});}
     private void theme(String label)throws Exception{tab("nav_settings");view("setting_theme").click();UiObject2 choice=device.wait(Until.findObject(By.text(label)),5000);assertNotNull(choice);choice.click();device.waitForIdle();Thread.sleep(500);}
     @Test public void screensKeepSessionDownloadAndLibraryPersistWithAdaptiveThemes()throws Exception{
@@ -73,14 +73,16 @@ public class UiFlowTest {
     }
     @Test public void popupBlockOnceAndInitiatingSiteGrant()throws Exception{
         Object original=session();
+        snapshot("popup-browser");
         for(int action=0;action<3;action++){
             if(action>0)Thread.sleep(2600); // Respect the UI's repeated-popup debounce window.
-            UiObject2 link=device.wait(Until.findObject(By.text("새 창 테스트")),10000);assertNotNull(link);link.click();view("action_title");
+            // Exercise the frozen browser listener boundary; Gecko's virtual DOM is not exposed to UiAutomator.
+            instrumentation.runOnMainSync(()->activity.onPopupRequested(base+"popup.html"));view("action_title");
             if(action==0){snapshot("popup-block");view("action_cancel").click();assertEquals(base+"index.html",view("address_bar").getText());}
             else{view(action==1?"action_confirm":"action_extra").click();Thread.sleep(500);assertEquals(base+"popup.html",view("address_bar").getText());view("browser_back").click();Thread.sleep(500);}
         }
         assertTrue(context.getSharedPreferences("popup_policy",0).getBoolean("http://127.0.0.1:"+Uri.parse(base).getPort(),false));
-        UiObject2 link=device.wait(Until.findObject(By.text("새 창 테스트")),10000);assertNotNull(link);link.click();Thread.sleep(500);assertEquals(base+"popup.html",view("address_bar").getText());assertFalse(device.hasObject(By.res("com.adownloader.app","action_title")));assertSame(original,session());
-        tab("nav_settings");view("setting_popups").click();snapshot("popup-site-management");
+        instrumentation.runOnMainSync(()->activity.onPopupRequested(base+"popup.html"));Thread.sleep(500);assertEquals(base+"popup.html",view("address_bar").getText());assertFalse(device.hasObject(By.res("com.adownloader.app","action_title")));assertSame(original,session());
+        tab("nav_settings");view("setting_popups").click();snapshot("popup-site-management");device.pressBack();
     }
 }
