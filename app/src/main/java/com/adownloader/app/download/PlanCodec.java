@@ -8,7 +8,16 @@ public final class PlanCodec {
   public static JSONArray encode(List<ManifestParser.Track> tracks) throws JSONException {
     JSONArray result = new JSONArray();
     for (ManifestParser.Track track : tracks) {
-      JSONObject row = new JSONObject().put("duration", track.duration).put("audio", track.audio);
+      JSONObject row =
+          new JSONObject()
+              .put("duration", track.duration)
+              .put("audio", track.audio)
+              .put("width", track.width)
+              .put("height", track.height)
+              .put("fps", track.frameRate)
+              .put("representation", track.representation)
+              .put("codecs", track.codecs)
+              .put("language", track.language);
       JSONArray parts = new JSONArray();
       for (ManifestParser.Part p : track.parts)
         parts.put(
@@ -31,6 +40,12 @@ public final class PlanCodec {
       ManifestParser.Track track = new ManifestParser.Track();
       track.audio = row.getBoolean("audio");
       track.duration = row.getDouble("duration");
+      track.width = row.optInt("width");
+      track.height = row.optInt("height");
+      track.frameRate = row.optDouble("fps", 0);
+      track.representation = row.optString("representation");
+      track.codecs = row.optString("codecs");
+      track.language = row.optString("language");
       JSONArray parts = row.getJSONArray("parts");
       for (int i = 0; i < parts.length(); i++) {
         JSONObject p = parts.getJSONObject(i);

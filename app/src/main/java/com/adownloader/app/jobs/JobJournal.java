@@ -16,6 +16,14 @@ public final class JobJournal implements EngineCheckpoint {
   }
 
   @Override
+  public void sourceMetadata(String disposition) throws Exception {
+    if (disposition == null || disposition.isBlank()) return;
+    JSONObject request = store.request(id);
+    request.put("disposition", disposition);
+    store.writeContext(id, request);
+  }
+
+  @Override
   public List<ManifestParser.Track> loadPlan() throws Exception {
     JSONObject request = store.request(id);
     return request.has("plan") ? PlanCodec.decode(request.getJSONArray("plan")) : null;
@@ -170,6 +178,8 @@ public final class JobJournal implements EngineCheckpoint {
                 0);
           },
           control);
+    } finally {
+      sourceMetadata(source.disposition());
     }
   }
 }

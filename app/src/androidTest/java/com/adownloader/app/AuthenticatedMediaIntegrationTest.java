@@ -89,8 +89,8 @@ public class AuthenticatedMediaIntegrationTest {
           page
               ? "Set-Cookie: " + cookie + "; Path=/; HttpOnly; SameSite=Lax\r\n"
               : "Content-Disposition: attachment;"
-                    + " filename*=UTF-8''%EC%9B%90%EB%B3%B8%20%EC%98%81%EC%83%81.mp4\r\n"
-                    + "ETag: \"auth-fixture-v1\"\r\n";
+                  + " filename*=UTF-8''%EC%9B%90%EB%B3%B8%20%EC%98%81%EC%83%81.mp4\r\n"
+                  + "ETag: \"auth-fixture-v1\"\r\n";
       String response =
           "HTTP/1.1 "
               + (allowed ? "200 OK" : "403 Forbidden")
@@ -172,6 +172,7 @@ public class AuthenticatedMediaIntegrationTest {
         Thread.sleep(50);
       }
       assertNotNull(completed);
+      assertEquals("원본 영상.mp4", completed.name);
       output = Uri.parse(completed.uri);
       MessageDigest digest = MessageDigest.getInstance("SHA-256");
       try (InputStream in = context.getContentResolver().openInputStream(output)) {
@@ -181,6 +182,30 @@ public class AuthenticatedMediaIntegrationTest {
       }
       assertArrayEquals(MessageDigest.getInstance("SHA-256").digest(media), digest.digest());
       assertEquals("Only the deliberate unauthenticated request may be rejected", 1, denied.get());
+      CountDownLatch secondStored = new CountDownLatch(1);
+      long[] secondId = {-1};
+      instrumentation.runOnMainSync(
+          () ->
+              jobs.enqueue(
+                  candidate,
+                  value -> {
+                    secondId[0] = value;
+                    secondStored.countDown();
+                  }));
+      assertTrue(secondStored.await(15, TimeUnit.SECONDS));
+      DownloadJobStore.Job second = null;
+      long secondDeadline = System.currentTimeMillis() + 60000;
+      while (System.currentTimeMillis() < secondDeadline) {
+        DownloadJobStore.Job current = jobs.store.get(secondId[0]);
+        if (current.state == DownloadJobStore.State.COMPLETED) {
+          second = current;
+          break;
+        }
+        Thread.sleep(50);
+      }
+      assertNotNull("Second download must finish without replacing the first", second);
+      assertEquals("원본 영상 (1).mp4", second.name);
+      context.getContentResolver().delete(Uri.parse(second.uri), null, null);
       for (String suffix : new String[] {"", "-wal"}) {
         File db = new File(context.getDatabasePath("download-jobs.db").getPath() + suffix);
         if (db.isFile())

@@ -69,10 +69,18 @@ public final class JobRunner {
       control.check();
       if (!store.transition(
           job.id, DownloadJobStore.State.DOWNLOADING, DownloadJobStore.State.FINALIZING)) return;
+      JSONObject naming = store.request(job.id), metadata = naming.optJSONObject("metadata");
+      String disposition =
+          naming.optString(
+              "disposition", metadata == null ? "" : metadata.optString("disposition"));
       String name =
-          "Adownloader_"
-              + new java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ROOT).format(new Date())
-              + result.extension;
+          DownloadFileName.choose(
+              disposition,
+              metadata == null ? "" : metadata.optString("title"),
+              naming.getString("url"),
+              metadata == null ? "" : metadata.optString("mediaTitle"),
+              result.extension,
+              System.currentTimeMillis());
       Uri uri = publish(job.id, result, name, control);
       control.check();
       store.complete(job.id, uri.toString(), displayName(uri, name));

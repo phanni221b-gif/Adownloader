@@ -5,7 +5,6 @@ import android.content.*;
 import android.os.*;
 import com.adownloader.app.*;
 import com.adownloader.app.download.*;
-import java.nio.charset.StandardCharsets;
 import java.security.*;
 import java.util.*;
 import java.util.concurrent.*;
@@ -69,22 +68,18 @@ public final class DownloadJobs {
                         } catch (JSONException ignored) {
                         }
                     });
-            String identity =
-                DirectTransfer.hex(
-                    MessageDigest.getInstance("SHA-256")
-                        .digest(
-                            (candidate.getType() + "|" + candidate.getUrl())
-                                .getBytes(StandardCharsets.UTF_8)));
+            String identity = candidate.getIdentityKey();
             id =
                 store.enqueue(
                     identity,
                     candidate.getType().name(),
-                    "동영상 다운로드",
+                    DownloadFileName.label(candidate.getMetadata(), candidate.getUrl()),
                     android.net.Uri.parse(candidate.getUrl()).getHost(),
                     new JSONObject()
                         .put("url", candidate.getUrl())
                         .put("page", candidate.getPageUrl())
-                        .put("headers", headers));
+                        .put("headers", headers)
+                        .put("metadata", new JSONObject(candidate.getMetadata())));
           } catch (Exception failed) {
           }
           long result = id;
