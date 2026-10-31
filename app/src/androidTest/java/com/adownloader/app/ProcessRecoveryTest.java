@@ -304,6 +304,21 @@ public class ProcessRecoveryTest {
     androidx.test.uiautomator.UiObject2 view =
         device.wait(androidx.test.uiautomator.Until.findObject(selector), 10000);
     assertNotNull("Missing actionable UI: " + resource, view);
+    android.graphics.Rect previous = null;
+    int stable = 0;
+    long until = SystemClock.elapsedRealtime() + 5000;
+    while (stable < 3 && SystemClock.elapsedRealtime() < until) {
+      view = device.findObject(selector);
+      if (view != null) {
+        android.graphics.Rect bounds = view.getVisibleBounds();
+        if (bounds.equals(previous) && !bounds.isEmpty()) stable++;
+        else stable = 0;
+        previous = bounds;
+      }
+      Thread.sleep(75);
+    }
+    assertTrue("Button must finish moving before touch: " + resource, stable >= 3);
+    System.out.println("UI_TAP " + resource + " " + SystemClock.elapsedRealtime() + " " + previous);
     view.click();
   }
 
@@ -322,6 +337,13 @@ public class ProcessRecoveryTest {
     checkpoint(jobs, canceled);
     tap("item_secondary", "취소");
     tap("action_confirm", "취소");
+    assertTrue(
+        "Cancel confirmation must be dismissed",
+        androidx.test.uiautomator.UiDevice.getInstance(instrumentation)
+            .wait(
+                androidx.test.uiautomator.Until.gone(
+                    androidx.test.uiautomator.By.res("com.adownloader.app", "action_confirm")),
+                5000));
     DownloadJobStore.Job stopped = await(jobs, canceled, DownloadJobStore.State.CANCELED);
     assertEquals("", stopped.pending);
   }
