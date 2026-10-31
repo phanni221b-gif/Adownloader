@@ -1,7 +1,7 @@
 name: Build and verify Adownloader
 on:
   push:
-    branches: [main, rebuild-gecko-v2, rebuild-gecko-release, ui-ux-v050]
+    branches: [main, rebuild-gecko-v2, rebuild-gecko-release, ui-ux-v050, reliability-v060, validation-v060]
   pull_request:
   workflow_dispatch:
 permissions:
@@ -85,5 +85,6 @@ jobs:
             app/build/outputs/androidTest-results/
             ui-proof/
             ui-logcat.txt
+            process-recovery-results/
 # The fixed private release key remains off GitHub. This workflow cannot publish an unsigned APK.
 
