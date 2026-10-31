@@ -84,6 +84,17 @@ public final class MainActivity extends AppCompatActivity implements BrowserSess
             findViewById(R.id.main_navigation).setVisibility(keyboard?View.GONE:View.VISIBLE);return WindowInsets.CONSUMED;
         });
         address=findViewById(R.id.address_bar);address.setText(currentUrl);
+        address.setOnFocusChangeListener((view,editing)->{
+            // Native address editing owns input until the user submits or touches the page.
+            // A resized Gecko surface must not take focus back while the IME is opening.
+            geckoView.setFocusable(!editing);geckoView.setFocusableInTouchMode(!editing);
+        });
+        geckoView.setOnTouchListener((view,event)->{
+            if(event.getActionMasked()==MotionEvent.ACTION_DOWN){
+                geckoView.setFocusable(true);geckoView.setFocusableInTouchMode(true);address.clearFocus();
+            }
+            return false;
+        });
         address.setOnEditorActionListener((view,action,event)->{
             boolean enter=event!=null&&(event.getKeyCode()==KeyEvent.KEYCODE_ENTER||event.getKeyCode()==KeyEvent.KEYCODE_NUMPAD_ENTER);
             // TextView dispatches both key edges with the configured IME action: submit only once.
