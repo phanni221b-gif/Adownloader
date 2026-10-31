@@ -1,0 +1,11 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="24dp">
+    <View android:layout_width="32dp" android:layout_height="4dp" android:layout_gravity="center_horizontal" android:layout_marginBottom="24dp" android:background="@color/outline" />
+    <ImageView android:id="@+id/action_icon" android:layout_width="40dp" android:layout_height="40dp" android:src="@drawable/ic_download" app:tint="@color/brand" android:importantForAccessibility="no" />
+    <TextView android:id="@+id/action_title" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:textAppearance="@style/UiTitle" />
+    <TextView android:id="@+id/action_message" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:textAppearance="@style/UiBody" />
+    <com.google.android.material.button.MaterialButton android:id="@+id/action_extra" style="@style/UiTextAction" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:visibility="gone" />
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="24dp" android:gravity="end">
+        <com.google.android.material.button.MaterialButton android:id="@+id/action_cancel" style="@style/UiTextAction" android:layout_width="wrap_content" android:layout_height="48dp" android:text="취소" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/action_confirm" style="@style/UiAction" android:layout_width="wrap_content" android:layout_height="48dp" android:layout_marginStart="8dp" android:text="다운로드" />
+    </LinearLayout>
+</LinearLayout>

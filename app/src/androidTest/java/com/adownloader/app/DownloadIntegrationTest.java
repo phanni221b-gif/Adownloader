@@ -39,7 +39,7 @@ public class DownloadIntegrationTest {
             String path=first.split(" ")[1].substring(1).split("\\?")[0];String line,range=null;
             while((line=reader.readLine())!=null&&!line.isEmpty())if(line.toLowerCase(Locale.ROOT).startsWith("range:"))range=line.substring(6).trim();
             byte[] body;String mime;
-            if(path.equals("index.html")){body=("<!doctype html><title>Adownloader test</title><video preload='auto' controls src='"+base+"direct.mp4'></video>").getBytes(java.nio.charset.StandardCharsets.UTF_8);mime="text/html";}
+            if(path.endsWith(".html")){body=("<!doctype html><meta name='viewport' content='width=device-width,initial-scale=1'><title>Adownloader test</title><style>:root{color-scheme:light dark}body{font:16px sans-serif;padding:24px;margin:0;background:light-dark(#fafafb,#151518);color:light-dark(#202027,#f0eff3)}video{width:100%;border-radius:14px;margin:16px 0}p{line-height:1.6;color:#777}h1{font-size:24px}a{color:#bf246f;display:block;margin:16px 0}</style><h1>미디어 테스트</h1><p>원본 그대로 저장하고, 좋아하는 플레이어로 감상하세요.</p><video preload='auto' controls src='"+base+"direct.mp4'></video><p>Adownloader UI 검증용 합성 영상입니다.</p><a href='second.html'>다음 페이지</a><a target='_blank' href='popup.html'>새 창 테스트</a>").getBytes(java.nio.charset.StandardCharsets.UTF_8);mime="text/html";}
             else{body=fixture(path);mime=path.endsWith("mp4")?"video/mp4":path.endsWith("m3u8")?"application/vnd.apple.mpegurl":path.endsWith("mpd")?"application/dash+xml":"application/octet-stream";}
             if(path.endsWith(".ts"))Thread.sleep(100);
             int start=0,end=body.length-1;
@@ -89,7 +89,7 @@ public class DownloadIntegrationTest {
         }finally{instrumentation.runOnMainSync(activity::finish);}
     }
     private boolean hasCandidate(View view){
-        if(view instanceof TextView && "감지된 미디어".contentEquals(view.getContentDescription()==null?"":view.getContentDescription()))return !((TextView)view).getText().toString().equals("▶ 0");
+        if(view instanceof TextView && view.getId()==R.id.media_action)return ((TextView)view).getText().toString().matches("[1-9][0-9]*");
         if(view instanceof ViewGroup)for(int i=0;i<((ViewGroup)view).getChildCount();i++)if(hasCandidate(((ViewGroup)view).getChildAt(i)))return true;return false;
     }
 }

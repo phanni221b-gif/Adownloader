@@ -1,0 +1,15 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="12dp">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical">
+        <ImageView android:layout_width="40dp" android:layout_height="40dp" android:padding="8dp" android:background="@drawable/bg_badge" android:src="@drawable/ic_media" app:tint="@color/brand" android:importantForAccessibility="no" />
+        <TextView android:id="@+id/media_title" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="12dp" android:textColor="@color/ink" android:textStyle="bold" android:textSize="16sp" android:maxLines="2" android:ellipsize="end" />
+        <TextView android:id="@+id/media_type" android:layout_width="wrap_content" android:layout_height="wrap_content" android:paddingHorizontal="8dp" android:paddingVertical="4dp" android:background="@drawable/bg_badge" android:textColor="@color/brand" android:textSize="11sp" />
+    </LinearLayout>
+    <TextView android:id="@+id/media_host" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:textAppearance="@style/UiBody" />
+    <TextView android:id="@+id/media_metadata" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:textAppearance="@style/UiBody" />
+    <TextView android:id="@+id/media_url" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:textAppearance="@style/UiBody" android:textIsSelectable="true" android:visibility="gone" />
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="end">
+        <com.google.android.material.button.MaterialButton android:id="@+id/media_details" style="@style/UiTextAction" android:layout_width="wrap_content" android:layout_height="48dp" android:text="상세정보" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/media_download" style="@style/UiAction" android:layout_width="wrap_content" android:layout_height="48dp" android:text="다운로드" app:icon="@drawable/ic_download" />
+    </LinearLayout>
+    <View android:layout_width="match_parent" android:layout_height="1dp" android:layout_marginTop="12dp" android:background="@color/outline" />
+</LinearLayout>

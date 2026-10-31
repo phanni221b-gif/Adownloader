@@ -1,0 +1,5 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:gravity="center" android:padding="32dp" android:clickable="false">
+    <ImageView android:id="@+id/empty_icon" android:layout_width="48dp" android:layout_height="48dp" android:src="@drawable/ic_download" app:tint="@color/ink_muted" android:importantForAccessibility="no" />
+    <TextView android:id="@+id/empty_title" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="20dp" android:text="아직 다운로드한 영상이 없습니다." android:textColor="@color/ink" android:textSize="18sp" android:gravity="center" />
+    <TextView android:id="@+id/empty_message" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="영상 페이지에서 감지 버튼을 눌러 저장하세요." android:textAppearance="@style/UiBody" android:gravity="center" />
+</LinearLayout>

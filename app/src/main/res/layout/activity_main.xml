@@ -1,0 +1,23 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto" android:id="@+id/app_root" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:background="@color/canvas">
+    <FrameLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+        <LinearLayout android:id="@+id/browser_page" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical">
+            <LinearLayout android:id="@+id/browser_toolbar" android:layout_width="match_parent" android:layout_height="56dp" android:gravity="center_vertical" android:paddingHorizontal="8dp" android:background="@color/surface">
+                <ImageButton android:id="@+id/browser_back" style="@style/UiIconButton" android:src="@drawable/ic_back" android:contentDescription="뒤로" android:enabled="false" />
+                <ImageButton android:id="@+id/browser_forward" style="@style/UiIconButton" android:src="@drawable/ic_forward" android:contentDescription="앞으로" android:enabled="false" />
+                <androidx.appcompat.widget.AppCompatEditText android:id="@+id/address_bar" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:background="@drawable/bg_address" android:paddingHorizontal="12dp" android:singleLine="true" android:ellipsize="end" android:selectAllOnFocus="true" android:hint="주소 또는 검색어" android:contentDescription="주소 또는 검색어" android:textColor="@color/ink" android:textColorHint="@color/ink_muted" android:textSize="14sp" android:inputType="textUri" android:imeOptions="actionGo" android:importantForAutofill="no" />
+                <ImageButton android:id="@+id/browser_refresh" style="@style/UiIconButton" android:src="@drawable/ic_refresh" android:contentDescription="새로고침" />
+                <ImageButton android:id="@+id/browser_menu" style="@style/UiIconButton" android:src="@drawable/ic_menu" android:contentDescription="브라우저 메뉴" />
+            </LinearLayout>
+            <com.google.android.material.progressindicator.LinearProgressIndicator android:id="@+id/page_progress" android:layout_width="match_parent" android:layout_height="2dp" app:trackThickness="2dp" app:trackColor="@color/surface_muted" app:indicatorColor="@color/brand" />
+            <FrameLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+                <FrameLayout android:id="@+id/gecko_host" android:layout_width="match_parent" android:layout_height="match_parent" />
+                <com.google.android.material.button.MaterialButton android:id="@+id/media_action" style="@style/UiAction" android:layout_width="wrap_content" android:layout_height="56dp" android:minWidth="56dp" android:layout_gravity="end|bottom" android:layout_margin="16dp" android:contentDescription="감지된 미디어" android:insetTop="0dp" android:insetBottom="0dp" app:icon="@drawable/ic_media" app:iconPadding="8dp" app:iconGravity="textStart" app:cornerRadius="28dp" />
+            </FrameLayout>
+        </LinearLayout>
+        <include android:id="@+id/downloads_page" layout="@layout/screen_downloads" android:visibility="gone" />
+        <include android:id="@+id/library_page" layout="@layout/screen_library" android:visibility="gone" />
+        <include android:id="@+id/settings_page" layout="@layout/screen_settings" android:visibility="gone" />
+    </FrameLayout>
+    <View android:layout_width="match_parent" android:layout_height="1dp" android:background="@color/outline" />
+    <com.google.android.material.bottomnavigation.BottomNavigationView android:id="@+id/main_navigation" android:layout_width="match_parent" android:layout_height="72dp" android:background="@color/surface" app:menu="@menu/main_navigation" app:itemIconTint="@color/nav_tint" app:itemTextColor="@color/nav_tint" app:itemActiveIndicatorStyle="@style/Widget.Adownloader.NavIndicator" app:labelVisibilityMode="labeled" app:elevation="0dp" />
+</LinearLayout>

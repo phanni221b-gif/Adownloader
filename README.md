@@ -46,3 +46,11 @@ Publish only the verified signed APK, checksum, public certificate, verification
 
 Mozilla integration reference: https://firefox-source-docs.mozilla.org/mobile/android/geckoview/consumer/web-extensions.html
 Android media APIs: https://developer.android.com/reference/android/media/MediaMuxer
+
+## v0.5 UI layer
+
+Four XML-backed screens share one retained GeckoView. MainActivity owns only shell/lifecycle wiring; ui/ controllers own media sheets, downloads/library, settings and UI telemetry. Switching sections never creates a browser session. Light/dark configuration changes rebind the shell while reparenting the same GeckoView. Actual system/cutout/keyboard insets are applied once at the shell.
+
+DownloadService only exports UI progress and safe host/type/MediaStore metadata into the existing private bounded history. DownloadEngine, HttpSource, ManifestParser, PostProcessor, BrowserSessionManager, MediaExtensionManager, MediaDetector and extension scripts are unchanged from v0.4. PopupController retains its policy with a bottom-sheet presentation and repeat-request debounce. No browser cookies or request URLs are persisted in download history.
+
+UI automation additionally verifies sheets, address navigation, browser-session identity across sections/themes/window resizing, actual completed-file library and external ACTION_VIEW, popup block/open-once/site grants, and relaunch persistence. The CI integration artifact includes phone/Fold-size screenshots in light and dark themes. These are emulator sizes, not a physical Galaxy Fold8 certification. Unknown byte totals/speeds/ETA are deliberately omitted rather than invented; current engine callbacks expose phase and percent. Audio/video container and quality selection are unchanged.

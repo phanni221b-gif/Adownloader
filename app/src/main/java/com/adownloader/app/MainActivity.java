@@ -1,406 +1,125 @@
 package com.adownloader.app;
 
 import android.Manifest;
-import android.app.Activity;
-import android.app.AlertDialog;
-import android.content.Intent;
+import android.content.*;
 import android.content.pm.PackageManager;
-import android.graphics.Color;
+import android.content.res.Configuration;
 import android.net.Uri;
-import android.os.Build;
-import android.os.Bundle;
-import android.provider.Settings;
-import android.view.Gravity;
-import android.view.KeyEvent;
-import android.view.View;
-import android.view.ViewGroup;
-import android.view.WindowInsets;
-import android.view.inputmethod.EditorInfo;
-import android.widget.Button;
-import android.widget.EditText;
-import android.widget.FrameLayout;
-import android.widget.LinearLayout;
-import android.widget.ProgressBar;
-import android.widget.TextView;
-import android.widget.Toast;
-
-import com.adownloader.app.browser.BrowserSessionManager;
-import com.adownloader.app.browser.MediaExtensionManager;
-import com.adownloader.app.browser.PopupController;
+import android.os.*;
+import android.view.*;
+import android.view.inputmethod.*;
+import android.widget.*;
+import androidx.activity.OnBackPressedCallback;
+import androidx.appcompat.app.*;
+import androidx.appcompat.widget.PopupMenu;
+import com.adownloader.app.browser.*;
 import com.adownloader.app.media.MediaDetector;
-
+import com.adownloader.app.ui.*;
+import com.google.android.material.bottomnavigation.BottomNavigationView;
+import com.google.android.material.button.MaterialButton;
+import com.google.android.material.progressindicator.LinearProgressIndicator;
+import com.google.android.material.snackbar.Snackbar;
 import org.json.JSONObject;
 import org.mozilla.geckoview.GeckoView;
 
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.util.List;
-
-public final class MainActivity extends Activity implements BrowserSessionManager.Listener, MediaDetector.Listener {
-    private static final int REQ_NOTIFICATIONS = 50;
-
+/** UI shell only. Navigation, detection and downloading retain the verified v0.4 engines. */
+public final class MainActivity extends AppCompatActivity implements BrowserSessionManager.Listener,MediaDetector.Listener {
     private BrowserSessionManager browser;
-    private PopupController popupController;
-    private MediaDetector mediaDetector;
-
-    private LinearLayout root;
-    private LinearLayout toolbar;
-    private EditText addressBar;
-    private Button backButton;
-    private Button forwardButton;
-    private Button mediaButton;
-    private ProgressBar progressBar;
+    private PopupController popups;
+    private MediaDetector detector;
+    private RecordsController records;
+    private SettingsController settings;
+    private MediaSheetController mediaSheet;
     private GeckoView geckoView;
-    private String currentUrl = "https://www.google.com";
-    private android.window.OnBackInvokedCallback backGesture;
-    private boolean initialLoaded;
+    private View root;
+    private EditText address;
+    private ImageButton back,forward;
+    private MaterialButton media;
+    private LinearProgressIndicator progress;
+    private String currentUrl="https://www.google.com";
+    private boolean initialLoaded,canBack,canForward,dark,started;
+    private int selected=R.id.nav_browser,pageProgress=100,mediaCount;
+    private final Handler handler=new Handler(Looper.getMainLooper());
+    private boolean detectionNoticePending;
 
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        configureWindow();
-        buildUi();
-
-        mediaDetector = new MediaDetector(this);
-        browser = new BrowserSessionManager(this, geckoView, this);
-        popupController = new PopupController(this, browser::load);
-
-        new MediaExtensionManager(browser.getRuntime(), mediaDetector, new MediaExtensionManager.StatusListener() {
-            @Override
-            public void onExtensionReady() {
-                runOnUiThread(() -> { loadInitialPage(); Toast.makeText(MainActivity.this, "미디어 감지 준비 완료", Toast.LENGTH_SHORT).show(); });
-            }
-
-            @Override
-            public void onExtensionError(String message) {
-                runOnUiThread(() -> { loadInitialPage(); Toast.makeText(MainActivity.this, "미디어 감지 확장 초기화 실패", Toast.LENGTH_LONG).show(); });
-            }
-        }).install();
-
-        requestNotificationPermissionIfNeeded();
-    }
-
-    private void loadInitialPage() {
-        if (initialLoaded || isDestroyed()) return;
-        initialLoaded = true;
-        Uri incoming = getIntent().getData();
-        if (incoming != null && ("https".equals(incoming.getScheme()) || "http".equals(incoming.getScheme()))) { currentUrl=incoming.toString(); browser.load(currentUrl); return; }
-        currentUrl = getPreferences(MODE_PRIVATE).getString("last_url", currentUrl);
-        if (!browser.restore(getPreferences(MODE_PRIVATE).getString("session", null))) browser.load(currentUrl);
-    }
-
-    private void configureWindow() {
+    @Override protected void onCreate(Bundle state){
+        getDelegate().setLocalNightMode(SettingsController.theme(this));
+        super.onCreate(state);
         getWindow().setDecorFitsSystemWindows(false);
-        getWindow().setStatusBarColor(Color.WHITE);
-        getWindow().setNavigationBarColor(Color.WHITE);
-        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
-    }
-
-    private void buildUi() {
-        root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Color.WHITE);
-        root.setFitsSystemWindows(false);
-        root.setOnApplyWindowInsetsListener((view, insets) -> {
-            android.graphics.Insets safe = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout() | WindowInsets.Type.ime());
-            view.setPadding(safe.left, safe.top, safe.right, safe.bottom);
-            return insets;
+        geckoView=new GeckoView(this);
+        if(state!=null)selected=state.getInt("selected",R.id.nav_browser);
+        bindShell();
+        detector=new MediaDetector(this);
+        browser=new BrowserSessionManager(this,geckoView,this);
+        popups=new PopupController(this,browser::load);
+        new MediaExtensionManager(browser.getRuntime(),detector,new MediaExtensionManager.StatusListener(){
+            @Override public void onExtensionReady(){runOnUiThread(()->loadInitialPage());}
+            @Override public void onExtensionError(String message){runOnUiThread(()->{loadInitialPage();notice("영상 감지를 준비하지 못했습니다. 앱을 다시 열어 주세요.");});}
+        }).install();
+        getOnBackPressedDispatcher().addCallback(this,new OnBackPressedCallback(true){
+            @Override public void handleOnBackPressed(){if(selected!=R.id.nav_browser){selectPage(R.id.nav_browser);return;}if(browser!=null&&browser.canGoBack())browser.goBack();else finish();}
         });
-
-        toolbar = new LinearLayout(this);
-        toolbar.setOrientation(LinearLayout.HORIZONTAL);
-        toolbar.setGravity(Gravity.CENTER_VERTICAL);
-        toolbar.setPadding(dp(4), dp(4), dp(4), dp(4));
-
-        backButton = smallButton("‹");
-        backButton.setEnabled(false);
-        backButton.setOnClickListener(v -> browser.goBack());
-        toolbar.addView(backButton, new LinearLayout.LayoutParams(dp(44), dp(48)));
-
-        forwardButton = smallButton("›");
-        forwardButton.setEnabled(false);
-        forwardButton.setOnClickListener(v -> browser.goForward());
-        toolbar.addView(forwardButton, new LinearLayout.LayoutParams(dp(44), dp(48)));
-
-        addressBar = new EditText(this);
-        addressBar.setSingleLine(true);
-        addressBar.setTextSize(15);
-        addressBar.setHint("주소 또는 검색어");
-        addressBar.setSelectAllOnFocus(true);
-        addressBar.setPadding(dp(14), 0, dp(14), 0);
-        addressBar.setBackgroundColor(0xFFF2F2F4);
-        addressBar.setImeOptions(EditorInfo.IME_ACTION_GO);
-        addressBar.setOnEditorActionListener((v, actionId, event) -> {
-            boolean go = actionId == EditorInfo.IME_ACTION_GO ||
-                    (event != null && event.getKeyCode() == KeyEvent.KEYCODE_ENTER && event.getAction() == KeyEvent.ACTION_DOWN);
-            if (go) {
-                browser.load(normalizeAddress(addressBar.getText().toString()));
-                addressBar.clearFocus();
-                ((android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(addressBar.getWindowToken(), 0);
-                return true;
-            }
-            return false;
+        if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},50);
+    }
+    private void loadInitialPage(){
+        if(initialLoaded||isDestroyed())return;initialLoaded=true;
+        Uri incoming=getIntent().getData();
+        if(incoming!=null&&("https".equals(incoming.getScheme())||"http".equals(incoming.getScheme()))){currentUrl=incoming.toString();browser.load(currentUrl);return;}
+        currentUrl=getPreferences(MODE_PRIVATE).getString("last_url",currentUrl);
+        if(!browser.restore(getPreferences(MODE_PRIVATE).getString("session",null)))browser.load(currentUrl);
+    }
+    private void bindShell(){
+        if(records!=null)records.close();if(mediaSheet!=null)mediaSheet.close();
+        if(geckoView.getParent() instanceof android.view.ViewGroup)((android.view.ViewGroup)geckoView.getParent()).removeView(geckoView);
+        setContentView(R.layout.activity_main);root=findViewById(R.id.app_root);
+        dark=(getResources().getConfiguration().uiMode&Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES;
+        getWindow().getInsetsController().setSystemBarsAppearance(dark?0:WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS|WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS|WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);
+        ((FrameLayout)findViewById(R.id.gecko_host)).addView(geckoView,new FrameLayout.LayoutParams(-1,-1));
+        root.setOnApplyWindowInsetsListener((view,insets)->{
+            android.graphics.Insets bars=insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout());
+            android.graphics.Insets ime=insets.getInsets(WindowInsets.Type.ime());boolean keyboard=insets.isVisible(WindowInsets.Type.ime());
+            view.setPadding(bars.left,bars.top,bars.right,Math.max(bars.bottom,ime.bottom));
+            findViewById(R.id.main_navigation).setVisibility(keyboard?View.GONE:View.VISIBLE);return WindowInsets.CONSUMED;
         });
-        toolbar.addView(addressBar, new LinearLayout.LayoutParams(0, dp(44), 1f));
-
-        Button refresh = smallButton("↻");
-        refresh.setOnClickListener(v -> browser.reload());
-        toolbar.addView(refresh, new LinearLayout.LayoutParams(dp(44), dp(48)));
-
-        Button menu = smallButton("⋮");
-        menu.setOnClickListener(v -> showMenu());
-        toolbar.addView(menu, new LinearLayout.LayoutParams(dp(44), dp(48)));
-        root.addView(toolbar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)));
-
-        progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-        progressBar.setMax(100);
-        progressBar.setProgress(0);
-        root.addView(progressBar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(2)));
-
-        FrameLayout browserFrame = new FrameLayout(this);
-        geckoView = new GeckoView(this);
-        geckoView.setBackgroundColor(Color.WHITE);
-        browserFrame.addView(geckoView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-
-        mediaButton = new Button(this);
-        mediaButton.setContentDescription("감지된 미디어");
-        mediaButton.setText("▶ 0");
-        mediaButton.setTextColor(Color.WHITE);
-        mediaButton.setTextSize(13);
-        mediaButton.setAllCaps(false);
-        mediaButton.setBackgroundColor(0xFFD60072);
-        mediaButton.setOnClickListener(v -> showMediaCandidates());
-        FrameLayout.LayoutParams mediaLp = new FrameLayout.LayoutParams(dp(72), dp(52), Gravity.END | Gravity.BOTTOM);
-        mediaLp.setMargins(0, 0, dp(16), dp(16));
-        browserFrame.addView(mediaButton, mediaLp);
-        root.addView(browserFrame, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
-
-        LinearLayout bottom = new LinearLayout(this);
-        bottom.setOrientation(LinearLayout.HORIZONTAL);
-        bottom.setGravity(Gravity.CENTER);
-        bottom.setBackgroundColor(Color.WHITE);
-        bottom.addView(bottomButton("🌐\n브라우저", v -> {}), weighted());
-        bottom.addView(bottomButton("⇩\n다운로드", v -> showDownloadsInfo()), weighted());
-        bottom.addView(bottomButton("▣\n플레이어", v -> openMoviesFolder()), weighted());
-        bottom.addView(bottomButton("⚙\n설정", v -> showSettings()), weighted());
-        root.addView(bottom, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(66)));
-
-        setContentView(root);
-        root.requestApplyInsets();
-    }
-
-    private Button smallButton(String text) {
-        Button b = new Button(this);
-        b.setText(text);
-        b.setTextSize(23);
-        b.setMinWidth(0);
-        b.setMinHeight(0);
-        b.setPadding(0, 0, 0, 0);
-        b.setBackgroundColor(Color.TRANSPARENT);
-        b.setAllCaps(false);
-        return b;
-    }
-
-    private Button bottomButton(String text, View.OnClickListener listener) {
-        Button b = new Button(this);
-        b.setText(text);
-        b.setTextSize(11);
-        b.setTextColor(0xFF55555F);
-        b.setAllCaps(false);
-        b.setGravity(Gravity.CENTER);
-        b.setBackgroundColor(Color.TRANSPARENT);
-        b.setOnClickListener(listener);
-        return b;
-    }
-
-    private LinearLayout.LayoutParams weighted() {
-        return new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
-    }
-
-    private void showMenu() {
-        String[] items = {"홈", "새로고침", "감지 목록 초기화", "앱 정보"};
-        new AlertDialog.Builder(this)
-                .setItems(items, (dialog, which) -> {
-                    if (which == 0) browser.load("https://www.google.com");
-                    else if (which == 1) browser.reload();
-                    else if (which == 2) mediaDetector.reset();
-                    else showAbout();
-                })
-                .show();
-    }
-
-    private void showAbout() {
-        new AlertDialog.Builder(this)
-                .setTitle("Adownloader 0.4.0")
-                .setMessage("GeckoView 자체 엔진 사용\nAndroid System WebView 비의존\n외부 광고차단 앱과 독립 동작")
-                .setPositiveButton("확인", null)
-                .show();
-    }
-
-    private void showSettings() {
-        new AlertDialog.Builder(this)
-                .setTitle("설정")
-                .setMessage("광고/추적 필터는 유니콘 Pro, NordVPN 같은 시스템 차단기에 맡깁니다.\n\nAdownloader는 팝업 차단과 미디어 감지에 집중합니다.")
-                .setPositiveButton("확인", null)
-                .setNeutralButton("팝업 허용 초기화", (d,w) -> popupController.clearAllowed())
-                .show();
-    }
-
-    private void showDownloadsInfo() {
-        java.util.ArrayList<JSONObject> rows = new java.util.ArrayList<>();
-        try { JSONObject all = new JSONObject(getSharedPreferences("downloads", MODE_PRIVATE).getString("items", "{}")); java.util.Iterator<String> keys=all.keys(); while(keys.hasNext()) rows.add(all.getJSONObject(keys.next())); } catch(Exception ignored) {}
-        rows.sort((a,b)->Long.compare(b.optLong("time"),a.optLong("time")));
-        String[] labels=new String[rows.size()];
-        for(int i=0;i<rows.size();i++) labels[i]=rows.get(i).optString("state")+" · "+android.text.format.DateFormat.format("MM-dd HH:mm", rows.get(i).optLong("time"));
-        AlertDialog.Builder dialog = new AlertDialog.Builder(this).setTitle("다운로드").setPositiveButton("닫기",null);
-        if(rows.isEmpty()) dialog.setMessage("아직 다운로드한 미디어가 없습니다. 영상 재생 후 분홍색 감지 버튼을 눌러 저장하세요.");
-        else dialog.setItems(labels,(d,index)->{String uri=rows.get(index).optString("uri");if(!uri.isEmpty())try{startActivity(new Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse(uri),"*/*").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));}catch(Exception ignored){Toast.makeText(this,"미디어 앱을 열 수 없습니다",Toast.LENGTH_SHORT).show();}});
-        dialog.show();
-    }
-
-    private void openMoviesFolder() {
-        Intent intent = new Intent(Intent.ACTION_VIEW);
-        intent.setDataAndType(android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI, "video/*");
-        try {
-            startActivity(intent);
-        } catch (Throwable e) {
-            Toast.makeText(this, "영상 앱을 열 수 없습니다", Toast.LENGTH_SHORT).show();
-        }
-    }
-
-    private void showMediaCandidates() {
-        List<MediaCandidate> items = mediaDetector.snapshot();
-        if (items.isEmpty()) {
-            new AlertDialog.Builder(this)
-                    .setTitle("감지된 동영상 없음")
-                    .setMessage("페이지에서 영상을 재생해 보세요. Gecko 네트워크 요청과 DOM/Performance 리소스를 동시에 감시합니다.")
-                    .setPositiveButton("확인", null)
-                    .show();
-            return;
-        }
-
-        String[] labels = new String[items.size()];
-        for (int i = 0; i < items.size(); i++) {
-            MediaCandidate item = items.get(i);
-            String url = item.getUrl();
-            labels[i] = item.displayName() + "\n" + (url.length() > 120 ? url.substring(0, 120) + "…" : url);
-        }
-
-        new AlertDialog.Builder(this)
-                .setTitle("감지된 미디어 " + items.size() + "개")
-                .setItems(labels, (dialog, which) -> confirmDownload(items.get(which)))
-                .setNegativeButton("닫기", null)
-                .show();
-    }
-
-    private void confirmDownload(MediaCandidate item) {
-        String type = item.getType().name();
-        String warning = "가능한 최대 원본 화질을 선택합니다. 재인코딩 없이 저장·병합합니다. DRM, 라이브 및 지원하지 않는 목록은 저장하지 않습니다.";
-
-        AlertDialog.Builder builder = new AlertDialog.Builder(this)
-                .setTitle(item.displayName())
-                .setMessage(warning + "\n\n" + item.getUrl())
-                .setNegativeButton("취소", null);
-
-        builder.setPositiveButton("다운로드", (dialog, which) -> startDownload(item));
-        builder.show();
-    }
-
-    private void startDownload(MediaCandidate item) {
-        Intent intent = new Intent(this, DownloadService.class);
-        intent.setAction(DownloadService.ACTION_DOWNLOAD);
-        intent.putExtra(DownloadService.EXTRA_URL, item.getUrl());
-        intent.putExtra(DownloadService.EXTRA_TYPE, item.getType().name());
-        intent.putExtra(DownloadService.EXTRA_HEADERS, new JSONObject(item.getHeaders()).toString());
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent);
-        else startService(intent);
-        Toast.makeText(this, "다운로드를 시작했습니다", Toast.LENGTH_SHORT).show();
-    }
-
-    private String normalizeAddress(String raw) {
-        String input = raw == null ? "" : raw.trim();
-        if (input.isEmpty()) return currentUrl;
-        if (input.startsWith("http://") || input.startsWith("https://")) return input;
-        if (!input.contains(" ") && input.contains(".")) return "https://" + input;
-        return "https://www.google.com/search?q=" + Uri.encode(input);
-    }
-
-    private void requestNotificationPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIFICATIONS);
-        }
-    }
-
-    @Override
-    public void onLocationChanged(String url) {
-        runOnUiThread(() -> {
-            if (!currentUrl.equals(url)) mediaDetector.reset();
-            currentUrl = url;
-            if (!addressBar.hasFocus()) addressBar.setText(url);
+        address=findViewById(R.id.address_bar);address.setText(currentUrl);
+        address.setOnEditorActionListener((view,action,event)->{
+            if(action==EditorInfo.IME_ACTION_GO||(event!=null&&event.getKeyCode()==KeyEvent.KEYCODE_ENTER&&event.getAction()==KeyEvent.ACTION_DOWN)){
+                navigate(address.getText().toString());address.clearFocus();((InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(address.getWindowToken(),0);return true;
+            }return false;
         });
+        back=findViewById(R.id.browser_back);forward=findViewById(R.id.browser_forward);back.setEnabled(canBack);forward.setEnabled(canForward);
+        back.setOnClickListener(v->browser.goBack());forward.setOnClickListener(v->browser.goForward());findViewById(R.id.browser_refresh).setOnClickListener(v->browser.reload());
+        findViewById(R.id.browser_menu).setOnClickListener(v->{PopupMenu menu=new PopupMenu(this,v);menu.inflate(R.menu.browser_menu);menu.setOnMenuItemClickListener(item->{int id=item.getItemId();if(id==R.id.menu_home)browser.load("https://www.google.com");else if(id==R.id.menu_reload)browser.reload();else if(id==R.id.menu_clear_media)detector.reset();else selectPage(R.id.nav_settings);return true;});menu.show();});
+        media=findViewById(R.id.media_action);updateMediaBadge();media.setOnClickListener(v->mediaSheet.show(detector.snapshot()));
+        progress=findViewById(R.id.page_progress);progress.setProgressCompat(pageProgress,false);progress.setVisibility(pageProgress>=100?View.INVISIBLE:View.VISIBLE);
+        records=new RecordsController(this);settings=new SettingsController(this);mediaSheet=new MediaSheetController(this,this::startDownload);
+        BottomNavigationView navigation=findViewById(R.id.main_navigation);navigation.setOnItemSelectedListener(item->{showPage(item.getItemId());return true;});navigation.setSelectedItemId(selected);showPage(selected);root.requestApplyInsets();
     }
-
-    @Override
-    public void onNavigationStateChanged(boolean canGoBack, boolean canGoForward) {
-        runOnUiThread(() -> {
-            backButton.setEnabled(canGoBack);
-            forwardButton.setEnabled(canGoForward);
-            if (Build.VERSION.SDK_INT >= 33) {
-                if (backGesture != null) getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backGesture);
-                backGesture = null;
-                if (canGoBack) { backGesture = () -> browser.goBack(); getOnBackInvokedDispatcher().registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, backGesture); }
-            }
-        });
+    private void navigate(String raw){
+        String value=raw==null?"":raw.trim();if(value.isEmpty())return;
+        if(!(value.startsWith("https://")||value.startsWith("http://")))value=!value.contains(" ")&&value.contains(".")?"https://"+value:"https://www.google.com/search?q="+Uri.encode(value);
+        browser.load(value);
     }
-
-    @Override
-    public void onPageProgress(int progress) {
-        runOnUiThread(() -> {
-            progressBar.setProgress(progress);
-            progressBar.setVisibility(progress >= 100 ? View.INVISIBLE : View.VISIBLE);
-        });
+    private void selectPage(int id){((BottomNavigationView)findViewById(R.id.main_navigation)).setSelectedItemId(id);}
+    private void showPage(int id){
+        selected=id;findViewById(R.id.browser_page).setVisibility(id==R.id.nav_browser?View.VISIBLE:View.GONE);findViewById(R.id.downloads_page).setVisibility(id==R.id.nav_downloads?View.VISIBLE:View.GONE);findViewById(R.id.library_page).setVisibility(id==R.id.nav_library?View.VISIBLE:View.GONE);findViewById(R.id.settings_page).setVisibility(id==R.id.nav_settings?View.VISIBLE:View.GONE);
+        if(browser!=null)browser.setActive(started&&id==R.id.nav_browser);if(id==R.id.nav_downloads||id==R.id.nav_library)records.refresh(false);if(id==R.id.nav_settings)settings.refresh();
     }
-
-    @Override
-    public void onPopupRequested(String url) {
-        runOnUiThread(() -> popupController.onPopupRequested(url, currentUrl));
+    private void startDownload(MediaCandidate item){
+        Intent intent=new Intent(this,DownloadService.class).setAction(DownloadService.ACTION_DOWNLOAD).putExtra(DownloadService.EXTRA_URL,item.getUrl()).putExtra(DownloadService.EXTRA_TYPE,item.getType().name()).putExtra(DownloadService.EXTRA_HEADERS,new JSONObject(item.getHeaders()).toString());
+        startForegroundService(intent);Snackbar.make(root,"다운로드를 시작했습니다.",Snackbar.LENGTH_SHORT).setAnchorView(findViewById(R.id.main_navigation)).setAction("보기",v->selectPage(R.id.nav_downloads)).show();
     }
-
-    @Override
-    public void onBrowserCrashed() {
-        runOnUiThread(() -> new AlertDialog.Builder(this)
-                .setTitle("브라우저 탭이 종료되었습니다")
-                .setMessage("Android System WebView와는 무관한 Gecko 콘텐츠 프로세스가 종료되었습니다. 현재 페이지를 새 세션으로 다시 열 수 있습니다.")
-                .setNegativeButton("닫기", null)
-                .setPositiveButton("다시 열기", (dialog, which) -> browser.recover(currentUrl))
-                .show());
-    }
-
-    @Override
-    public void onCandidateAdded(MediaCandidate candidate, int totalCount) {
-        runOnUiThread(() -> mediaButton.setText("▶ " + totalCount));
-    }
-
-    @Override
-    @android.annotation.SuppressLint("GestureBackNavigation") // API 30–32 fallback; API 33+ uses OnBackInvokedDispatcher above.
-    public void onBackPressed() {
-        if (browser != null && browser.canGoBack()) browser.goBack();
-        else super.onBackPressed();
-    }
-
-    @Override
-    protected void onDestroy() {
-        if (browser != null) browser.close();
-        super.onDestroy();
-    }
-
-    @Override protected void onResume() { super.onResume(); if(browser!=null)browser.setActive(true); }
-    @Override protected void onPause() {
-        if(browser!=null) { browser.setActive(false); getPreferences(MODE_PRIVATE).edit().putString("last_url", currentUrl).apply(); browser.save(state -> getPreferences(MODE_PRIVATE).edit().putString("session", state).apply()); }
-        super.onPause();
-    }
-
-    private int dp(int value) {
-        return Math.round(value * getResources().getDisplayMetrics().density);
-    }
+    private void updateMediaBadge(){media.setText(mediaCount==0?"":Integer.toString(mediaCount));media.setContentDescription(mediaCount==0?"감지된 미디어":"감지된 미디어 "+mediaCount+"개");}
+    private void notice(String text){if(root!=null&&!isDestroyed())Snackbar.make(root,text,Snackbar.LENGTH_SHORT).setAnchorView(findViewById(R.id.main_navigation)).show();}
+    @Override public void onLocationChanged(String url){runOnUiThread(()->{if(detector!=null&&!Uri.parse(currentUrl).buildUpon().fragment(null).build().equals(Uri.parse(url).buildUpon().fragment(null).build()))detector.reset();currentUrl=url;if(!address.hasFocus())address.setText(url);});}
+    @Override public void onNavigationStateChanged(boolean canBack,boolean canForward){this.canBack=canBack;this.canForward=canForward;runOnUiThread(()->{back.setEnabled(canBack);forward.setEnabled(canForward);});}
+    @Override public void onPageProgress(int value){pageProgress=value;runOnUiThread(()->{progress.setProgressCompat(value,true);progress.setVisibility(value>=100?View.INVISIBLE:View.VISIBLE);});}
+    @Override public void onPopupRequested(String url){runOnUiThread(()->popups.onPopupRequested(url,currentUrl));}
+    @Override public void onBrowserCrashed(){runOnUiThread(()->UiSheets.action(this,R.drawable.ic_browser,"페이지가 종료되었습니다","새 세션에서 현재 페이지를 다시 열 수 있습니다.","닫기","다시 열기",()->browser.recover(currentUrl),null,null));}
+    @Override public void onCandidateAdded(MediaCandidate item,int count){runOnUiThread(()->{boolean first=mediaCount==0&&count>0;mediaCount=count;updateMediaBadge();if(first&&!detectionNoticePending){detectionNoticePending=true;handler.postDelayed(()->{detectionNoticePending=false;if(mediaCount>0&&selected==R.id.nav_browser)notice("동영상 "+mediaCount+"개 감지됨");},700);}});}
+    @Override public void onConfigurationChanged(Configuration config){super.onConfigurationChanged(config);boolean now=(getResources().getConfiguration().uiMode&Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES;if(root!=null&&now!=dark)bindShell();else if(records!=null){records.resize();root.requestApplyInsets();}}
+    @Override protected void onSaveInstanceState(Bundle state){state.putInt("selected",selected);super.onSaveInstanceState(state);}
+    @Override protected void onResume(){super.onResume();started=true;if(browser!=null)browser.setActive(selected==R.id.nav_browser);if(records!=null)records.refresh(false);if(settings!=null)settings.refresh();}
+    @Override protected void onPause(){started=false;if(browser!=null){browser.setActive(false);getPreferences(MODE_PRIVATE).edit().putString("last_url",currentUrl).apply();browser.save(state->getPreferences(MODE_PRIVATE).edit().putString("session",state).apply());}super.onPause();}
+    @Override protected void onDestroy(){handler.removeCallbacksAndMessages(null);if(records!=null)records.close();if(mediaSheet!=null)mediaSheet.close();if(browser!=null)browser.close();super.onDestroy();}
 }
