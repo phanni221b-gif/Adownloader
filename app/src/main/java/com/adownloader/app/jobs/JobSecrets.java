@@ -1,15 +1,15 @@
 package com.adownloader.app.jobs;
 
 import android.security.keystore.*;
+import java.io.*;
 import java.nio.*;
 import java.nio.charset.StandardCharsets;
 import java.security.*;
+import java.util.zip.*;
 import javax.crypto.*;
 import javax.crypto.spec.GCMParameterSpec;
 
-/**
- * Non-exportable app key. Fresh random GCM IV, authenticated job identity, no plaintext fallback.
- */
+/** Versioned AES-GCM envelope: random IV, job-bound AAD, bounded compressed plaintext. */
 public final class JobSecrets {
   private static final String ALIAS = "adownloader.download.context.v1";
 
@@ -31,12 +31,18 @@ public final class JobSecrets {
   }
 
   public byte[] seal(long job, String text) throws Exception {
+    byte[] plain = text.getBytes(StandardCharsets.UTF_8);
+    if (plain.length > 8 * 1024 * 1024) throw new GeneralSecurityException("CONTEXT_TOO_LARGE");
+    ByteArrayOutputStream compressed = new ByteArrayOutputStream();
+    try (GZIPOutputStream gzip = new GZIPOutputStream(compressed)) {
+      gzip.write(plain);
+    }
     Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
     cipher.init(Cipher.ENCRYPT_MODE, key());
     cipher.updateAAD(Long.toString(job).getBytes(StandardCharsets.UTF_8));
-    byte[] encrypted = cipher.doFinal(text.getBytes(StandardCharsets.UTF_8));
-    byte[] iv = cipher.getIV();
-    return ByteBuffer.allocate(1 + iv.length + encrypted.length)
+    byte[] encrypted = cipher.doFinal(compressed.toByteArray()), iv = cipher.getIV();
+    return ByteBuffer.allocate(2 + iv.length + encrypted.length)
+        .put((byte) 1)
         .put((byte) iv.length)
         .put(iv)
         .put(encrypted)
@@ -44,12 +50,23 @@ public final class JobSecrets {
   }
 
   public String open(long job, byte[] bytes) throws Exception {
-    if (bytes == null || bytes.length < 29 || bytes[0] != 12)
+    if (bytes == null || bytes.length < 30 || bytes[0] != 1 || bytes[1] != 12)
       throw new GeneralSecurityException("CONTEXT_INVALID");
-    byte[] iv = java.util.Arrays.copyOfRange(bytes, 1, 13);
+    byte[] iv = java.util.Arrays.copyOfRange(bytes, 2, 14);
     Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
     cipher.init(Cipher.DECRYPT_MODE, key(), new GCMParameterSpec(128, iv));
     cipher.updateAAD(Long.toString(job).getBytes(StandardCharsets.UTF_8));
-    return new String(cipher.doFinal(bytes, 13, bytes.length - 13), StandardCharsets.UTF_8);
+    byte[] compressed = cipher.doFinal(bytes, 14, bytes.length - 14);
+    ByteArrayOutputStream plain = new ByteArrayOutputStream();
+    try (GZIPInputStream gzip = new GZIPInputStream(new ByteArrayInputStream(compressed))) {
+      byte[] buffer = new byte[32768];
+      int n;
+      while ((n = gzip.read(buffer)) != -1) {
+        if (plain.size() + n > 8 * 1024 * 1024)
+          throw new GeneralSecurityException("CONTEXT_TOO_LARGE");
+        plain.write(buffer, 0, n);
+      }
+    }
+    return new String(plain.toByteArray(), StandardCharsets.UTF_8);
   }
 }

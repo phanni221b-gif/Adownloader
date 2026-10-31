@@ -78,8 +78,7 @@ public final class JobNotifications {
               context,
               0,
               new Intent(Intent.ACTION_VIEW)
-                  .setDataAndType(
-                      Uri.parse(job.uri), job.type.equals("AUDIO") ? "audio/*" : "video/*")
+                  .setDataAndType(Uri.parse(job.uri), mime(context, job))
                   .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
               PendingIntent.FLAG_IMMUTABLE));
     } else {
@@ -91,6 +90,15 @@ public final class JobNotifications {
                   .build());
     }
     context.getSystemService(NotificationManager.class).notify("job:" + job.id, 0, builder.build());
+  }
+
+  private static String mime(Context context, DownloadJobStore.Job job) {
+    try {
+      String mime = context.getContentResolver().getType(Uri.parse(job.uri));
+      if (mime != null) return mime;
+    } catch (Exception ignored) {
+    }
+    return job.type.equals("AUDIO") ? "audio/*" : "video/*";
   }
 
   public static String message(String error, DownloadJobStore.State state) {

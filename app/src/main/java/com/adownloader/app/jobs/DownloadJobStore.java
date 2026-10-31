@@ -31,6 +31,7 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
     public String identity, type, name, host, phase, error, pending, uri, etag, modified, hash;
     public State state;
     public boolean hasPage;
+    public String owner;
   }
 
   private static final java.util.concurrent.CopyOnWriteArraySet<Runnable> listeners =
@@ -55,6 +56,7 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
     return count;
   }
 
+  private static final String PROCESS_TOKEN = java.util.UUID.randomUUID().toString();
   private final Context context;
   private final JobSecrets secrets = new JobSecrets();
 
@@ -71,6 +73,7 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
   @Override
   public void onConfigure(SQLiteDatabase db) {
     db.setForeignKeyConstraintsEnabled(true);
+    db.execSQL("PRAGMA synchronous=FULL");
   }
 
   @Override
@@ -83,7 +86,7 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
             + " 0,segments INTEGER,phase TEXT NOT NULL DEFAULT '',error TEXT NOT NULL DEFAULT"
             + " '',has_page INTEGER NOT NULL DEFAULT 0,priority INTEGER NOT NULL DEFAULT 0,pending"
             + " TEXT,uri TEXT,pid INTEGER NOT NULL DEFAULT 0,etag TEXT,modified TEXT,hash"
-            + " TEXT,secret BLOB)");
+            + " TEXT,owner TEXT NOT NULL DEFAULT '',secret BLOB)");
     db.execSQL("CREATE INDEX jobs_queue ON jobs(state,created)");
     db.execSQL(
         "CREATE TABLE parts(job INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,track"
@@ -133,10 +136,13 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
 
   public synchronized void writeContext(long id, JSONObject request) throws Exception {
     String text = request.toString();
-    if (text.length() > 2 * 1024 * 1024)
+    if (text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 8 * 1024 * 1024)
       throw new DownloadError(DownloadError.Category.MANIFEST_INVALID);
     ContentValues values = new ContentValues();
-    values.put("secret", secrets.seal(id, text));
+    byte[] encrypted = secrets.seal(id, text);
+    if (encrypted.length > 1024 * 1024)
+      throw new DownloadError(DownloadError.Category.MANIFEST_INVALID);
+    values.put("secret", encrypted);
     update(values, "id=?", new String[] {"" + id});
   }
 
@@ -187,6 +193,7 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
     j.hash = str(c, "hash");
     j.pid = (int) num(c, "pid");
     j.hasPage = num(c, "has_page") != 0;
+    j.owner = str(c, "owner");
     return j;
   }
 
@@ -214,6 +221,7 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
       ContentValues v = new ContentValues();
       v.put("state", State.PREPARING.name());
       v.put("pid", Process.myPid());
+      v.put("owner", PROCESS_TOKEN);
       v.put("updated", System.currentTimeMillis());
       db.update("jobs", v, "id=? AND state='QUEUED'", new String[] {"" + id});
       db.setTransactionSuccessful();
@@ -364,6 +372,10 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
     if (f.exists() && !f.delete()) throw new IOException("CLEANUP_FAILED");
   }
 
+  public static boolean ownedHere(Job job) {
+    return job.pid == Process.myPid() && PROCESS_TOKEN.equals(job.owner);
+  }
+
   public synchronized void reconcile() {
     for (Job j : list()) {
       if (j.state == State.CANCELED) {
@@ -372,7 +384,7 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
       }
       if (j.state != State.PREPARING && j.state != State.DOWNLOADING && j.state != State.FINALIZING)
         continue;
-      if (j.pid == Process.myPid()) continue;
+      if (j.pid == Process.myPid() && PROCESS_TOKEN.equals(j.owner)) continue;
       boolean published = false;
       if (!j.pending.isEmpty())
         try (Cursor c =

@@ -20,6 +20,14 @@ public final class TransferControl {
     }
   }
 
+  private static final java.util.concurrent.ExecutorService aborts =
+      java.util.concurrent.Executors.newFixedThreadPool(
+          2,
+          r -> {
+            Thread thread = new Thread(r, "download-abort");
+            thread.setDaemon(true);
+            return thread;
+          });
   private volatile Stop stop = Stop.NONE;
   private volatile boolean userRequested;
 
@@ -37,7 +45,7 @@ public final class TransferControl {
   public void stop(Stop reason) {
     stop = reason;
     HttpURLConnection connection = active;
-    if (connection != null) connection.disconnect();
+    if (connection != null) aborts.execute(connection::disconnect);
   }
 
   public void check() throws Stopped {

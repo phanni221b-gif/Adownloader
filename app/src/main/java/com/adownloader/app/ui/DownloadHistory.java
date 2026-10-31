@@ -139,9 +139,19 @@ public final class DownloadHistory {
     for (com.adownloader.app.jobs.DownloadJobStore.Job job :
         com.adownloader.app.jobs.DownloadJobs.get(context).store.list())
       try {
+        boolean recovering =
+            (job.state == com.adownloader.app.jobs.DownloadJobStore.State.PREPARING
+                    || job.state == com.adownloader.app.jobs.DownloadJobStore.State.DOWNLOADING
+                    || job.state == com.adownloader.app.jobs.DownloadJobStore.State.FINALIZING)
+                && !com.adownloader.app.jobs.DownloadJobStore.ownedHere(job);
+        if (recovering) {
+          job.state = com.adownloader.app.jobs.DownloadJobStore.State.PAUSED;
+          job.phase = "복구 정보 확인 중";
+        }
         JSONObject row =
             new JSONObject()
                 .put("job", job.id)
+                .put("recovering", recovering)
                 .put("jobState", job.state.name())
                 .put("state", label(job.state.name()))
                 .put("name", job.name)

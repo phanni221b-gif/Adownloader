@@ -452,6 +452,7 @@ public final class RecordsController implements SharedPreferences.OnSharedPrefer
         }
         break;
     }
+    if (row.optBoolean("recovering")) action = null;
     holder.primary.setVisibility(action == null ? View.GONE : View.VISIBLE);
     String selected = action;
     if (action != null) {

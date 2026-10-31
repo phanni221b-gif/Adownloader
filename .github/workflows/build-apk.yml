@@ -85,5 +85,6 @@ jobs:
             app/build/outputs/androidTest-results/
             ui-proof/
             ui-logcat.txt
+            process-recovery-results/
 # The fixed private release key remains off GitHub. This workflow cannot publish an unsigned APK.
 

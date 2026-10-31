@@ -28,6 +28,13 @@ public final class DownloadJobs {
   public final DownloadJobStore store;
   private final ExecutorService commands = Executors.newSingleThreadExecutor(),
       workers = Executors.newFixedThreadPool(1);
+  private final java.util.Set<Long> deferredResume =
+      java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+  public boolean isExecuting(long id) {
+    return active.containsKey(id);
+  }
+
   private final Handler main = new Handler(Looper.getMainLooper());
   private final ConcurrentMap<Long, TransferControl> active = new ConcurrentHashMap<>();
   private Host host;
@@ -173,6 +180,14 @@ public final class DownloadJobs {
           new JobRunner(context, store).run(job, control);
         } finally {
           active.remove(job.id);
+          if (deferredResume.remove(job.id)) {
+            DownloadJobStore.Job current = store.get(job.id);
+            if (current.state == DownloadJobStore.State.PAUSED
+                || current.state == DownloadJobStore.State.FAILED) {
+              prepareRetry(current);
+              store.state(job.id, DownloadJobStore.State.QUEUED, "");
+            }
+          }
         }
       }
     } catch (Exception unavailable) {
@@ -211,6 +226,16 @@ public final class DownloadJobs {
     commands.execute(() -> store.clearTerminal(state));
   }
 
+  private void prepareRetry(DownloadJobStore.Job job) throws Exception {
+    if (job.state == DownloadJobStore.State.FAILED && job.error.equals("STORAGE")) {
+      JSONObject request = store.request(job.id);
+      store.cleanup(job.id);
+      request.remove("plan");
+      request.remove("directFiles");
+      store.writeContext(job.id, request);
+    }
+  }
+
   public void action(long id, String action, Runnable done) {
     TransferControl control = active.get(id);
     if (control != null && (action.equals("PAUSE") || action.equals("CANCEL")))
@@ -235,14 +260,11 @@ public final class DownloadJobs {
               JobNotifications.status(context, store.get(id));
             } else if (action.equals("RESUME") || action.equals("RETRY")) {
               if (job.state == DownloadJobStore.State.NEEDS_REFRESH) return;
-              if (job.state == DownloadJobStore.State.FAILED && job.error.equals("STORAGE")) {
-                JSONObject request = store.request(id);
-                store.cleanup(id);
-                request.remove("plan");
-                request.remove("directFiles");
-                store.writeContext(id, request);
-              }
-              if (!active.containsKey(id)) {
+              if (active.containsKey(id)) {
+                deferredResume.add(id);
+                main.post(this::schedule);
+              } else {
+                prepareRetry(job);
                 store.state(id, DownloadJobStore.State.QUEUED, "");
                 main.post(this::schedule);
               }
