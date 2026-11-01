@@ -20,7 +20,7 @@ jobs:
           cmdline-tools-version: '13114758'
           packages: 'platform-tools build-tools;36.0.0 platforms;android-37.2'
           log-accepted-android-sdk-licenses: false
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '9.6.0'
       - name: Reserve runner space for the real 2 GiB transfer regression
@@ -73,7 +73,7 @@ jobs:
           cmdline-tools-version: '13114758'
           packages: 'platform-tools build-tools;36.0.0 platforms;android-37.2'
           log-accepted-android-sdk-licenses: false
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '9.6.0'
       - name: Generate synthetic test media
