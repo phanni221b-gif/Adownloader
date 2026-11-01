@@ -458,6 +458,7 @@ public final class MainActivity extends AppCompatActivity
           boolean first = mediaCount == 0 && count > 0;
           mediaCount = count;
           updateMediaBadge();
+          if (mediaSheet != null) mediaSheet.update(detector.snapshot());
           if (item != null) offerRefreshedMedia(item);
           if (first && !detectionNoticePending) {
             detectionNoticePending = true;

@@ -332,6 +332,7 @@ public final class DownloadJobs {
                               .put("page", candidate.getPageUrl())
                               .put("headers", headers)
                               .put("metadata", new JSONObject(candidate.getMetadata()));
+                          previous.remove("cookieState");
                           if (probe != null) {
                             previous.put("plan", PlanCodec.encode(probe.tracks()));
                             previous.put("cookieBootstrap", probe.requiresCookieSession);

@@ -1,7 +1,7 @@
 'use strict';
 const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
 function fixture(script,kind='hls'){
- const timers=new Map();let nextTimer=0;const handlers={},sent=[],filters=new Map(),event=name=>({addListener(fn){handlers[name]=fn;}});
+ const timers=new Map();let nextTimer=0;const handlers={},sent=[],filters=new Map(),event=name=>({addListener(fn,filter){const previous=handlers[name],invoke=(...args)=>{if(!filter||!filter.types||filter.types.includes(args[0].type))return fn(...args);};handlers[name]=previous?(...args)=>{previous(...args);return invoke(...args);}:invoke;}});
  const browser={webRequest:{onBeforeSendHeaders:event('before'),onHeadersReceived:event('response'),onCompleted:event('completed'),onErrorOccurred:event('error'),filterResponseData(id){const f={written:[],disconnect(){this.disconnected=true;},close(){this.closed=true;},write(data){this.written.push(Buffer.from(data));}};filters.set(id,f);return f;}},runtime:{onMessage:event('message'),sendNativeMessage(app,payload){sent.push(payload);return Promise.resolve();}},tabs:{onRemoved:event('removed')}};
  const context=vm.createContext({browser,URL,Date,Map,Set,TextDecoder,Uint8Array,ArrayBuffer,performance,setTimeout:(fn,delay)=>{const id=++nextTimer;timers.set(id,{fn,delay});return id;},clearTimeout:id=>timers.delete(id)});vm.runInContext(script,context);
  handlers.message({kind:'page-meta',pageTitle:'Top post title',pageUrl:'https://page.test/post'},{frameId:0,tab:{id:4,url:'https://page.test/post'}});
