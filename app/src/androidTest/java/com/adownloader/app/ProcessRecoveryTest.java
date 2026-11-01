@@ -602,6 +602,10 @@ public class ProcessRecoveryTest {
     while (jobs.store.get(ids[0]).bytes < 512 * 1024 && System.currentTimeMillis() < deadline)
       Thread.sleep(25);
     assertEquals(DownloadJobStore.State.DOWNLOADING, jobs.store.get(ids[0]).state);
+    assertEquals(
+        "A queued job must also survive task removal",
+        DownloadJobStore.State.QUEUED,
+        jobs.store.get(ids[1]).state);
     long before = jobs.store.get(ids[0]).bytes + jobs.store.get(ids[1]).bytes;
     var session = oldBrowser.getSession();
     int taskId = activity.getTaskId();
@@ -609,9 +613,12 @@ public class ProcessRecoveryTest {
     deadline = System.currentTimeMillis() + 10000;
     while (!activity.isDestroyed() && System.currentTimeMillis() < deadline) Thread.sleep(50);
     assertTrue(activity.isDestroyed());
-    assertFalse(session.isOpen());
-    assertTrue(oldBrowser.tabs().isEmpty());
-    assertNull(session.getNavigationDelegate());
+    instrumentation.runOnMainSync(
+        () -> {
+          assertFalse(session.isOpen());
+          assertTrue(oldBrowser.tabs().isEmpty());
+          assertNull(session.getNavigationDelegate());
+        });
     assertTrue(
         context.getSystemService(ActivityManager.class).getAppTasks().stream()
             .noneMatch(t -> t.getTaskInfo().taskId == taskId));

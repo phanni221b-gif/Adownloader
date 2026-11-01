@@ -52,6 +52,7 @@ public class JobCookieJarTest {
               "https://foo.github.io/root",
               "__Host-a=private; Secure; Domain=foo.github.io; Path=/"));
       assertFalse(set(j, "https://foo.github.io/root", "__Secure-a=private; Path=/"));
+      assertFalse(set(j, "https://foo.github.io/root", "__Host-a=private; Secure"));
       assertFalse(set(j, "https://foo.example.co.uk/root", "a=private; Domain=co.uk"));
       assertEquals("", j.header(URI.create("https://bar.github.io/root")));
     }

@@ -110,8 +110,8 @@ public final class JobCookieJar implements AutoCloseable {
               }
               if (same.equals("none") && !secure) continue;
               if (c.getName().startsWith("__Secure-") && !secure
-                  || c.getName().startsWith("__Host-") && (!secure || !hostOnly || !p.equals("/")))
-                continue;
+                  || c.getName().startsWith("__Host-")
+                      && (!secure || !hostOnly || !"/".equals(c.getPath()))) continue;
               if (domain(CookieSites.normal(sourceUri.getHost()), d)
                   && path(sourceUri.getPath().isEmpty() ? "/" : sourceUri.getPath(), p)) {
                 String before = initial;

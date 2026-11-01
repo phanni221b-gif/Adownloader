@@ -216,7 +216,8 @@ public final class MediaProbeService implements AutoCloseable {
       String page)
       throws Exception {
     try (HttpSource source = new HttpSource(url, headers, control).pageContext(page)) {
-      return fetchWithSource(source, url, type, previous);
+      return fetchWithSource(
+          source, url, type, previous != null && previous.requiresCookieSession ? null : previous);
     }
   }
 
