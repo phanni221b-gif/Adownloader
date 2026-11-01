@@ -650,4 +650,31 @@ public class ProcessRecoveryTest {
       instrumentation.runOnMainSync(reopened::finish);
     }
   }
+
+  @Test
+  public void prepareCookieHls() throws Exception {
+    prepare("cookie-hls", "/cookie/playlist.m3u8", MediaCandidate.MediaType.HLS);
+    long id = context.getSharedPreferences("recovery-test", 0).getLong("cookie-hls", -1);
+    assertFalse(DownloadJobs.get(context).store.request(id).optString("cookieState").isEmpty());
+  }
+
+  @Test
+  public void recoverCookieHls() throws Exception {
+    recover("cookie-hls", false);
+    JSONObject stats = get("/stats").getJSONObject("counts");
+    assertEquals(
+        "Saved plan and encrypted response-cookie jar must resume without root refetch",
+        1,
+        stats.getInt("/cookie/playlist.m3u8"));
+    assertEquals(0, stats.optInt("cookie-denied"));
+    for (File f :
+        Objects.requireNonNull(context.getDatabasePath("downloads.db").getParentFile().listFiles()))
+      if (f.isFile()) {
+        String bytes =
+            new String(java.nio.file.Files.readAllBytes(f.toPath()), StandardCharsets.ISO_8859_1);
+        assertFalse(
+            "Response cookies must not be plaintext in download databases",
+            bytes.contains("PRIVATE_SERVER_COOKIE_JAR"));
+      }
+  }
 }

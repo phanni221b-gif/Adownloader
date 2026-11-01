@@ -133,7 +133,7 @@ public class HlsHttpIntegrationTest {
                     + " TextDecoder().decode(b);if(!t.startsWith('#EXTM3U'))throw Error('stream"
                     + " changed');return fetch('/media/child/variant?kind="
                     + kind
-                    + "')}).then(r=>r.text()).then(t=>{let p=t.split(/\\r"
+                    + "')}).then(r=>r.text()).then(t=>{let p=t.replace(/^\\uFEFF/,'').split(/\\r"
                     + "?\\n"
                     + "/).find(l=>l&&!l.startsWith('#'));return fetch(new"
                     + " URL(p,location.origin+'/media/child/variant'),{referrer:location.origin+'/segment-player'})}).then(r=>r.arrayBuffer()).then(()=>fetch('/intact'));</script>")

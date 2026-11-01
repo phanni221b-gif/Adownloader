@@ -53,3 +53,7 @@ adb shell am force-stop com.adownloader.app
 run_case recoverFinalized
 
 run_case taskRemovalContinuesQueueNotificationAndReloadsBrowser
+
+run_case prepareCookieHls
+adb shell am force-stop com.adownloader.app
+run_case recoverCookieHls

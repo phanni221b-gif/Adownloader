@@ -27,6 +27,7 @@ jobs:
         run: |
           node ci/test-media-extension.cjs
           node ci/test-deep-detection.cjs
+          node ci/test-content-extension.cjs
           gradle :app:testDebugUnitTest :app:lintRelease :app:assembleRelease --stacktrace
       - name: Check packaged engine, ABI and launcher
         run: |
