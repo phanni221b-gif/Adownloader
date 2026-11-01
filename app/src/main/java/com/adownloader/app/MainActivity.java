@@ -25,6 +25,8 @@ import org.mozilla.geckoview.GeckoView;
 public final class MainActivity extends AppCompatActivity
     implements BrowserSessionManager.Listener, MediaDetector.Listener {
   private BrowserSessionManager browser;
+  private BrowserDataStore browserData;
+  private BrowserToolsController browserTools;
   private MediaExtensionManager mediaExtension;
   private PopupController popups;
   private MediaDetector detector;
@@ -53,13 +55,15 @@ public final class MainActivity extends AppCompatActivity
     geckoView = new GeckoView(this);
     if (state != null) selected = state.getInt("selected", R.id.nav_browser);
     bindShell();
-    detector = new MediaDetector(this);
     browser = new BrowserSessionManager(this, geckoView, this);
+    detector = browser.getDetector();
+    browserData = new BrowserDataStore(this);
+    browserTools = new BrowserToolsController(this, browser, browserData, () -> currentUrl);
     popups = new PopupController(this, browser::load);
     mediaExtension =
         new MediaExtensionManager(
             browser.getRuntime(),
-            detector,
+            browser,
             new MediaExtensionManager.StatusListener() {
               @Override
               public void onExtensionReady() {
@@ -87,7 +91,13 @@ public final class MainActivity extends AppCompatActivity
                   return;
                 }
                 if (browser != null && browser.canGoBack()) browser.goBack();
-                else finish();
+                else if (browser != null && browser.tabs().size() > 1) {
+                  for (int i = 0; i < browser.tabs().size(); i++)
+                    if (browser.tabs().get(i).session == browser.getSession()) {
+                      browser.closeTab(i);
+                      break;
+                    }
+                } else finish();
               }
             });
     if (Build.VERSION.SDK_INT >= 33
@@ -106,13 +116,21 @@ public final class MainActivity extends AppCompatActivity
       browser.load(currentUrl);
       return;
     }
-    currentUrl = getPreferences(MODE_PRIVATE).getString("last_url", currentUrl);
-    if (!browser.restore(getPreferences(MODE_PRIVATE).getString("session", null)))
-      browser.load(currentUrl);
+    browserData.load(
+        saved -> {
+          if (isDestroyed()) return;
+          if (browser.restoreTabs(saved.optJSONObject("tabs"))) return;
+          currentUrl = saved.optString("url", currentUrl);
+          if (!browser.restore(saved.optString("session", null))) browser.load(currentUrl);
+        });
   }
 
   private void bindShell() {
     if (records != null) records.close();
+    if (browserTools != null) {
+      browserTools.close();
+      browserTools = new BrowserToolsController(this, browser, browserData, () -> currentUrl);
+    }
     if (mediaSheet != null) mediaSheet.close();
     if (geckoView.getParent() instanceof android.view.ViewGroup)
       ((android.view.ViewGroup) geckoView.getParent()).removeView(geckoView);
@@ -188,9 +206,11 @@ public final class MainActivity extends AppCompatActivity
             v -> {
               PopupMenu menu = new PopupMenu(this, v);
               menu.inflate(R.menu.browser_menu);
+              if (browserTools != null) browserTools.addMenu(menu);
               menu.setOnMenuItemClickListener(
                   item -> {
                     int id = item.getItemId();
+                    if (browserTools != null && browserTools.handle(id)) return true;
                     if (id == R.id.menu_home) browser.load("https://www.google.com");
                     else if (id == R.id.menu_reload) browser.reload();
                     else if (id == R.id.menu_clear_media) detector.reset();
@@ -342,6 +362,19 @@ public final class MainActivity extends AppCompatActivity
           .setAnchorView(
               findViewById(selected == R.id.nav_browser ? R.id.media_action : R.id.main_navigation))
           .show();
+  }
+
+  @Override
+  public void onTabSelected(MediaDetector selectedDetector, String url) {
+    detector = selectedDetector;
+    currentUrl = url;
+    mediaCount = detector.snapshot().size();
+    if (media != null) updateMediaBadge();
+  }
+
+  @Override
+  public void onPageFinished(String url, String title) {
+    if (browserData != null) browserData.remember(url, title, false);
   }
 
   @Override
@@ -521,9 +554,7 @@ public final class MainActivity extends AppCompatActivity
     started = false;
     if (browser != null) {
       browser.setActive(false);
-      getPreferences(MODE_PRIVATE).edit().putString("last_url", currentUrl).apply();
-      browser.save(
-          state -> getPreferences(MODE_PRIVATE).edit().putString("session", state).apply());
+      browserData.saveTabs(browser.snapshotTabs());
     }
     super.onPause();
   }
@@ -535,6 +566,8 @@ public final class MainActivity extends AppCompatActivity
     if (mediaSheet != null) mediaSheet.close();
     if (mediaExtension != null) mediaExtension.close();
     if (browser != null) browser.close();
+    if (browserTools != null) browserTools.close();
+    if (browserData != null) browserData.close();
     super.onDestroy();
   }
 }
