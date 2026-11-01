@@ -58,7 +58,12 @@ public final class ManifestParser {
     return values;
   }
 
+  public static String normalizeHls(String text) {
+    return text != null && text.startsWith("\ufeff") ? text.substring(1) : text;
+  }
+
   public static HlsSelection hlsSelection(String url, String text) {
+    text = normalizeHls(text);
     require(text.trim().startsWith("#EXTM3U"), "올바른 HLS 목록이 아닙니다");
     HlsSelection result = new HlsSelection();
     result.video = url;
@@ -77,7 +82,10 @@ public final class ManifestParser {
       long bandwidth =
           Long.parseLong(a.getOrDefault("AVERAGE-BANDWIDTH", a.getOrDefault("BANDWIDTH", "0")));
       int next = i + 1;
-      while (next < lines.length && lines[next].trim().isEmpty()) next++;
+      while (next < lines.length
+          && (lines[next].trim().isEmpty()
+              || lines[next].trim().startsWith("#") && !lines[next].trim().startsWith("#EXT")))
+        next++;
       require(next < lines.length && !lines[next].trim().startsWith("#"), "HLS 스트림 주소 누락");
       if (pixels > bestPixels
           || (pixels == bestPixels
@@ -117,6 +125,7 @@ public final class ManifestParser {
   }
 
   public static Track hlsTrack(String url, String text) {
+    text = normalizeHls(text);
     require(text.trim().startsWith("#EXTM3U"), "올바른 HLS 목록이 아닙니다");
     require(
         text.contains("#EXT-X-ENDLIST"),
@@ -125,7 +134,7 @@ public final class ManifestParser {
     require(
         !text.contains("#EXT-X-GAP"), DownloadError.Category.HLS_GAP, "누락된 HLS 조각을 건너뛰어 저장하지 않습니다");
     require(
-        !text.contains("#EXT-X-DISCONTINUITY"),
+        !Pattern.compile("(?m)^#EXT-X-DISCONTINUITY\\s*$").matcher(text).find(),
         DownloadError.Category.HLS_DISCONTINUITY,
         "타임스탬프가 불연속인 HLS는 안전한 병합을 지원하지 않습니다");
     Track track = new Track();
@@ -156,7 +165,7 @@ public final class ManifestParser {
           iv = a.get("IV");
         }
       } else if (line.startsWith("#EXT-X-MAP:")) {
-        require(init == null, "초기화 세그먼트 변경은 지원하지 않습니다");
+
         Map<String, String> a = attributes(line);
         require(a.containsKey("URI"), "초기화 주소 누락");
         long mapOffset = 0, mapLength = -1;
@@ -167,8 +176,21 @@ public final class ManifestParser {
           mapOffset = Long.parseLong(r[1]);
         }
         require(key == null || iv != null, "암호화된 초기화 세그먼트 IV 누락");
-        init = new Part(resolve(url, a.get("URI")), mapOffset, mapLength, sequence, key, iv);
-        track.parts.add(init);
+        Part nextInit =
+            new Part(resolve(url, a.get("URI")), mapOffset, mapLength, sequence, key, iv);
+        if (init != null)
+          require(
+              init.url.equals(nextInit.url)
+                  && init.offset == mapOffset
+                  && init.length == mapLength
+                  && Objects.equals(init.keyUrl, key)
+                  && Objects.equals(init.iv, iv),
+              DownloadError.Category.HLS_UNSUPPORTED,
+              "HLS_INIT_CHANGE");
+        else {
+          init = nextInit;
+          track.parts.add(init);
+        }
       } else if (line.startsWith("#EXT-X-BYTERANGE:")) {
         String[] r = line.substring(line.indexOf(':') + 1).split("@");
         length = Long.parseLong(r[0]);

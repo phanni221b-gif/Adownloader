@@ -134,6 +134,10 @@ public final class MediaExtensionManager implements AutoCloseable {
   }
 
   private void handleMessage(JSONObject json, MediaDetector detector) {
+    if ("performance".equals(json.optString("kind"))) {
+      detector.performanceMetrics = json.optJSONObject("metrics");
+      return;
+    }
     if ("page-meta".equals(json.optString("kind"))) {
       detector.pageTitle(json.optString("pageUrl"), json.optString("title"));
       return;

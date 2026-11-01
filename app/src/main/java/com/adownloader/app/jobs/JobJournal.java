@@ -18,6 +18,18 @@ public final class JobJournal implements EngineCheckpoint {
   }
 
   @Override
+  public String cookieState() throws Exception {
+    return store.request(id).optString("cookieState", "");
+  }
+
+  @Override
+  public void cookieState(String state) throws Exception {
+    JSONObject request = store.request(id);
+    request.put("cookieState", state);
+    store.writeContext(id, request);
+  }
+
+  @Override
   public boolean previouslyAccepted() {
     var job = store.get(id);
     return job != null && job.bytes > 0;

@@ -149,6 +149,13 @@ public final class JobRunner {
                                 ? DownloadError.Category.NETWORK
                                 : DownloadError.Category.UNKNOWN;
         com.adownloader.app.ui.DeviceDiagnostics.failure(context, category);
+        if (error instanceof DownloadError && ((DownloadError) error).diagnostic != null)
+          context
+              .getSharedPreferences("device_diagnostics", 0)
+              .edit()
+              .putString(
+                  "hls", new JSONObject(((DownloadError) error).diagnostic.safeFields()).toString())
+              .apply();
         store.state(
             job.id,
             category == DownloadError.Category.AUTH

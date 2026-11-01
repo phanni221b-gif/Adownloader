@@ -7,6 +7,12 @@ import java.util.*;
 public interface EngineCheckpoint {
   List<ManifestParser.Track> loadPlan() throws Exception;
 
+  default String cookieState() throws Exception {
+    return "";
+  }
+
+  default void cookieState(String state) throws Exception {}
+
   default boolean previouslyAccepted() {
     return false;
   }

@@ -76,6 +76,16 @@ public final class DeviceDiagnostics {
         failure = "NONE";
       }
       out.put("downloadFailure", failure);
+      try {
+        JSONObject hls = new JSONObject(preferences.getString("hls", "{}"));
+        JSONObject safe = new JSONObject();
+        for (String k :
+            java.util.List.of(
+                "host", "status", "mime", "redirects", "playlist", "stage", "tag", "category"))
+          if (hls.has(k)) safe.put(k, hls.get(k));
+        out.put("hls", safe);
+      } catch (Exception ignored) {
+      }
       out.put(
           "crash",
           "GECKO_CONTENT".equals(preferences.getString("crash", "")) ? "GECKO_CONTENT" : "NONE");

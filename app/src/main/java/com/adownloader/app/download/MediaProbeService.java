@@ -57,6 +57,37 @@ public final class MediaProbeService implements AutoCloseable {
     return get(url, type, headers, control, false);
   }
 
+  public MediaProbeResult forTransfer(
+      HttpSource source,
+      String url,
+      MediaCandidate.MediaType type,
+      Map<String, String> headers,
+      TransferControl control)
+      throws Exception {
+    TreeMap<String, String> canonical = new TreeMap<>();
+    headers.forEach((k, v) -> canonical.put(k.toLowerCase(Locale.ROOT), v));
+    Entry found;
+    synchronized (this) {
+      found = cache.get(MediaIdentity.hash(type + "|" + url + "|" + canonical));
+    }
+    if (found != null) {
+      while (!found.future.isDone()) {
+        control.check();
+        try {
+          found.future.get(100, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException wait) {
+        } catch (ExecutionException failure) {
+          break;
+        }
+      }
+      MediaProbeResult ready = found.result;
+      if (ready != null
+          && ready.expiresAt > System.currentTimeMillis()
+          && !ready.requiresCookieSession) return ready;
+    }
+    return fetchWithSource(source, url, type, null);
+  }
+
   private MediaProbeResult get(
       String url,
       MediaCandidate.MediaType type,
@@ -154,20 +185,39 @@ public final class MediaProbeService implements AutoCloseable {
       MediaProbeResult previous,
       TransferControl control)
       throws Exception {
-    HttpSource source = new HttpSource(url, headers, control);
+    try (HttpSource source = new HttpSource(url, headers, control)) {
+      return fetchWithSource(source, url, type, previous);
+    }
+  }
+
+  private MediaProbeResult fetchWithSource(
+      HttpSource source, String url, MediaCandidate.MediaType type, MediaProbeResult previous)
+      throws Exception {
     Map<String, HttpSource.Document> documents = new LinkedHashMap<>();
     HttpSource.Document root = document(source, url, previous, documents);
     List<ManifestParser.Track> tracks;
     if (type == MediaCandidate.MediaType.HLS) {
-      ManifestParser.HlsSelection selection = ManifestParser.hlsSelection(root.url, root.text);
+      String rootText = HlsDiagnostic.body(root, "root");
+      ManifestParser.HlsSelection selection;
+      try {
+        selection = ManifestParser.hlsSelection(root.url, rootText);
+      } catch (RuntimeException error) {
+        throw HlsDiagnostic.parse(root, rootText, "master", error);
+      }
       HttpSource.Document video =
           selection.video.equals(root.url)
               ? root
               : document(source, selection.video, previous, documents);
-      ManifestParser.Track track = ManifestParser.hlsTrack(video.url, video.text);
+      String videoText = HlsDiagnostic.body(video, video == root ? "root" : "variant");
+      ManifestParser.Track track;
+      try {
+        track = ManifestParser.hlsTrack(video.url, videoText);
+      } catch (RuntimeException error) {
+        throw HlsDiagnostic.parse(video, videoText, "media", error);
+      }
       tracks = new ArrayList<>();
       tracks.add(track);
-      String[] lines = root.text.split("\\r?\\n");
+      String[] lines = rootText.split("\\r?\\n");
       for (int i = 0; i < lines.length; i++)
         if (lines[i].trim().startsWith("#EXT-X-STREAM-INF:")) {
           int next = i + 1;
@@ -198,7 +248,11 @@ public final class MediaProbeService implements AutoCloseable {
       tracks = ManifestParser.dash(root.url, root.text);
     else throw new DownloadError(DownloadError.Category.UNSUPPORTED_FORMAT);
     return new MediaProbeResult(
-        root, documents, tracks, Math.min(System.currentTimeMillis() + ttl, expiry(url)));
+        root,
+        documents,
+        tracks,
+        Math.min(System.currentTimeMillis() + ttl, expiry(url)),
+        source.hasResponseCookies());
   }
 
   private HttpSource.Document document(
@@ -210,7 +264,8 @@ public final class MediaProbeService implements AutoCloseable {
     HttpSource.Document hit = documents.get(url);
     if (hit != null) return hit;
     HttpSource.Document old = previous == null ? null : previous.documents.get(url);
-    HttpSource.Document result = source.document(url, old);
+    HttpSource.Document result =
+        source.document(url, old, documents.isEmpty() ? "root" : "variant");
     documents.put(url, result);
     if (!url.equals(result.url)) documents.put(result.url, result);
     long size = 0;

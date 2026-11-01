@@ -6,6 +6,8 @@ import java.util.*;
 
 /** A bounded logical list; every entry retains its newest complete URL and per-request context. */
 public final class MediaDetector {
+  public volatile org.json.JSONObject performanceMetrics;
+
   public interface Listener {
     void onCandidateAdded(MediaCandidate candidate, int totalCount);
   }
