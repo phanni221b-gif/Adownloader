@@ -29,13 +29,16 @@ public final class MediaExtensionManager implements AutoCloseable {
   }
 
   private final GeckoRuntime runtime;
-  private final MediaDetector detector;
+  private final BrowserSessionManager browser;
+  private final Map<Integer, org.mozilla.geckoview.GeckoSession> tabSessions =
+      new LinkedHashMap<>();
+  private final Map<Integer, java.util.List<JSONObject>> pending = new LinkedHashMap<>();
   private final StatusListener statusListener;
 
   public MediaExtensionManager(
-      GeckoRuntime runtime, MediaDetector detector, StatusListener statusListener) {
+      GeckoRuntime runtime, BrowserSessionManager browser, StatusListener statusListener) {
     this.runtime = runtime;
-    this.detector = detector;
+    this.browser = browser;
     this.statusListener = statusListener;
   }
 
@@ -55,11 +58,12 @@ public final class MediaExtensionManager implements AutoCloseable {
                       if (closed
                           || !NATIVE_APP.equals(nativeApp)
                           || !(message instanceof JSONObject)) return null;
-                      handleMessage((JSONObject) message);
+                      route((JSONObject) message);
                       return null;
                     }
                   },
                   NATIVE_APP);
+              browser.setSessionObserver(this::sessionChanged);
               if (statusListener != null) statusListener.onExtensionReady();
             },
             error -> {
@@ -69,7 +73,67 @@ public final class MediaExtensionManager implements AutoCloseable {
             });
   }
 
-  private void handleMessage(JSONObject json) {
+  private void sessionChanged(org.mozilla.geckoview.GeckoSession session, boolean opened) {
+    if (installed == null) return;
+    if (!opened) {
+      session.getWebExtensionController().setMessageDelegate(installed, null, NATIVE_APP);
+      tabSessions
+          .entrySet()
+          .removeIf(
+              entry -> {
+                if (entry.getValue() != session) return false;
+                pending.remove(entry.getKey());
+                return true;
+              });
+      return;
+    }
+    session
+        .getWebExtensionController()
+        .setMessageDelegate(
+            installed,
+            new WebExtension.MessageDelegate() {
+              @Override
+              public GeckoResult<Object> onMessage(
+                  String app, Object message, WebExtension.MessageSender sender) {
+                if (closed
+                    || !NATIVE_APP.equals(app)
+                    || sender.session != session
+                    || !sender.isTopLevel()
+                    || sender.environmentType != WebExtension.MessageSender.ENV_TYPE_CONTENT_SCRIPT
+                    || !(message instanceof JSONObject)) return null;
+                JSONObject binding = (JSONObject) message;
+                int id = binding.optInt("tabId", -1);
+                if (!"bind".equals(binding.optString("kind"))
+                    || id < 0
+                    || browser.detectorFor(session) == null) return null;
+                tabSessions.put(id, session);
+                java.util.List<JSONObject> queued = pending.remove(id);
+                if (queued != null)
+                  for (JSONObject item : queued) handleMessage(item, browser.detectorFor(session));
+                return null;
+              }
+            },
+            NATIVE_APP);
+  }
+
+  private void route(JSONObject json) {
+    int id = json.optInt("tabId", -1);
+    if (id < 0) return;
+    MediaDetector detector = browser.detectorFor(tabSessions.get(id));
+    if (detector == null) {
+      // A direct media document can respond before its isolated content script binds the tab.
+      if (pending.size() >= 5 && !pending.containsKey(id))
+        pending.remove(pending.keySet().iterator().next());
+      java.util.List<JSONObject> queued =
+          pending.computeIfAbsent(id, key -> new java.util.ArrayList<>());
+      if (queued.size() >= 200) queued.remove(0);
+      queued.add(json);
+      return;
+    }
+    handleMessage(json, detector);
+  }
+
+  private void handleMessage(JSONObject json, MediaDetector detector) {
     if ("page-meta".equals(json.optString("kind"))) {
       detector.pageTitle(json.optString("pageUrl"), json.optString("title"));
       return;
@@ -109,6 +173,12 @@ public final class MediaExtensionManager implements AutoCloseable {
   @Override
   public void close() {
     closed = true;
+    browser.setSessionObserver(null);
+    for (var tab : browser.tabs())
+      if (installed != null)
+        tab.session.getWebExtensionController().setMessageDelegate(installed, null, NATIVE_APP);
+    tabSessions.clear();
+    pending.clear();
     if (installed != null && ticket == generation.get())
       installed.setMessageDelegate(null, NATIVE_APP);
     installed = null;

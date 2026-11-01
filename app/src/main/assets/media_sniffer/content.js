@@ -1,4 +1,7 @@
 (() => {
+  if (window.top === window) browser.runtime.sendMessage({kind:"bind"}).then(binding => {
+    if (binding && Number.isInteger(binding.tabId)) return browser.runtime.sendNativeMessage("adownloader",{kind:"bind",tabId:binding.tabId});
+  }).catch(()=>{});
   const sent = new Set();
   let lastPage="";
   function reportPage(){const key=location.href+"|"+document.title;if(key===lastPage)return;lastPage=key;browser.runtime.sendMessage({kind:"page-meta",pageUrl:location.href,pageTitle:(document.title||"").slice(0,300)}).catch(()=>{}); }
