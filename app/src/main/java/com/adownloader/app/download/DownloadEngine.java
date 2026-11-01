@@ -114,13 +114,17 @@ public final class DownloadEngine {
         for (int trackIndex = 0; trackIndex < tracks.size(); trackIndex++) {
           ManifestParser.Track track = tracks.get(trackIndex);
           File direct =
-              temp(".media"); // Preserve stable checkpoint names for single-file representations.
+              checkpoint == null
+                  ? null
+                  : temp(
+                      ".media"); // Reserve existing durable names without creating an unused file.
           duration = Math.max(duration, track.duration);
           audio |= track.audio;
           video |= !track.audio;
           if (track.parts.size() == 1
               && track.parts.get(0).length < 0
               && track.parts.get(0).keyUrl == null) {
+            if (direct == null) direct = temp(".media");
             copy(source, track.parts.get(0).url, direct);
             inputs.add(new JoinedMediaDataSource(Collections.singletonList(direct)));
             continue;
