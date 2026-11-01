@@ -415,6 +415,16 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
     update(v, "id=?", new String[] {"" + id});
   }
 
+  android.os.ParcelFileDescriptor openPending(long id, String mode) throws Exception {
+    Job job = get(id);
+    if (job == null || job.pending.isEmpty())
+      throw new DownloadError(DownloadError.Category.STORAGE);
+    android.os.ParcelFileDescriptor fd =
+        context.getContentResolver().openFileDescriptor(Uri.parse(job.pending), mode);
+    if (fd == null) throw new DownloadError(DownloadError.Category.STORAGE);
+    return fd;
+  }
+
   public synchronized void complete(long id, String uri, String name) {
     ContentValues v = new ContentValues();
     v.put("state", State.COMPLETED.name());

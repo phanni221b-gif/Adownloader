@@ -252,7 +252,16 @@ public class ProcessRecoveryTest {
     action(jobs, first, "PAUSE");
     DownloadJobStore.Job paused = await(jobs, first, DownloadJobStore.State.PAUSED);
     assertTrue(paused.bytes > 0);
-    assertTrue(jobs.store.directory(first).listFiles().length > 0);
+    assertFalse(paused.pending.isEmpty());
+    try (ParcelFileDescriptor fd =
+        context.getContentResolver().openFileDescriptor(Uri.parse(paused.pending), "r")) {
+      assertNotNull(fd);
+      assertTrue(fd.getStatSize() >= paused.bytes);
+    }
+    assertEquals(
+        "Direct bytes must not be duplicated in the private workspace",
+        0,
+        jobs.store.directory(first).listFiles().length);
     action(jobs, first, "RESUME");
     DownloadJobStore.Job complete = await(jobs, first, DownloadJobStore.State.COMPLETED);
     assertEquals("", complete.pending);
@@ -264,16 +273,13 @@ public class ProcessRecoveryTest {
     long canceled = enqueue(jobs, "/process/direct");
     checkpoint(jobs, canceled);
     File workspace = jobs.store.directory(canceled);
-    android.content.ContentValues values = new android.content.ContentValues();
-    values.put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, "cancel-pending.mp4");
-    values.put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "video/mp4");
-    values.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1);
-    Uri pending =
-        context
-            .getContentResolver()
-            .insert(android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values);
-    assertNotNull(pending);
-    jobs.store.pending(canceled, pending.toString());
+    String pendingValue = jobs.store.get(canceled).pending;
+    assertFalse(pendingValue.isEmpty());
+    Uri pending = Uri.parse(pendingValue);
+    try (ParcelFileDescriptor fd = context.getContentResolver().openFileDescriptor(pending, "r")) {
+      assertNotNull(fd);
+      assertTrue(fd.getStatSize() > 0);
+    }
     action(jobs, canceled, "CANCEL");
     DownloadJobStore.Job stopped = await(jobs, canceled, DownloadJobStore.State.CANCELED);
     assertEquals("", stopped.pending);

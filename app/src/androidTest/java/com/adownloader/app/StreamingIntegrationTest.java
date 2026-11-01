@@ -18,6 +18,35 @@ import org.junit.runner.RunWith;
 @RunWith(AndroidJUnit4.class)
 public class StreamingIntegrationTest {
   @Test
+  public void descriptorChannelUsesLongOffsetsAndOwnsOnlyItsDuplicate() throws Exception {
+    Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+    File file = File.createTempFile("descriptor-boundary-", ".bin", context.getCacheDir());
+    try (ParcelFileDescriptor original =
+        ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_WRITE)) {
+      try (DescriptorChannel channel = new DescriptorChannel(original.getFileDescriptor())) {
+        long offset = (1L << 31) + 17;
+        channel.position(offset);
+        channel.write(java.nio.ByteBuffer.wrap(new byte[] {7, 8, 9}));
+        channel.force(false);
+        assertEquals(offset + 3, channel.size());
+        channel.position(offset);
+        java.nio.ByteBuffer bytes = java.nio.ByteBuffer.allocateDirect(3);
+        assertEquals(3, channel.read(bytes));
+        bytes.flip();
+        assertEquals(7, bytes.get());
+        assertEquals(8, bytes.get());
+        assertEquals(9, bytes.get());
+        channel.truncate(2);
+        assertEquals(2, channel.size());
+        assertEquals(2, channel.position());
+      }
+      assertEquals(2, android.system.Os.fstat(original.getFileDescriptor()).st_size);
+    } finally {
+      file.delete();
+    }
+  }
+
+  @Test
   public void virtualSegmentsMuxDirectlyToPendingMediaStoreDescriptor() throws Exception {
     var instrumentation = InstrumentationRegistry.getInstrumentation();
     Context context = instrumentation.getTargetContext();

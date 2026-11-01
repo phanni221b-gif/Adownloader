@@ -16,7 +16,7 @@ public final class DownloadEngine {
     public final File file;
     public final String mime, extension;
 
-    Result(File file, String mime, String extension) {
+    public Result(File file, String mime, String extension) {
       this.file = file;
       this.mime = mime;
       this.extension = extension;
@@ -27,6 +27,7 @@ public final class DownloadEngine {
   private final Progress progress;
   private final EngineCheckpoint checkpoint;
   private final TransferControl control;
+  private final java.io.FileDescriptor destination;
   private int temporaryIndex;
   private final List<File> temporary = new ArrayList<>();
 
@@ -36,10 +37,20 @@ public final class DownloadEngine {
 
   public DownloadEngine(
       File directory, Progress progress, EngineCheckpoint checkpoint, TransferControl control) {
+    this(directory, progress, checkpoint, control, null);
+  }
+
+  public DownloadEngine(
+      File directory,
+      Progress progress,
+      EngineCheckpoint checkpoint,
+      TransferControl control,
+      java.io.FileDescriptor destination) {
     this.directory = directory;
     this.progress = progress;
     this.checkpoint = checkpoint;
     this.control = control;
+    this.destination = destination;
   }
 
   private File temp(String suffix) throws IOException {
@@ -83,6 +94,10 @@ public final class DownloadEngine {
   public Result download(String url, MediaCandidate.MediaType type, Map<String, String> headers)
       throws Exception {
     control.check();
+    if (checkpoint != null) {
+      Result finalized = checkpoint.loadFinal();
+      if (finalized != null) return finalized;
+    }
     HttpSource source = new HttpSource(url, headers, control);
     if (type == MediaCandidate.MediaType.HLS || type == MediaCandidate.MediaType.DASH) {
       List<ManifestParser.Track> tracks = checkpoint == null ? null : checkpoint.loadPlan();
@@ -166,12 +181,21 @@ public final class DownloadEngine {
           }
           inputs.add(new JoinedMediaDataSource(parts));
         }
-        File output = temp(".mp4");
+        File output = destination == null ? temp(".mp4") : null;
+        if (destination != null) {
+          long estimate = 0;
+          for (var input : inputs) estimate = Math.addExact(estimate, input.getSize());
+          try (DescriptorChannel target = new DescriptorChannel(destination)) {
+            target.reserve(Math.addExact(estimate, estimate / 10));
+          }
+        }
         progress.update("원본 트랙 무손실 병합 및 검증 중", 100);
         control.check();
-        PostProcessor.muxSources(inputs, output, control);
+        if (destination == null) PostProcessor.muxSources(inputs, output, control);
+        else PostProcessor.muxSources(inputs, destination, control);
         control.check();
-        PostProcessor.inspect(output, duration, video, audio);
+        if (destination == null) PostProcessor.inspect(output, duration, video, audio);
+        else PostProcessor.inspect(destination, duration, video, audio);
         return new Result(output, "video/mp4", ".mp4");
       } finally {
         for (var input : inputs)
@@ -180,6 +204,44 @@ public final class DownloadEngine {
           } catch (IOException ignored) {
           }
       }
+    }
+    if (destination != null) {
+      if (checkpoint == null) throw new DownloadError(DownloadError.Category.STORAGE);
+      checkpoint.copy(source, url, destination, control);
+      PostProcessor.Inspection inspection =
+          PostProcessor.inspect(
+              destination,
+              0,
+              type == MediaCandidate.MediaType.VIDEO,
+              type == MediaCandidate.MediaType.AUDIO);
+      byte[] signature = new byte[16];
+      try (DescriptorChannel input = new DescriptorChannel(destination)) {
+        input.read(java.nio.ByteBuffer.wrap(signature));
+      }
+      boolean webm =
+          (signature[0] & 255) == 0x1a
+              && (signature[1] & 255) == 0x45
+              && (signature[2] & 255) == 0xdf
+              && (signature[3] & 255) == 0xa3;
+      boolean mp4 =
+          signature[4] == 'f' && signature[5] == 't' && signature[6] == 'y' && signature[7] == 'p';
+      if (webm) return new Result(null, inspection.video ? "video/webm" : "audio/webm", ".webm");
+      if (mp4)
+        return new Result(
+            null, inspection.video ? "video/mp4" : "audio/mp4", inspection.video ? ".mp4" : ".m4a");
+      // A rare container conversion retains a durable finalized file before overwriting its input
+      // URI.
+      File output = temp(".mp4");
+      PostProcessor.muxDescriptor(destination, output, control);
+      PostProcessor.inspect(
+          output, inspection.durationUs / 1000000.0, inspection.video, inspection.audio);
+      try (RandomAccessFile synced = new RandomAccessFile(output, "rw")) {
+        synced.getFD().sync();
+      }
+      String mime = inspection.video ? "video/mp4" : "audio/mp4",
+          extension = inspection.video ? ".mp4" : ".m4a";
+      checkpoint.saveFinal(output, mime, extension);
+      return new Result(output, mime, extension);
     }
     File file = temp(".media");
     copy(source, url, file);

@@ -316,6 +316,8 @@ public final class DownloadJobs {
                               throw new DownloadError(DownloadError.Category.STORAGE);
                             previous.remove("plan");
                             previous.remove("directFiles");
+                            previous.remove("directMedia");
+                            previous.remove("finalOutput");
                             previous.remove("disposition");
                           }
                           JSONObject headers = new JSONObject();
@@ -397,6 +399,8 @@ public final class DownloadJobs {
             com.adownloader.app.download.DownloadError.Category.STORAGE);
       request.remove("plan");
       request.remove("directFiles");
+      request.remove("directMedia");
+      request.remove("finalOutput");
       store.writeContext(job.id, request);
     }
   }

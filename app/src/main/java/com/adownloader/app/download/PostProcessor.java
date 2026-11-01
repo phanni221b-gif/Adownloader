@@ -43,7 +43,7 @@ public final class PostProcessor {
     try {
       source.apply(extractor);
       if (extractor.getPsshInfo() != null && !extractor.getPsshInfo().isEmpty())
-        throw new IOException("DRM 미디어는 지원하지 않습니다");
+        throw new DownloadError(DownloadError.Category.DRM);
       Inspection result = new Inspection();
       for (int i = 0; i < extractor.getTrackCount(); i++) {
         MediaFormat format = extractor.getTrackFormat(i);
@@ -70,7 +70,7 @@ public final class PostProcessor {
             || extractor.readSampleData(ByteBuffer.allocate((int) sampleSize), 0) != sampleSize)
           throw new IOException("미디어 샘플이 잘렸습니다");
         if ((extractor.getSampleFlags() & MediaExtractor.SAMPLE_FLAG_ENCRYPTED) != 0)
-          throw new IOException("DRM 트랙은 지원하지 않습니다");
+          throw new DownloadError(DownloadError.Category.DRM);
         extractor.unselectTrack(i);
       }
       if (result.durationUs <= 0 || (needVideo && !result.video) || (needAudio && !result.audio))
@@ -123,6 +123,14 @@ public final class PostProcessor {
     MediaMuxer create() throws Exception;
   }
 
+  public static void muxDescriptor(
+      java.io.FileDescriptor input, File output, TransferControl control) throws Exception {
+    muxPrepared(
+        Collections.singletonList(extractor -> extractor.setDataSource(input)),
+        () -> new MediaMuxer(output.getAbsolutePath(), MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4),
+        control);
+  }
+
   private static void muxPrepared(
       List<Source> sources, MuxerFactory factory, TransferControl control) throws Exception {
     control.check();
@@ -138,7 +146,7 @@ public final class PostProcessor {
         extractors.add(extractor);
         input.apply(extractor);
         if (extractor.getPsshInfo() != null && !extractor.getPsshInfo().isEmpty())
-          throw new IOException("DRM 트랙은 지원하지 않습니다");
+          throw new DownloadError(DownloadError.Category.DRM);
         Map<Integer, Integer> map = new HashMap<>();
         maps.add(map);
         for (int t = 0; t < extractor.getTrackCount(); t++) {
@@ -181,7 +189,7 @@ public final class PostProcessor {
         MediaExtractor source = extractors.get(selected);
         int flags = source.getSampleFlags();
         if ((flags & MediaExtractor.SAMPLE_FLAG_ENCRYPTED) != 0)
-          throw new IOException("DRM 샘플은 지원하지 않습니다");
+          throw new DownloadError(DownloadError.Category.DRM);
         long size = source.getSampleSize();
         if (size > buffer.capacity()) {
           if (size > 64 * 1024 * 1024) throw new IOException("미디어 샘플 크기 제한 초과");
