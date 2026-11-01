@@ -82,7 +82,19 @@ public final class BrowserToolsController implements AutoCloseable {
         records(true);
         return true;
       case SAVE:
-        if (SafeSessionState.safeUrl(url.get())) data.remember(url.get(), browser.getTitle(), true);
+        if (SafeSessionState.safeUrl(url.get())) {
+          java.lang.ref.WeakReference<BrowserToolsController> weak =
+              new java.lang.ref.WeakReference<>(this);
+          data.remember(
+              url.get(),
+              browser.getTitle(),
+              true,
+              success -> {
+                var owner = weak.get();
+                if (owner != null)
+                  owner.message(success ? "북마크에 저장했습니다." : "북마크를 저장하지 못했습니다. 저장 공간을 확인해 주세요.");
+              });
+        }
         return true;
       case CLEAR_SITE:
         clear(false);
@@ -98,6 +110,23 @@ public final class BrowserToolsController implements AutoCloseable {
   private void message(String text) {
     if (!closed)
       Snackbar.make(activity.findViewById(R.id.app_root), text, Snackbar.LENGTH_SHORT).show();
+  }
+
+  public void link(String target) {
+    if (!SafeSessionState.safeUrl(target)) return;
+    dialog =
+        UiSheets.action(
+            activity,
+            R.drawable.ic_media,
+            "링크 열기",
+            Uri.parse(target).getHost(),
+            "취소",
+            "현재 탭에서 열기",
+            () -> browser.load(target),
+            "새 탭에서 열기",
+            () -> {
+              if (!browser.newTab(target)) message("탭은 최대 5개까지 열 수 있습니다.");
+            });
   }
 
   private void records(boolean bookmarks) {

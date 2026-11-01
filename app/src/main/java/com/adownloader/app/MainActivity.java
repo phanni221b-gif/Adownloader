@@ -120,7 +120,7 @@ public final class MainActivity extends AppCompatActivity
         saved -> {
           if (isDestroyed()) return;
           if (browser.restoreTabs(saved.optJSONObject("tabs"))) return;
-          currentUrl = saved.optString("url", currentUrl);
+          currentUrl = saved.optString("url", "https://www.google.com");
           if (!browser.restore(saved.optString("session", null))) browser.load(currentUrl);
         });
   }
@@ -370,6 +370,13 @@ public final class MainActivity extends AppCompatActivity
     currentUrl = url;
     mediaCount = detector.snapshot().size();
     if (media != null) updateMediaBadge();
+    if (started && selected == R.id.nav_browser)
+      for (MediaCandidate item : detector.snapshot()) offerRefreshedMedia(item);
+  }
+
+  @Override
+  public void onContextLink(String url) {
+    if (browserTools != null) browserTools.link(url);
   }
 
   @Override
@@ -564,6 +571,7 @@ public final class MainActivity extends AppCompatActivity
     handler.removeCallbacksAndMessages(null);
     if (records != null) records.close();
     if (mediaSheet != null) mediaSheet.close();
+    if (popups != null) popups.close();
     if (mediaExtension != null) mediaExtension.close();
     if (browser != null) browser.close();
     if (browserTools != null) browserTools.close();

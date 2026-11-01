@@ -23,6 +23,8 @@ public final class BrowserSessionManager {
     default void onPageFinished(String url, String title) {}
 
     default void onTabSelected(MediaDetector detector, String url) {}
+
+    default void onContextLink(String url) {}
   }
 
   public static final class Tab {
@@ -169,6 +171,13 @@ public final class BrowserSessionManager {
     tab.session.setContentDelegate(
         new GeckoSession.ContentDelegate() {
           @Override
+          public void onContextMenu(GeckoSession source, int x, int y, ContextElement element) {
+            String target = element.linkUri != null ? element.linkUri : element.srcUri;
+            if (active == tab && listener != null && SafeSessionState.safeUrl(target))
+              listener.onContextLink(target);
+          }
+
+          @Override
           public void onTitleChange(GeckoSession source, String title) {
             tab.title = title == null ? "" : title;
           }
@@ -292,8 +301,21 @@ public final class BrowserSessionManager {
   }
 
   public void recover(String url) {
-    close();
+    if (active == null) {
+      newTab(url);
+      return;
+    }
+    int index = tabs.indexOf(active);
+    Tab old = active;
+    view.releaseSession();
+    active = null;
+    tabs.remove(old);
+    if (observer != null) observer.accept(old.session, false);
+    old.session.close();
     newTab(url);
+    Tab replacement = active;
+    tabs.remove(replacement);
+    tabs.add(Math.min(index, tabs.size()), replacement);
   }
 
   public void close() {

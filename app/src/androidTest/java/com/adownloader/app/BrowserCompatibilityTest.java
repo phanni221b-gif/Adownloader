@@ -29,10 +29,14 @@ public class BrowserCompatibilityTest {
   private MainActivity activity;
   private String base;
   private byte[] media;
+  private final AtomicReference<String> lastAgent = new AtomicReference<>("");
   private final java.util.Map<String, AtomicInteger> visits = new ConcurrentHashMap<>();
 
   @Before
   public void start() throws Exception {
+    app.getUiAutomation()
+        .executeShellCommand("pm grant com.adownloader.app android.permission.POST_NOTIFICATIONS")
+        .close();
     try (InputStream in = app.getContext().getAssets().open("fixtures/direct.mp4")) {
       media = in.readAllBytes();
     }
@@ -59,9 +63,13 @@ public class BrowserCompatibilityTest {
       if (first == null) return;
       String path = first.split(" ")[1];
       boolean cookie = false;
+      String agent = "";
       String line;
-      while ((line = in.readLine()) != null && !line.isEmpty())
+      while ((line = in.readLine()) != null && !line.isEmpty()) {
         if (line.startsWith("Cookie:") && line.contains("browser_fixture=present")) cookie = true;
+        if (line.regionMatches(true, 0, "User-Agent:", 0, 11)) agent = line.substring(11).trim();
+      }
+      if (path.startsWith("/tab-")) lastAgent.set(agent);
       if (path.startsWith("/takeover")) takeover.incrementAndGet();
       if (path.startsWith("/storage?")) storage.set(Uri.parse(path).getQueryParameter("value"));
       if (path.startsWith("/check") && cookie) cookies.incrementAndGet();
@@ -254,6 +262,11 @@ public class BrowserCompatibilityTest {
       assertEquals(1, visits.get("/tab-" + i).get());
     }
     assertEquals(5, manager.tabs().size());
+    app.runOnMainSync(() -> manager.recover(base + "/tab-4"));
+    awaitTitle("tab-4");
+    assertEquals(5, manager.tabs().size());
+    assertNotSame(sessions.get(4), manager.getSession());
+    for (int i = 0; i < 4; i++) assertSame(sessions.get(i), manager.tabs().get(i).session);
   }
 
   @Test
@@ -335,5 +348,28 @@ public class BrowserCompatibilityTest {
     assertTrue(manager.canGoBack());
     app.runOnMainSync(manager::goBack);
     awaitTitle("tab-0");
+  }
+
+  @Test
+  public void desktopMenuChangesActualHttpAgentWithoutReplacingSession() throws Exception {
+    open("/tab-0");
+    awaitTitle("tab-0");
+    BrowserSessionManager manager = browser();
+    GeckoSession original = manager.getSession();
+    assertTrue(lastAgent.get().contains("Android"));
+    app.runOnMainSync(() -> activity.findViewById(R.id.browser_menu).performClick());
+    var device = androidx.test.uiautomator.UiDevice.getInstance(app);
+    var option =
+        device.wait(
+            androidx.test.uiautomator.Until.findObject(
+                androidx.test.uiautomator.By.text("데스크톱 사이트")),
+            5000);
+    assertNotNull(option);
+    option.click();
+    long end = System.currentTimeMillis() + 15000;
+    while (lastAgent.get().contains("Android") && System.currentTimeMillis() < end)
+      Thread.sleep(50);
+    assertFalse(lastAgent.get().contains("Android"));
+    assertSame(original, manager.getSession());
   }
 }

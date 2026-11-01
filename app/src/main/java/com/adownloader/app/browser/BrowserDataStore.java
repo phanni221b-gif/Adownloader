@@ -118,9 +118,14 @@ public final class BrowserDataStore implements AutoCloseable {
   }
 
   public void remember(String url, String title, boolean bookmark) {
+    remember(url, title, bookmark, null);
+  }
+
+  public void remember(String url, String title, boolean bookmark, Consumer<Boolean> callback) {
     if (!SafeSessionState.safeUrl(url)) return;
     worker.execute(
         () -> {
+          boolean success = false;
           try {
             read();
             String key = bookmark ? "bookmarks" : "history";
@@ -137,8 +142,15 @@ public final class BrowserDataStore implements AutoCloseable {
                   next.put(old.getJSONObject(i));
             data.put(key, next);
             write();
+            success = true;
           } catch (Exception ignored) {
           }
+          boolean result = success;
+          if (callback != null && !closed)
+            main.post(
+                () -> {
+                  if (!closed) callback.accept(result);
+                });
         });
   }
 
