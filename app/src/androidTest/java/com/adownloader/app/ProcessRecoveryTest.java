@@ -488,4 +488,71 @@ public class ProcessRecoveryTest {
     refreshCase(jobs, MediaCandidate.MediaType.HLS, false);
     refreshCase(jobs, MediaCandidate.MediaType.DASH, false);
   }
+
+  @Test
+  public void prepareFinalized() throws Exception {
+    get("/reset");
+    DownloadJobs jobs = launch();
+    String url = BASE + "/process/asset-123.m3u8?token=old";
+    long id =
+        jobs.store.enqueue(
+            "finalized-force-stop",
+            "HLS",
+            "Finalized-recovery.mp4",
+            "localhost",
+            new JSONObject()
+                .put("url", url)
+                .put("headers", new JSONObject().put("Cookie", "fixture=PRIVATE_REQUEST_CONTEXT")));
+    jobs.store.state(id, DownloadJobStore.State.DOWNLOADING, "");
+    Uri uri = jobs.store.ensurePending(id, "Finalized-recovery.mp4", "video/mp4");
+    try (ParcelFileDescriptor fd = context.getContentResolver().openFileDescriptor(uri, "rwt")) {
+      DownloadEngine engine =
+          new DownloadEngine(
+              jobs.store.directory(id),
+              (message, percent) -> {},
+              new JobJournal(jobs.store, id),
+              new TransferControl(),
+              fd.getFileDescriptor());
+      engine.download(
+          url, MediaCandidate.MediaType.HLS, Map.of("Cookie", "fixture=PRIVATE_REQUEST_CONTEXT"));
+    }
+    assertNotNull(jobs.store.finalizedMedia(id));
+    assertEquals(0, jobs.store.directory(id).listFiles().length);
+    context
+        .getSharedPreferences("recovery-test", 0)
+        .edit()
+        .putLong("finalized", id)
+        .putString("finalizedCounts", get("/stats").getJSONObject("counts").toString())
+        .commit();
+    get("/expire"); // Any attempted redownload of the old source now fails.
+  }
+
+  @Test
+  public void recoverFinalized() throws Exception {
+    DownloadJobs jobs = launch();
+    long id = context.getSharedPreferences("recovery-test", 0).getLong("finalized", -1);
+    assertEquals(DownloadJobStore.State.PAUSED, jobs.store.get(id).state);
+    assertNotNull(jobs.store.finalizedMedia(id));
+    instrumentation.runOnMainSync(() -> jobs.action(id, "RESUME", null));
+    var completed = await(jobs, id, DownloadJobStore.State.COMPLETED);
+    try (var fd = context.getContentResolver().openFileDescriptor(Uri.parse(completed.uri), "r")) {
+      PostProcessor.inspect(fd.getFileDescriptor(), 3, true, true);
+    }
+    JSONObject
+        before =
+            new JSONObject(
+                context
+                    .getSharedPreferences("recovery-test", 0)
+                    .getString("finalizedCounts", "{}")),
+        after = get("/stats").getJSONObject("counts");
+    for (var keys = before.keys(); keys.hasNext(); ) {
+      String path = keys.next();
+      if (path.startsWith("/process/"))
+        assertEquals(
+            "Finalized recovery must not fetch source again",
+            before.getInt(path),
+            after.getInt(path));
+    }
+    context.getContentResolver().delete(Uri.parse(completed.uri), null, null);
+  }
 }

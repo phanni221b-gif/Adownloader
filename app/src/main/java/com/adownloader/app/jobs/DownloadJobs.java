@@ -319,6 +319,7 @@ public final class DownloadJobs {
                             previous.remove("directFiles");
                             previous.remove("directMedia");
                             previous.remove("finalOutput");
+                            store.resetFinalizedMedia(id);
                             previous.remove("disposition");
                           }
                           JSONObject headers = new JSONObject();
@@ -402,6 +403,7 @@ public final class DownloadJobs {
       request.remove("directFiles");
       request.remove("directMedia");
       request.remove("finalOutput");
+      store.resetFinalizedMedia(job.id);
       store.writeContext(job.id, request);
     }
   }

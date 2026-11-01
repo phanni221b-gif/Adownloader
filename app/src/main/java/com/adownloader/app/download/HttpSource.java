@@ -10,6 +10,12 @@ public final class HttpSource {
   private final RequestContext context;
   private final String rootUrl;
   private volatile String responseDisposition = "";
+  private boolean acceptedResource;
+
+  public HttpSource previouslyAccepted(boolean accepted) {
+    acceptedResource = accepted;
+    return this;
+  }
 
   public String disposition() {
     return responseDisposition;
@@ -94,10 +100,15 @@ public final class HttpSource {
           || code > 299
           || (length > 0 && code != 206)
           || (!resume && length <= 0 && code == 206)) {
-        connection.disconnect();
-        throw DownloadError.http(code);
+        boolean challenge = connection.getHeaderField("WWW-Authenticate") != null;
+        DownloadError failure =
+            DownloadError.http(
+                code, current, acceptedResource, challenge, System.currentTimeMillis());
+        release(connection);
+        throw failure;
       }
       if (url.equals(rootUrl)) {
+        acceptedResource = true;
         String disposition = connection.getHeaderField("Content-Disposition");
         if (disposition != null && disposition.length() <= 4096) responseDisposition = disposition;
       }

@@ -42,7 +42,17 @@ public final class DownloadError extends IOException {
   public static DownloadError http(int code) {
     return new DownloadError(
         code == 401 || code == 403
-            ? Category.EXPIRED_URL
+            ? Category.AUTH
             : code >= 500 ? Category.SERVER : Category.NETWORK);
+  }
+
+  public static DownloadError http(
+      int code, String url, boolean previouslyAccepted, boolean authenticationChallenge, long now) {
+    if ((code == 401 || code == 403)
+        && !authenticationChallenge
+        && com.adownloader.app.media.CdnQueryPolicy.signed(url)
+        && (previouslyAccepted || com.adownloader.app.media.CdnQueryPolicy.expiresAt(url) <= now))
+      return new DownloadError(Category.EXPIRED_URL);
+    return http(code);
   }
 }

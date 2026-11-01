@@ -1,121 +1,12 @@
 package com.adownloader.app.ui;
 
 import android.content.*;
-import android.database.Cursor;
-import android.media.MediaMetadataRetriever;
-import android.net.Uri;
-import android.provider.MediaStore;
 import java.util.*;
 import org.json.JSONObject;
 
 /** UI-only job telemetry. Never persists a media URL, request header, cookie or page URL. */
 public final class DownloadHistory {
   private DownloadHistory() {}
-
-  private static final Map<Integer, Long> lastProgress = new HashMap<>();
-
-  public static synchronized void begin(Context context, int id, String host, String type) {
-    JSONObject data = new JSONObject();
-    try {
-      data.put("host", host);
-      data.put("type", type);
-      data.put("name", "동영상 다운로드");
-      data.put("pid", android.os.Process.myPid());
-      data.put("created", System.currentTimeMillis());
-    } catch (Exception ignored) {
-    }
-    merge(context, id, data, "대기 중", null);
-  }
-
-  public static synchronized void progress(Context context, int id, String phase, int percent) {
-    long now = android.os.SystemClock.elapsedRealtime();
-    if (percent != 100 && now - lastProgress.getOrDefault(id, 0L) < 500) return;
-    lastProgress.put(id, now);
-    JSONObject data = new JSONObject();
-    try {
-      data.put("percent", percent);
-      data.put("phase", phase);
-    } catch (Exception ignored) {
-    }
-    merge(context, id, data, "다운로드 중", null);
-  }
-
-  public static synchronized void state(Context context, int id, String state, String uri) {
-    JSONObject data = new JSONObject();
-    if (uri != null) {
-      try (Cursor cursor =
-          context
-              .getContentResolver()
-              .query(
-                  Uri.parse(uri),
-                  new String[] {
-                    MediaStore.MediaColumns.DISPLAY_NAME,
-                    MediaStore.MediaColumns.SIZE,
-                    MediaStore.MediaColumns.MIME_TYPE
-                  },
-                  null,
-                  null,
-                  null)) {
-        if (cursor != null && cursor.moveToFirst()) {
-          data.put("name", cursor.getString(0));
-          data.put("bytes", cursor.getLong(1));
-          data.put("mime", cursor.getString(2));
-        }
-      } catch (Exception ignored) {
-      }
-      try (MediaMetadataRetriever retriever = new MediaMetadataRetriever()) {
-        retriever.setDataSource(context, Uri.parse(uri));
-        putLong(
-            data,
-            "duration",
-            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION));
-        putLong(
-            data,
-            "width",
-            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH));
-        putLong(
-            data,
-            "height",
-            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT));
-      } catch (Exception ignored) {
-      }
-    }
-    merge(context, id, data, state, uri);
-    if (!state.equals("대기 중") && !state.equals("다운로드 중")) lastProgress.remove(id);
-  }
-
-  private static void putLong(JSONObject json, String key, String value) throws Exception {
-    if (value != null) json.put(key, Long.parseLong(value));
-  }
-
-  private static void merge(Context context, int id, JSONObject updates, String state, String uri) {
-    SharedPreferences prefs = context.getSharedPreferences("downloads", Context.MODE_PRIVATE);
-    try {
-      JSONObject all = new JSONObject(prefs.getString("items", "{}"));
-      String key = Integer.toString(id);
-      JSONObject item = all.optJSONObject(key);
-      if (item == null) item = new JSONObject();
-      Iterator<String> changes = updates.keys();
-      while (changes.hasNext()) {
-        String field = changes.next();
-        item.put(field, updates.get(field));
-      }
-      item.put("state", state);
-      item.put("time", System.currentTimeMillis());
-      if (uri != null) item.put("uri", uri);
-      all.put(key, item);
-      List<String> keys = new ArrayList<>();
-      Iterator<String> iterator = all.keys();
-      while (iterator.hasNext()) keys.add(iterator.next());
-      keys.sort(
-          (a, b) ->
-              Long.compare(
-                  all.optJSONObject(a).optLong("time"), all.optJSONObject(b).optLong("time")));
-      while (keys.size() > 100) all.remove(keys.remove(0));
-      prefs.edit().putString("items", all.toString()).apply();
-    } catch (Exception ignored) {
-    }
-  }
 
   public static String userError(String error) {
     String text = error == null ? "" : error;
@@ -166,7 +57,7 @@ public final class DownloadHistory {
                 .put("segment", job.segment)
                 .put("error", job.error)
                 .put("uri", job.uri)
-                .put("canOpenPage", job.hasPage && !job.error.equals("AUTH"));
+                .put("canOpenPage", job.hasPage);
         if (job.total > 0
             || job.segments > 0
             || job.state == com.adownloader.app.jobs.DownloadJobStore.State.FINALIZING)

@@ -21,7 +21,7 @@ import java.util.concurrent.*;
 import org.json.JSONObject;
 
 /** Downloads and owned-file library. Only exact app-owned MediaStore URIs are queried. */
-public final class RecordsController implements SharedPreferences.OnSharedPreferenceChangeListener {
+public final class RecordsController {
   private final Activity activity;
   private final RecyclerView downloads, library;
   private final View downloadEmpty, libraryEmpty;
@@ -39,7 +39,6 @@ public final class RecordsController implements SharedPreferences.OnSharedPrefer
       };
   private final DownloadAdapter downloadAdapter = new DownloadAdapter();
   private final LibraryAdapter libraryAdapter = new LibraryAdapter();
-  private final SharedPreferences prefs;
   private List<JSONObject> all = new ArrayList<>();
   private List<JSONObject> ownedVideos = new ArrayList<>();
   private volatile boolean disposed;
@@ -113,8 +112,6 @@ public final class RecordsController implements SharedPreferences.OnSharedPrefer
               if (r - l != or - ol) resize();
             });
     com.adownloader.app.jobs.DownloadJobStore.observe(jobChanged);
-    prefs = activity.getSharedPreferences("downloads", 0);
-    prefs.registerOnSharedPreferenceChangeListener(this);
     resize();
     refresh(false);
   }
@@ -131,11 +128,6 @@ public final class RecordsController implements SharedPreferences.OnSharedPrefer
     boolean librarySplit = FoldLayoutController.spansVerticalHinge(activity, library);
     ((GridLayoutManager) library.getLayoutManager())
         .setSpanCount(libraryWidth >= 1000 ? 4 : librarySplit ? 2 : libraryWidth >= 700 ? 3 : 2);
-  }
-
-  @Override
-  public void onSharedPreferenceChanged(SharedPreferences shared, String key) {
-    main.post(this::scheduleReload);
   }
 
   private boolean reloadPosted;
@@ -594,7 +586,6 @@ public final class RecordsController implements SharedPreferences.OnSharedPrefer
   public void close() {
     disposed = true;
     com.adownloader.app.jobs.DownloadJobStore.unobserve(jobChanged);
-    prefs.unregisterOnSharedPreferenceChangeListener(this);
     main.removeCallbacksAndMessages(null);
     io.shutdownNow();
     thumbnailRequests.values().forEach(CancellationSignal::cancel);
