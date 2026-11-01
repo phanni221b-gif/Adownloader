@@ -9,6 +9,7 @@ public final class NavigationPolicy {
 
   public void beginUserNavigation() {
     trusted = true;
+    expected = null;
   }
 
   public void beginUserNavigation(String target) {
@@ -22,30 +23,44 @@ public final class NavigationPolicy {
   }
 
   public void committed(String target) {
+    if (expected != null && !sameTarget(expected, target)) return;
     trusted = false;
-    if (expected != null && sameTarget(expected, target)) expected = null;
+    expected = null;
+  }
+
+  public void started(String target) {
+    if (expected != null && sameTarget(expected, target)) {
+      expected = null;
+      trusted = true;
+    }
   }
 
   public void stopped() {
-    trusted = false;
+    if (expected == null) trusted = false;
+  }
+
+  public void failed(String target) {
+    if (expected == null
+        || java.util.Objects.equals(expected, target)
+        || sameTarget(expected, target)) committed();
   }
 
   public boolean allow(
       String current, String target, boolean gesture, boolean direct, boolean redirect) {
     if (gesture || direct) {
       trusted = true;
-      expected = null;
+      if (!redirect) expected = target;
       return true;
     }
     if (redirect) return trusted || sameOrigin(current, target);
     if (expected != null && sameTarget(expected, target)) {
-      expected = null;
       trusted = true;
       return true;
     }
     // A script-initiated load cannot borrow trust from another pending navigation.
     if (current == null || sameOrigin(current, target)) {
       trusted = false;
+      expected = null;
       return true;
     }
     return false;

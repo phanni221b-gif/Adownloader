@@ -134,9 +134,21 @@ public final class BrowserSessionManager {
             if (active == tab && listener != null) listener.onPopupRequested(uri);
             return null;
           }
+
+          @Override
+          public GeckoResult<String> onLoadError(
+              GeckoSession source, String uri, WebRequestError error) {
+            tab.policy.failed(uri);
+            return null;
+          }
         });
     tab.session.setProgressDelegate(
         new GeckoSession.ProgressDelegate() {
+          @Override
+          public void onPageStart(GeckoSession source, String uri) {
+            tab.policy.started(uri);
+          }
+
           @Override
           public void onPageStop(GeckoSession source, boolean success) {
             tab.policy.stopped();
