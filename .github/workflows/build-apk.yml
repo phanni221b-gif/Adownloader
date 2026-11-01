@@ -1,7 +1,7 @@
 name: Build and verify Adownloader
 on:
   push:
-    branches: [main, rebuild-gecko-v2, rebuild-gecko-release, ui-ux-v050, reliability-v060, validation-v060, stabilize-v061, validation-v061]
+    branches: [main, rebuild-gecko-v2, rebuild-gecko-release, ui-ux-v050, reliability-v060, validation-v060, stabilize-v061, validation-v061, compatibility-v062, validation-v062]
   pull_request:
   workflow_dispatch:
 permissions:
@@ -26,6 +26,7 @@ jobs:
       - name: Unit tests, lint, ARM64 release
         run: |
           node ci/test-media-extension.cjs
+          node ci/test-deep-detection.cjs
           gradle :app:testDebugUnitTest :app:lintRelease :app:assembleRelease --stacktrace
       - name: Check packaged engine, ABI and launcher
         run: |
@@ -87,6 +88,7 @@ jobs:
             app/build/outputs/androidTest-results/
             ui-proof/
             ui-logcat.txt
+            extension-performance.json
             process-recovery-results/
 # The fixed private release key remains off GitHub. This workflow cannot publish an unsigned APK.
 

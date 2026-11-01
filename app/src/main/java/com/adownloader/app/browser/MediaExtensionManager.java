@@ -134,6 +134,14 @@ public final class MediaExtensionManager implements AutoCloseable {
   }
 
   private void handleMessage(JSONObject json, MediaDetector detector) {
+    if ("detection".equals(json.optString("kind"))) {
+      detector.detectionDiagnostics = json.optJSONObject("metrics");
+      return;
+    }
+    if ("performance".equals(json.optString("kind"))) {
+      detector.performanceMetrics = json.optJSONObject("metrics");
+      return;
+    }
     if ("page-meta".equals(json.optString("kind"))) {
       detector.pageTitle(json.optString("pageUrl"), json.optString("title"));
       return;
@@ -159,11 +167,22 @@ public final class MediaExtensionManager implements AutoCloseable {
             && !value.contains("\n")) headers.put(key, value);
       }
     }
+    detector.rememberContext(url, pageUrl, headers);
+    if ("resource-context".equals(json.optString("kind"))) return;
     Map<String, String> metadata = new LinkedHashMap<>();
     JSONObject meta = json.optJSONObject("metadata");
     if (meta != null)
       for (String key :
-          java.util.List.of("title", "mime", "disposition", "etag", "modified", "length")) {
+          java.util.List.of(
+              "title",
+              "mime",
+              "disposition",
+              "etag",
+              "modified",
+              "length",
+              "frameScore",
+              "frameHost",
+              "frameId")) {
         String value = meta.optString(key);
         if (!value.isBlank() && value.length() <= 4096) metadata.put(key, value);
       }

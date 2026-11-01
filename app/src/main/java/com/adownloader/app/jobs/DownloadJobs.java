@@ -283,14 +283,7 @@ public final class DownloadJobs {
                       candidate.getType() == MediaCandidate.MediaType.HLS
                           || candidate.getType() == MediaCandidate.MediaType.DASH;
                   MediaProbeResult probe =
-                      segmented
-                          ? MediaProbeService.shared()
-                              .probe(
-                                  candidate.getUrl(),
-                                  candidate.getType(),
-                                  candidate.getHeaders(),
-                                  control)
-                          : null;
+                      segmented ? MediaProbeService.shared().probe(candidate, control) : null;
                   boolean compatible = previous.has("url");
                   if (segmented) {
                     List<ManifestParser.Track> fresh = probe.tracks();
@@ -341,6 +334,7 @@ public final class DownloadJobs {
                               .put("metadata", new JSONObject(candidate.getMetadata()));
                           if (probe != null) {
                             previous.put("plan", PlanCodec.encode(probe.tracks()));
+                            previous.put("cookieBootstrap", probe.requiresCookieSession);
                             if (!probe.disposition.isEmpty())
                               previous.put("disposition", probe.disposition);
                           }

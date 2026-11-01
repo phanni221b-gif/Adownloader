@@ -41,6 +41,7 @@ public final class ManifestParser {
 
   public static final class HlsSelection {
     public String video, audio;
+    public Map<String, String> selectedAttributes = Collections.emptyMap();
     public final List<Map<String, String>> audioRenditions = new ArrayList<>(),
         subtitleRenditions = new ArrayList<>();
   }
@@ -49,16 +50,44 @@ public final class ManifestParser {
 
   public static Map<String, String> attributes(String line) {
     Map<String, String> values = new LinkedHashMap<>();
-    Matcher matcher = ATTR.matcher(line.substring(line.indexOf(':') + 1));
-    while (matcher.find()) {
-      String value = matcher.group(2);
-      if (value.startsWith("\"")) value = value.substring(1, value.length() - 1);
-      values.put(matcher.group(1), value);
+    String input = line.substring(line.indexOf(':') + 1);
+    int at = 0;
+    while (at < input.length()) {
+      while (at < input.length() && Character.isWhitespace(input.charAt(at))) at++;
+      int start = at;
+      while (at < input.length()
+          && (Character.isUpperCase(input.charAt(at))
+              || Character.isDigit(input.charAt(at))
+              || input.charAt(at) == '-')) at++;
+      require(at > start && at < input.length() && input.charAt(at) == '=', "HLS_ATTRIBUTE");
+      String key = input.substring(start, at++), value;
+      if (at < input.length() && input.charAt(at) == '"') {
+        start = ++at;
+        while (at < input.length() && input.charAt(at) != '"') at++;
+        require(at < input.length(), "HLS_ATTRIBUTE");
+        value = input.substring(start, at++);
+      } else {
+        start = at;
+        while (at < input.length() && input.charAt(at) != ',') at++;
+        value = input.substring(start, at).trim();
+        require(!value.isEmpty(), "HLS_ATTRIBUTE");
+      }
+      require(!values.containsKey(key), "HLS_ATTRIBUTE");
+      values.put(key, value);
+      while (at < input.length() && Character.isWhitespace(input.charAt(at))) at++;
+      if (at < input.length()) {
+        require(input.charAt(at++) == ',' && at < input.length(), "HLS_ATTRIBUTE");
+      }
     }
     return values;
   }
 
+  public static String normalizeHls(String text) {
+    return text != null && text.startsWith("\ufeff") ? text.substring(1) : text;
+  }
+
   public static HlsSelection hlsSelection(String url, String text) {
+    text = normalizeHls(text);
     require(text.trim().startsWith("#EXTM3U"), "올바른 HLS 목록이 아닙니다");
     HlsSelection result = new HlsSelection();
     result.video = url;
@@ -77,7 +106,10 @@ public final class ManifestParser {
       long bandwidth =
           Long.parseLong(a.getOrDefault("AVERAGE-BANDWIDTH", a.getOrDefault("BANDWIDTH", "0")));
       int next = i + 1;
-      while (next < lines.length && lines[next].trim().isEmpty()) next++;
+      while (next < lines.length
+          && (lines[next].trim().isEmpty()
+              || lines[next].trim().startsWith("#") && !lines[next].trim().startsWith("#EXT")))
+        next++;
       require(next < lines.length && !lines[next].trim().startsWith("#"), "HLS 스트림 주소 누락");
       if (pixels > bestPixels
           || (pixels == bestPixels
@@ -87,6 +119,7 @@ public final class ManifestParser {
         bestBandwidth = bandwidth;
         result.video = resolve(url, lines[next].trim());
         audioGroup = a.get("AUDIO");
+        result.selectedAttributes = Collections.unmodifiableMap(new LinkedHashMap<>(a));
       }
     }
     for (String line : lines)
@@ -117,6 +150,7 @@ public final class ManifestParser {
   }
 
   public static Track hlsTrack(String url, String text) {
+    text = normalizeHls(text);
     require(text.trim().startsWith("#EXTM3U"), "올바른 HLS 목록이 아닙니다");
     require(
         text.contains("#EXT-X-ENDLIST"),
@@ -125,7 +159,7 @@ public final class ManifestParser {
     require(
         !text.contains("#EXT-X-GAP"), DownloadError.Category.HLS_GAP, "누락된 HLS 조각을 건너뛰어 저장하지 않습니다");
     require(
-        !text.contains("#EXT-X-DISCONTINUITY"),
+        !Pattern.compile("(?m)^#EXT-X-DISCONTINUITY\\s*$").matcher(text).find(),
         DownloadError.Category.HLS_DISCONTINUITY,
         "타임스탬프가 불연속인 HLS는 안전한 병합을 지원하지 않습니다");
     Track track = new Track();
@@ -133,13 +167,18 @@ public final class ManifestParser {
     String previousUrl = null, key = null, iv = null;
     boolean explicitOffset = false;
     Part init = null;
+    boolean pendingDuration = false, previousRange = false;
     for (String raw : text.split("\\r?\\n")) {
       String line = raw.trim();
       if (line.startsWith("#EXT-X-MEDIA-SEQUENCE:"))
         sequence = Long.parseLong(line.substring(line.indexOf(':') + 1));
-      else if (line.startsWith("#EXTINF:"))
-        track.duration += Double.parseDouble(line.substring(8).split(",")[0]);
-      else if (line.startsWith("#EXT-X-KEY:")) {
+      else if (line.startsWith("#EXTINF:")) {
+        require(!pendingDuration, "HLS_SEGMENT_URI");
+        double duration = Double.parseDouble(line.substring(8).split(",")[0]);
+        require(Double.isFinite(duration) && duration > 0, "HLS_ATTRIBUTE");
+        track.duration += duration;
+        pendingDuration = true;
+      } else if (line.startsWith("#EXT-X-KEY:")) {
         Map<String, String> a = attributes(line);
         String method = a.get("METHOD");
         if ("NONE".equals(method)) {
@@ -156,7 +195,7 @@ public final class ManifestParser {
           iv = a.get("IV");
         }
       } else if (line.startsWith("#EXT-X-MAP:")) {
-        require(init == null, "초기화 세그먼트 변경은 지원하지 않습니다");
+
         Map<String, String> a = attributes(line);
         require(a.containsKey("URI"), "초기화 주소 누락");
         long mapOffset = 0, mapLength = -1;
@@ -167,25 +206,42 @@ public final class ManifestParser {
           mapOffset = Long.parseLong(r[1]);
         }
         require(key == null || iv != null, "암호화된 초기화 세그먼트 IV 누락");
-        init = new Part(resolve(url, a.get("URI")), mapOffset, mapLength, sequence, key, iv);
-        track.parts.add(init);
+        Part nextInit =
+            new Part(resolve(url, a.get("URI")), mapOffset, mapLength, sequence, key, iv);
+        if (init != null)
+          require(
+              init.url.equals(nextInit.url)
+                  && init.offset == mapOffset
+                  && init.length == mapLength
+                  && Objects.equals(init.keyUrl, key)
+                  && Objects.equals(init.iv, iv),
+              DownloadError.Category.HLS_UNSUPPORTED,
+              "HLS_INIT_CHANGE");
+        else {
+          init = nextInit;
+          track.parts.add(init);
+        }
       } else if (line.startsWith("#EXT-X-BYTERANGE:")) {
         String[] r = line.substring(line.indexOf(':') + 1).split("@");
         length = Long.parseLong(r[0]);
         require(length > 0, "잘못된 바이트 범위");
         explicitOffset = r.length == 2;
         if (explicitOffset) offset = Long.parseLong(r[1]);
-        else require(previousUrl != null, "바이트 범위 오프셋 누락");
+        else require(previousUrl != null && previousRange, "바이트 범위 오프셋 누락");
       } else if (!line.isEmpty() && !line.startsWith("#")) {
+        require(pendingDuration, "HLS_SEGMENT_URI");
+        pendingDuration = false;
         String partUrl = resolve(url, line);
         if (length > 0 && !explicitOffset) require(partUrl.equals(previousUrl), "범위 파일이 변경되었습니다");
         track.parts.add(new Part(partUrl, length > 0 ? offset : 0, length, sequence++, key, iv));
         offset = length > 0 ? offset + length : 0;
         previousUrl = partUrl;
+        previousRange = length > 0;
         length = -1;
         require(track.parts.size() <= 100_000, "세그먼트 수 제한 초과");
       }
     }
+    require(!pendingDuration, "HLS_SEGMENT_URI");
     require(track.duration > 0 && track.parts.size() > (init == null ? 0 : 1), "HLS 세그먼트 누락");
     return track;
   }
@@ -436,6 +492,10 @@ public final class ManifestParser {
   }
 
   public static String resolve(String base, String child) {
+    if (child.startsWith("?")) {
+      URI uri = URI.create(base);
+      return URI.create(base.split("[?#]", 2)[0] + child).toString();
+    }
     return URI.create(base).resolve(child).toString();
   }
 

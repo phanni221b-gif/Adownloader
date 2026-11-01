@@ -117,6 +117,10 @@ public final class JobNotifications {
         return "저장 공간이 부족합니다. 파일을 정리한 뒤 다시 시도해 주세요.";
       case "STORAGE":
         return "저장 공간 또는 임시 파일을 확인해 주세요.";
+      case "ACCESS_BLOCKED":
+        return "사이트가 다운로드 요청을 차단했습니다. 페이지를 다시 연 뒤 재시도해 주세요.";
+      case "HLS_UNSUPPORTED":
+        return "이 영상은 현재 지원하지 않는 HLS 형식을 사용합니다.";
       case "HLS_GAP":
         return "영상 조각이 누락되어 완전한 파일로 저장할 수 없습니다.";
       case "HLS_DISCONTINUITY":
@@ -126,7 +130,7 @@ public final class JobNotifications {
       case "LIVE_UNSUPPORTED":
         return "라이브 스트림은 일반 영상 다운로드로 저장할 수 없습니다.";
       case "MANIFEST_INVALID":
-        return "영상 목록이 올바르지 않거나 필수 정보가 누락되었습니다.";
+        return "영상 목록 형식을 처리할 수 없습니다.";
       case "UNSUPPORTED_CODEC":
         return "원본 코덱을 이 기기에서 무손실 병합할 수 없습니다.";
       case "UNSUPPORTED_FORMAT":

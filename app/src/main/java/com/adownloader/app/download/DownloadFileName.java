@@ -37,11 +37,22 @@ public final class DownloadFileName {
 
   private static String base(String disposition, String title, String url, String mediaTitle) {
     for (String candidate :
-        new String[] {fromDisposition(disposition), title, fromUrl(url), mediaTitle}) {
+        new String[] {
+          meaningful(fromDisposition(disposition)), title, mediaTitle, meaningful(fromUrl(url))
+        }) {
       String name = sanitize(candidate);
       if (!name.isEmpty()) return name;
     }
     return "";
+  }
+
+  private static String meaningful(String value) {
+    String stem = sanitize(value);
+    if (stem.isEmpty()
+        || stem.matches("(?i)(master|index|playlist|video|stream|download)(?:[._-]?[0-9]+)?")
+        || stem.matches("(?i)[a-f0-9]{20,}")
+        || stem.matches("(?i)[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}")) return "";
+    return value;
   }
 
   static String fromDisposition(String value) {

@@ -97,6 +97,7 @@ public final class BrowserSessionManager {
               List<GeckoSession.PermissionDelegate.ContentPermission> permissions,
               Boolean gesture) {
             tab.url = value == null ? "about:blank" : value;
+            tab.detector.pageChanged(tab.url);
             tab.state = SafeSessionState.visit(tab.state, tab.url, tab.title);
             tab.policy.committed(tab.url);
             if (active == tab && listener != null) listener.onLocationChanged(tab.url);
@@ -334,6 +335,11 @@ public final class BrowserSessionManager {
     active = null;
     for (Tab tab : tabs) {
       if (observer != null) observer.accept(tab.session, false);
+      tab.session.setNavigationDelegate(null);
+      tab.session.setProgressDelegate(null);
+      tab.session.setContentDelegate(null);
+      tab.session.setHistoryDelegate(null);
+      tab.detector.clearPrivateState();
       tab.session.close();
     }
     tabs.clear();
@@ -349,6 +355,10 @@ public final class BrowserSessionManager {
   }
 
   public String snapshotTabs() {
+    return snapshotTabs(false);
+  }
+
+  public String snapshotTabs(boolean reload) {
     try {
       JSONArray saved = new JSONArray();
       for (Tab tab : tabs) {
@@ -356,13 +366,17 @@ public final class BrowserSessionManager {
             new JSONObject()
                 .put("url", SafeSessionState.safeUrl(tab.url) ? tab.url : "about:blank")
                 .put("title", tab.title.substring(0, Math.min(300, tab.title.length())))
-                .put("session", tab.state)
+                .put("session", reload ? JSONObject.NULL : tab.state)
                 .put(
                     "desktop",
                     tab.session.getSettings().getUserAgentMode()
                         == GeckoSessionSettings.USER_AGENT_MODE_DESKTOP));
       }
-      return new JSONObject().put("tabs", saved).put("active", tabs.indexOf(active)).toString();
+      return new JSONObject()
+          .put("tabs", saved)
+          .put("active", tabs.indexOf(active))
+          .put("reload", reload)
+          .toString();
     } catch (Exception ignored) {
       return null;
     }
@@ -391,7 +405,7 @@ public final class BrowserSessionManager {
               desktop
                   ? GeckoSessionSettings.VIEWPORT_MODE_DESKTOP
                   : GeckoSessionSettings.VIEWPORT_MODE_MOBILE);
-      if (!restore(item.optString("session", null))) {
+      if (snapshot.optBoolean("reload") || !restore(item.optString("session", null))) {
         String target = item.optString("url");
         if (SafeSessionState.safeUrl(target)) load(target);
       }

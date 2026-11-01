@@ -6,11 +6,67 @@ import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
 /** Bounded manifest/segment requests, checked byte counts, explicit safe redirects. */
-public final class HttpSource {
+public final class HttpSource implements AutoCloseable {
+  public interface CookieListener {
+    void changed(String encryptedAdapterState) throws Exception;
+  }
+
+  private final JobCookieJar cookies;
+  private String topPage;
+
+  public HttpSource pageContext(String page) {
+    try {
+      URI uri = URI.create(page);
+      if (uri.getHost() != null && java.util.Set.of("http", "https").contains(uri.getScheme())) {
+        topPage = page;
+        cookies.pageContext(page);
+      }
+    } catch (Exception ignored) {
+    }
+    return this;
+  }
+
+  public String pageSiteKey() {
+    return topPage == null ? "" : CookieSites.site(URI.create(topPage));
+  }
+
+  private CapturedRequestContexts captured =
+      new CapturedRequestContexts(java.util.Collections.emptyMap());
+
+  public HttpSource resourceContexts(Map<String, Map<String, String>> values) {
+    captured.close();
+    captured = new CapturedRequestContexts(values);
+    return this;
+  }
+
+  private CookieListener cookieListener;
+
+  public HttpSource onCookies(CookieListener listener) {
+    cookieListener = listener;
+    return this;
+  }
+
+  public void restoreCookies(String state) throws IOException {
+    cookies.restore(state);
+  }
+
+  public boolean hasResponseCookies() {
+    return cookies.hasResponseCookies();
+  }
+
+  @Override
+  public void close() {
+    cookies.close();
+    captured.close();
+    cookieListener = null;
+  }
+
   private final RequestContext context;
   private final String rootUrl;
   private volatile String responseDisposition = "";
   private boolean acceptedResource;
+  private int lastRedirects;
+  private String documentRole = "";
 
   public HttpSource previouslyAccepted(boolean accepted) {
     acceptedResource = accepted;
@@ -29,6 +85,7 @@ public final class HttpSource {
 
   public HttpSource(String source, Map<String, String> headers, TransferControl control) {
     rootUrl = source;
+    cookies = new JobCookieJar(source, headers);
     context = new RequestContext(source, headers);
     this.control = control;
   }
@@ -58,12 +115,24 @@ public final class HttpSource {
     String current = url;
     for (int hop = 0; hop < 8; hop++) {
       Map<String, String> headers = context.forUrl(current);
+      headers.keySet().removeIf(k -> k.equalsIgnoreCase("cookie"));
+      Map<String, String> observed = captured.forUrl(current);
+      String observedCookie = null;
+      for (var e : observed.entrySet())
+        if (e.getKey().equalsIgnoreCase("cookie")) observedCookie = e.getValue();
+        else {
+          headers.keySet().removeIf(k -> k.equalsIgnoreCase(e.getKey()));
+          headers.put(e.getKey(), e.getValue());
+        }
+      String cookie = cookies.header(URI.create(current), observedCookie);
+      if (!cookie.isEmpty()) headers.put("Cookie", cookie);
       HttpURLConnection connection = (HttpURLConnection) new URL(current).openConnection();
       control.attach(connection);
       connection.setInstanceFollowRedirects(false);
       connection.setConnectTimeout(20_000);
       connection.setReadTimeout(45_000);
       connection.setRequestProperty("Accept-Encoding", "identity");
+      connection.setRequestProperty("Accept", "*/*");
       headers.forEach(connection::setRequestProperty);
       if (previous != null && current.equals(previous.url)) {
         if (!previous.etag.isEmpty()) connection.setRequestProperty("If-None-Match", previous.etag);
@@ -83,16 +152,38 @@ public final class HttpSource {
       } catch (Exception error) {
         release(connection);
         control.check();
-        throw error;
+        throw new DownloadError(DownloadError.Category.NETWORK)
+            .diagnostic(
+                new HlsDiagnostic(
+                    current,
+                    0,
+                    "",
+                    hop,
+                    documentRole,
+                    documentRole.equals("root")
+                        ? HlsDiagnostic.Stage.ROOT_HTTP
+                        : HlsDiagnostic.Stage.VARIANT_HTTP,
+                    "",
+                    DownloadError.Category.NETWORK));
       }
+      lastRedirects = hop;
+      if (cookies.accept(URI.create(current), connection.getHeaderFields())
+          && cookieListener != null)
+        try {
+          cookieListener.changed(cookies.snapshot());
+        } catch (Exception storage) {
+          release(connection);
+          throw DownloadError.storage(storage);
+        }
       if (previous != null && code == 304 && current.equals(previous.url)) return connection;
       if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
         String location = connection.getHeaderField("Location");
         connection.disconnect();
-        if (location == null) throw new IOException("리다이렉트 주소 없음");
+        if (location == null)
+          throw redirectFailure(current, code, connection.getContentType(), hop);
         String next = URI.create(current).resolve(location).toString();
         if (current.startsWith("https:") && !next.startsWith("https:"))
-          throw new IOException("안전하지 않은 리다이렉트");
+          throw redirectFailure(current, code, connection.getContentType(), hop);
         current = next;
         continue;
       }
@@ -104,6 +195,22 @@ public final class HttpSource {
         DownloadError failure =
             DownloadError.http(
                 code, current, acceptedResource, challenge, System.currentTimeMillis());
+        failure.diagnostic(
+            new HlsDiagnostic(
+                current,
+                code,
+                connection.getContentType(),
+                hop,
+                documentRole.isEmpty() ? "segment" : documentRole,
+                (code == 401 || code == 403) && headers.isEmpty()
+                    ? HlsDiagnostic.Stage.REQUEST_CONTEXT_UNAVAILABLE
+                    : !documentRole.equals("root") && (code == 401 || code == 403)
+                        ? HlsDiagnostic.Stage.CHILD_AUTH
+                        : documentRole.equals("root")
+                            ? HlsDiagnostic.Stage.ROOT_HTTP
+                            : HlsDiagnostic.Stage.VARIANT_HTTP,
+                "",
+                failure.category));
         release(connection);
         throw failure;
       }
@@ -122,7 +229,7 @@ public final class HttpSource {
       }
       return connection;
     }
-    throw new IOException("리다이렉트 횟수 초과");
+    throw redirectFailure(current, 0, "", 8);
   }
 
   public byte[] bytes(String url, long offset, long length, int limit) throws Exception {
@@ -246,6 +353,7 @@ public final class HttpSource {
   public static final class Document {
     public final String url, text, etag, modified, mime, disposition;
     public final long fetchedAt, length;
+    public int redirects;
 
     Document(String url, String text, HttpURLConnection response, Document previous) {
       this.url = url;
@@ -267,6 +375,29 @@ public final class HttpSource {
 
   public Document document(String url) throws Exception {
     return document(url, null);
+  }
+
+  private DownloadError redirectFailure(String url, int status, String mime, int redirects) {
+    return new DownloadError(DownloadError.Category.NETWORK)
+        .diagnostic(
+            new HlsDiagnostic(
+                url,
+                status,
+                mime,
+                redirects,
+                documentRole,
+                HlsDiagnostic.Stage.REDIRECT,
+                "",
+                DownloadError.Category.NETWORK));
+  }
+
+  public Document document(String url, Document previous, String role) throws Exception {
+    documentRole = role;
+    try {
+      return document(url, previous);
+    } finally {
+      documentRole = "";
+    }
   }
 
   public Document document(String url, Document previous) throws Exception {
@@ -291,8 +422,11 @@ public final class HttpSource {
       }
       if (out.size() == 0 || expected >= 0 && out.size() != expected)
         throw new DownloadError(DownloadError.Category.NETWORK);
-      return new Document(
-          effective, new String(out.toByteArray(), StandardCharsets.UTF_8), connection, null);
+      Document result =
+          new Document(
+              effective, new String(out.toByteArray(), StandardCharsets.UTF_8), connection, null);
+      result.redirects = lastRedirects;
+      return result;
     } finally {
       release(connection);
     }

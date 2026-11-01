@@ -36,6 +36,7 @@ class Handler(BaseHTTPRequestHandler):
    return self.reply(json.dumps(data).encode(),'application/json')
   if path=='/page':return self.reply(b'<!doctype html><title>Recovery fixture</title><h1>Recovery test</h1>','text/html')
   with LOCK:COUNTS[path]=COUNTS.get(path,0)+1
+  if path=='/task-page':return self.reply(b'<!doctype html><title>Task reload fixture</title><h1>Task reload fixture</h1>','text/html')
   if EXPIRED and token=='old':return self.send_error(403)
   if path=='/process/fail-once' and COUNTS[path]==1:return self.send_error(500)
   if path in ('/process/direct','/process/fail-once','/process/asset-123.mp4'):

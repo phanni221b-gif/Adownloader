@@ -12,3 +12,6 @@ ffmpeg -y -v error -i "$DEST/direct.mp4" -map 0:v -map 0:a -c copy -seg_duration
 
 mkdir -p "$DEST/stress"
 ffmpeg -y -v error -f lavfi -i 'color=c=pink:size=64x64:rate=1' -t 1000 -an -c:v libx264 -preset ultrafast -g 1 -bf 0 -pix_fmt yuv420p -hls_time 1 -hls_playlist_type vod -hls_segment_type fmp4 -hls_segment_filename "$DEST/stress/part%04d.m4s" "$DEST/stress/playlist.m3u8"
+
+mkdir -p "$DEST/fmp4"
+ffmpeg -y -v error -i "$DEST/direct.mp4" -map 0 -c copy -hls_time 1 -hls_playlist_type vod -hls_segment_type fmp4 "$DEST/fmp4/playlist.m3u8"

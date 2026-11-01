@@ -301,7 +301,7 @@ public final class MainActivity extends AppCompatActivity
 
   private void startDownload(MediaCandidate item) {
     MediaCandidate current = detector.latest(item.getIdentityKey());
-    MediaCandidate selected = current == null ? item : current;
+    MediaCandidate selected = detector.forDownload(current == null ? item : current);
     com.adownloader.app.jobs.DownloadJobs.get(this)
         .enqueue(
             selected,
@@ -452,6 +452,7 @@ public final class MainActivity extends AppCompatActivity
 
   @Override
   public void onCandidateAdded(MediaCandidate item, int count) {
+    if (isDestroyed() || isFinishing()) return;
     runOnUiThread(
         () -> {
           boolean first = mediaCount == 0 && count > 0;
@@ -512,7 +513,7 @@ public final class MainActivity extends AppCompatActivity
                                 com.adownloader.app.jobs.DownloadJobs.get(activity)
                                     .refresh(
                                         id,
-                                        current,
+                                        activity.detector.forDownload(current),
                                         message -> {
                                           MainActivity owner = weak.get();
                                           if (owner != null && !owner.isDestroyed())
@@ -575,8 +576,34 @@ public final class MainActivity extends AppCompatActivity
     super.onPause();
   }
 
+  public org.json.JSONObject mediaDetectionDiagnostics() {
+    org.json.JSONObject out = new org.json.JSONObject();
+    try {
+      if (detector != null && detector.detectionDiagnostics != null)
+        for (String key :
+            java.util.List.of(
+                "videoElements",
+                "blobPlayers",
+                "mediaSegments",
+                "fmp4",
+                "suspectRequests",
+                "filteredResponses",
+                "hlsCandidates",
+                "dashCandidates",
+                "activeDeepFrames",
+                "playerFrames",
+                "filterSupported"))
+          if (detector.detectionDiagnostics.has(key))
+            out.put(key, detector.detectionDiagnostics.get(key));
+    } catch (Exception ignored) {
+    }
+    return out;
+  }
+
   @Override
   protected void onDestroy() {
+    if (isFinishing() && !isChangingConfigurations() && browser != null && browserData != null)
+      browserData.saveTabs(browser.snapshotTabs(true));
     handler.removeCallbacksAndMessages(null);
     if (records != null) records.close();
     if (mediaSheet != null) mediaSheet.close();

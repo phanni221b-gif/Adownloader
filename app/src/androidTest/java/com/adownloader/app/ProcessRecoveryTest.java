@@ -555,4 +555,99 @@ public class ProcessRecoveryTest {
     }
     context.getContentResolver().delete(Uri.parse(completed.uri), null, null);
   }
+
+  @Test
+  public void taskRemovalContinuesQueueNotificationAndReloadsBrowser() throws Exception {
+    get("/reset");
+    instrumentation
+        .getUiAutomation()
+        .executeShellCommand("pm grant com.adownloader.app android.permission.POST_NOTIFICATIONS")
+        .close();
+    Activity activity =
+        instrumentation.startActivitySync(
+            new Intent(context, MainActivity.class)
+                .setData(Uri.parse(BASE + "/task-page"))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
+    java.lang.reflect.Field browserField = MainActivity.class.getDeclaredField("browser");
+    browserField.setAccessible(true);
+    com.adownloader.app.browser.BrowserSessionManager oldBrowser =
+        (com.adownloader.app.browser.BrowserSessionManager) browserField.get(activity);
+    long deadline = System.currentTimeMillis() + 15000;
+    while (!oldBrowser.tabs().get(0).url.contains("/task-page")
+        && System.currentTimeMillis() < deadline) Thread.sleep(50);
+    DownloadJobs jobs = DownloadJobs.get(context);
+    CountDownLatch ready = new CountDownLatch(1);
+    jobs.whenReady(ready::countDown);
+    assertTrue(ready.await(15, TimeUnit.SECONDS));
+    long[] ids = {-1, -1};
+    CountDownLatch saved = new CountDownLatch(2);
+    for (int n = 0; n < 2; n++) {
+      final int index = n;
+      jobs.enqueue(
+          new MediaCandidate(
+              BASE + "/process/direct",
+              MediaCandidate.MediaType.VIDEO,
+              "task-fixture",
+              BASE + "/task-page",
+              Map.of(),
+              System.currentTimeMillis(),
+              Map.of("title", "Task removal transfer")),
+          id -> {
+            ids[index] = id;
+            saved.countDown();
+          });
+    }
+    assertTrue(saved.await(10, TimeUnit.SECONDS));
+    deadline = System.currentTimeMillis() + 20000;
+    while (jobs.store.get(ids[0]).bytes < 512 * 1024 && System.currentTimeMillis() < deadline)
+      Thread.sleep(25);
+    assertEquals(DownloadJobStore.State.DOWNLOADING, jobs.store.get(ids[0]).state);
+    long before = jobs.store.get(ids[0]).bytes + jobs.store.get(ids[1]).bytes;
+    var session = oldBrowser.getSession();
+    int taskId = activity.getTaskId();
+    instrumentation.runOnMainSync(activity::finishAndRemoveTask);
+    deadline = System.currentTimeMillis() + 10000;
+    while (!activity.isDestroyed() && System.currentTimeMillis() < deadline) Thread.sleep(50);
+    assertTrue(activity.isDestroyed());
+    assertFalse(session.isOpen());
+    assertTrue(oldBrowser.tabs().isEmpty());
+    assertNull(session.getNavigationDelegate());
+    assertTrue(
+        context.getSystemService(ActivityManager.class).getAppTasks().stream()
+            .noneMatch(t -> t.getTaskInfo().taskId == taskId));
+    Thread.sleep(500);
+    assertTrue(
+        "Task removal must not pause the transfer",
+        jobs.store.get(ids[0]).bytes + jobs.store.get(ids[1]).bytes > before);
+    assertTrue(
+        "Transfer notification survives recents removal",
+        Arrays.stream(context.getSystemService(NotificationManager.class).getActiveNotifications())
+            .anyMatch(n -> n.getId() == JobNotifications.SUMMARY));
+    deadline = System.currentTimeMillis() + 45000;
+    while (System.currentTimeMillis() < deadline) {
+      if (jobs.store.get(ids[0]).state == DownloadJobStore.State.COMPLETED
+          && jobs.store.get(ids[1]).state == DownloadJobStore.State.COMPLETED) break;
+      Thread.sleep(100);
+    }
+    for (long id : ids) assertEquals(DownloadJobStore.State.COMPLETED, jobs.store.get(id).state);
+    int pageRequests = get("/stats").getJSONObject("counts").optInt("/task-page");
+    Activity reopened =
+        instrumentation.startActivitySync(
+            new Intent(context, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    try {
+      var next = (com.adownloader.app.browser.BrowserSessionManager) browserField.get(reopened);
+      assertNotSame(session, next.getSession());
+      deadline = System.currentTimeMillis() + 15000;
+      while (get("/stats").getJSONObject("counts").optInt("/task-page") <= pageRequests
+          && System.currentTimeMillis() < deadline) Thread.sleep(100);
+      assertTrue(get("/stats").getJSONObject("counts").optInt("/task-page") > pageRequests);
+      assertTrue(next.tabs().get(0).url.contains("/task-page"));
+      for (long id : ids) {
+        assertEquals(DownloadJobStore.State.COMPLETED, jobs.store.get(id).state);
+        context.getContentResolver().delete(Uri.parse(jobs.store.get(id).uri), null, null);
+      }
+    } finally {
+      instrumentation.runOnMainSync(reopened::finish);
+    }
+  }
 }
