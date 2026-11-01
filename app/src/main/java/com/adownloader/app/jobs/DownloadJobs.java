@@ -102,6 +102,7 @@ public final class DownloadJobs {
     if (host == owner) {
       host = null;
       permitted = false;
+      stop();
     }
   }
 

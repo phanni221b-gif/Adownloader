@@ -11,8 +11,24 @@ import com.google.android.material.button.MaterialButton;
 public final class UiSheets {
   private UiSheets() {}
 
+  private static final java.util.Map<
+          Activity, java.util.List<java.lang.ref.WeakReference<BottomSheetDialog>>>
+      openSheets = new java.util.WeakHashMap<>();
+
+  public static void close(Activity activity) {
+    var sheets = openSheets.remove(activity);
+    if (sheets != null)
+      for (var reference : sheets) {
+        var dialog = reference.get();
+        if (dialog != null && dialog.isShowing()) dialog.dismiss();
+      }
+  }
+
   public static BottomSheetDialog show(Activity activity, View content, boolean tall) {
     BottomSheetDialog dialog = new BottomSheetDialog(activity);
+    var sheets = openSheets.computeIfAbsent(activity, key -> new java.util.ArrayList<>());
+    sheets.removeIf(reference -> reference.get() == null || !reference.get().isShowing());
+    sheets.add(new java.lang.ref.WeakReference<>(dialog));
     int left = content.getPaddingLeft(),
         top = content.getPaddingTop(),
         right = content.getPaddingRight(),

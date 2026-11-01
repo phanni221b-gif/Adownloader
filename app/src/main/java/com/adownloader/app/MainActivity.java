@@ -580,6 +580,7 @@ public final class MainActivity extends AppCompatActivity
     handler.removeCallbacksAndMessages(null);
     if (records != null) records.close();
     if (mediaSheet != null) mediaSheet.close();
+    UiSheets.close(this);
     if (folds != null) folds.close();
     if (popups != null) popups.close();
     if (mediaExtension != null) mediaExtension.close();

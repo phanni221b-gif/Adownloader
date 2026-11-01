@@ -42,7 +42,10 @@ public final class RecordsController implements SharedPreferences.OnSharedPrefer
   private final SharedPreferences prefs;
   private List<JSONObject> all = new ArrayList<>();
   private List<JSONObject> ownedVideos = new ArrayList<>();
-  private boolean disposed, loading, pendingRefresh;
+  private volatile boolean disposed;
+  private boolean loading, pendingRefresh;
+  private final ConcurrentMap<String, CancellationSignal> thumbnailRequests =
+      new ConcurrentHashMap<>();
   private int filter = R.id.filter_all;
 
   public RecordsController(Activity activity) {
@@ -329,6 +332,7 @@ public final class RecordsController implements SharedPreferences.OnSharedPrefer
   }
 
   private void thumbnail(ImageView view, JSONObject row) {
+    if (disposed) return;
     String uri = row.optString("uri");
     view.setTag(uri);
     view.setImageResource(R.drawable.ic_media);
@@ -346,24 +350,33 @@ public final class RecordsController implements SharedPreferences.OnSharedPrefer
       view.setImageBitmap(cached);
       return;
     }
+    CancellationSignal signal = new CancellationSignal();
+    if (thumbnailRequests.putIfAbsent(uri, signal) != null) return;
+    java.lang.ref.WeakReference<ImageView> target = new java.lang.ref.WeakReference<>(view);
+    Context application = activity.getApplicationContext();
     images.execute(
         () -> {
           try {
+            if (disposed) return;
             Bitmap bitmap =
-                activity
+                application
                     .getContentResolver()
-                    .loadThumbnail(Uri.parse(uri), new Size(480, 270), null);
+                    .loadThumbnail(Uri.parse(uri), new Size(480, 270), signal);
+            if (disposed) return;
             thumbnails.put(uri, bitmap);
             main.post(
                 () -> {
-                  if (!disposed && uri.equals(view.getTag())) {
-                    view.setImageTintList(null);
-                    view.setPadding(0, 0, 0, 0);
-                    view.setScaleType(ImageView.ScaleType.CENTER_CROP);
-                    view.setImageBitmap(bitmap);
+                  ImageView image = target.get();
+                  if (!disposed && image != null && uri.equals(image.getTag())) {
+                    image.setImageTintList(null);
+                    image.setPadding(0, 0, 0, 0);
+                    image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                    image.setImageBitmap(bitmap);
                   }
                 });
           } catch (Exception ignored) {
+          } finally {
+            thumbnailRequests.remove(uri, signal);
           }
         });
   }
@@ -584,6 +597,9 @@ public final class RecordsController implements SharedPreferences.OnSharedPrefer
     prefs.unregisterOnSharedPreferenceChangeListener(this);
     main.removeCallbacksAndMessages(null);
     io.shutdownNow();
+    thumbnailRequests.values().forEach(CancellationSignal::cancel);
+    thumbnailRequests.clear();
     images.shutdownNow();
+    thumbnails.evictAll();
   }
 }

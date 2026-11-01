@@ -523,6 +523,81 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
     return job.pid == Process.myPid() && PROCESS_TOKEN.equals(job.owner);
   }
 
+  public synchronized Uri ensurePending(long id, String name, String mime) throws DownloadError {
+    Job job = get(id);
+    if (job == null) throw new DownloadError(DownloadError.Category.STORAGE);
+    if (!job.pending.isEmpty()) return Uri.parse(job.pending);
+    try {
+      ContentValues values = new ContentValues();
+      values.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+      values.put(MediaStore.MediaColumns.MIME_TYPE, mime);
+      values.put(
+          MediaStore.MediaColumns.RELATIVE_PATH,
+          (mime.startsWith("audio/")
+                  ? android.os.Environment.DIRECTORY_MUSIC
+                  : android.os.Environment.DIRECTORY_MOVIES)
+              + "/Adownloader");
+      values.put(MediaStore.MediaColumns.IS_PENDING, 1);
+      Uri collection =
+          mime.startsWith("audio/")
+              ? MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+              : MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
+      Uri uri = context.getContentResolver().insert(collection, values);
+      if (uri == null) throw new DownloadError(DownloadError.Category.STORAGE);
+      pending(id, uri.toString());
+      return uri;
+    } catch (DownloadError error) {
+      throw error;
+    } catch (Exception storage) {
+      throw new DownloadError(DownloadError.Category.STORAGE);
+    }
+  }
+
+  /** Reclaims only app-owned unpublished rows in our two directories, never published media. */
+  private void cleanupOrphanPending() {
+    Set<Long> referenced = new HashSet<>();
+    for (Job job : list())
+      for (String uri : new String[] {job.pending, job.uri})
+        if (uri != null && !uri.isEmpty())
+          try {
+            referenced.add(ContentUris.parseId(Uri.parse(uri)));
+          } catch (Exception invalid) {
+          }
+    Uri collection = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
+    try (Cursor cursor =
+        context
+            .getContentResolver()
+            .query(
+                MediaStore.setIncludePending(collection),
+                new String[] {MediaStore.MediaColumns._ID},
+                MediaStore.MediaColumns.OWNER_PACKAGE_NAME
+                    + "=? AND "
+                    + MediaStore.MediaColumns.IS_PENDING
+                    + "=1 AND "
+                    + MediaStore.MediaColumns.RELATIVE_PATH
+                    + " IN (?,?)",
+                new String[] {
+                  context.getPackageName(), "Movies/Adownloader/", "Music/Adownloader/"
+                },
+                null)) {
+      while (cursor != null && cursor.moveToNext()) {
+        long id = cursor.getLong(0);
+        if (!referenced.contains(id))
+          context
+              .getContentResolver()
+              .delete(
+                  ContentUris.withAppendedId(collection, id),
+                  MediaStore.MediaColumns.IS_PENDING
+                      + "=1 AND "
+                      + MediaStore.MediaColumns.OWNER_PACKAGE_NAME
+                      + "=?",
+                  new String[] {context.getPackageName()});
+      }
+    } catch (Exception providerUnavailable) {
+      /* The next startup retries; completed rows are never targeted. */
+    }
+  }
+
   public synchronized void reconcile() {
     for (Job j : list()) {
       if (j.state == State.CANCELED || j.state == State.COMPLETED) {
@@ -574,6 +649,7 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
           state(j.id, State.NEEDS_REFRESH, "AUTH");
         }
     }
+    cleanupOrphanPending();
   }
 
   public synchronized void migrate() {

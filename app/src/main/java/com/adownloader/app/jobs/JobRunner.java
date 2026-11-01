@@ -181,29 +181,7 @@ public final class JobRunner {
   }
 
   private Uri ensurePending(long id, String name, String mime) throws Exception {
-    DownloadJobStore.Job job = store.get(id);
-    Uri uri = job.pending.isEmpty() ? null : Uri.parse(job.pending);
-    if (uri == null) {
-      ContentValues values = new ContentValues();
-      values.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
-      values.put(MediaStore.MediaColumns.MIME_TYPE, mime);
-      values.put(
-          MediaStore.MediaColumns.RELATIVE_PATH,
-          (mime.startsWith("audio/") ? Environment.DIRECTORY_MUSIC : Environment.DIRECTORY_MOVIES)
-              + "/Adownloader");
-      values.put(MediaStore.MediaColumns.IS_PENDING, 1);
-      uri =
-          context
-              .getContentResolver()
-              .insert(
-                  mime.startsWith("audio/")
-                      ? MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-                      : MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
-                  values);
-      if (uri == null) throw new DownloadError(DownloadError.Category.STORAGE);
-      store.pending(id, uri.toString());
-    }
-    return uri;
+    return store.ensurePending(id, name, mime);
   }
 
   private Uri publish(long id, DownloadEngine.Result result, String name, TransferControl control)

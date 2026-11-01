@@ -136,4 +136,62 @@ public class StreamingIntegrationTest {
       fixture.stop();
     }
   }
+
+  @Test
+  public void startupDeletesOnlyUnreferencedOwnedPendingRows() throws Exception {
+    Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+    var store = com.adownloader.app.jobs.DownloadJobs.get(context).store;
+    java.util.concurrent.CountDownLatch ready = new java.util.concurrent.CountDownLatch(1);
+    com.adownloader.app.jobs.DownloadJobs.get(context).whenReady(ready::countDown);
+    assertTrue(ready.await(15, java.util.concurrent.TimeUnit.SECONDS));
+    long id =
+        store.enqueue(
+            "orphan-reconcile-fixture",
+            "VIDEO",
+            "Protected pending fixture.mp4",
+            "localhost",
+            new org.json.JSONObject()
+                .put("url", "https://example.invalid/media.mp4")
+                .put("headers", new org.json.JSONObject()));
+    Uri protectedUri = store.ensurePending(id, "Protected pending fixture.mp4", "video/mp4"),
+        orphan = null,
+        published = null;
+    store.state(id, com.adownloader.app.jobs.DownloadJobStore.State.PAUSED, "");
+    try {
+      ContentValues values = new ContentValues();
+      values.put(MediaStore.MediaColumns.DISPLAY_NAME, "Orphan-fixture.mp4");
+      values.put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4");
+      values.put(MediaStore.MediaColumns.RELATIVE_PATH, "Movies/Adownloader");
+      values.put(MediaStore.MediaColumns.IS_PENDING, 1);
+      orphan =
+          context.getContentResolver().insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values);
+      assertNotNull(orphan);
+      values.put(MediaStore.MediaColumns.DISPLAY_NAME, "Published-fixture.mp4");
+      values.put(MediaStore.MediaColumns.IS_PENDING, 0);
+      published =
+          context.getContentResolver().insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values);
+      assertNotNull(published);
+      store.reconcile();
+      try (var cursor =
+          context
+              .getContentResolver()
+              .query(orphan, new String[] {MediaStore.MediaColumns._ID}, null, null, null)) {
+        assertTrue(cursor == null || !cursor.moveToFirst());
+      }
+      for (Uri kept : new Uri[] {protectedUri, published})
+        try (var cursor =
+            context
+                .getContentResolver()
+                .query(kept, new String[] {MediaStore.MediaColumns._ID}, null, null, null)) {
+          assertNotNull(cursor);
+          assertTrue(cursor.moveToFirst());
+        }
+    } finally {
+      store.state(id, com.adownloader.app.jobs.DownloadJobStore.State.CANCELED, "");
+      store.cleanup(id);
+      store.clearTerminal(com.adownloader.app.jobs.DownloadJobStore.State.CANCELED);
+      if (orphan != null) context.getContentResolver().delete(orphan, null, null);
+      if (published != null) context.getContentResolver().delete(published, null, null);
+    }
+  }
 }

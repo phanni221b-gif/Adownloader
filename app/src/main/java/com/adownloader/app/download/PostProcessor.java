@@ -156,21 +156,27 @@ public final class PostProcessor {
           // If there is a separate audio source, avoid duplicate audio from the video source.
           if (sources.size() > 1 && sources.indexOf(input) == 0 && mime.startsWith("audio/"))
             continue;
-          map.put(t, muxer.addTrack(format));
+          try {
+            map.put(t, muxer.addTrack(format));
+          } catch (IllegalArgumentException unsupported) {
+            throw new DownloadError(DownloadError.Category.UNSUPPORTED_CODEC);
+          }
           extractor.selectTrack(t);
           if (format.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE))
             maxInput = Math.max(maxInput, format.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE));
         }
-        if (map.isEmpty()) throw new IOException("병합할 트랙이 없습니다");
+        if (map.isEmpty()) throw new DownloadError(DownloadError.Category.UNSUPPORTED_FORMAT);
       }
-      if (maxInput > 64 * 1024 * 1024) throw new IOException("미디어 샘플 크기 제한 초과");
+      if (maxInput > 64 * 1024 * 1024)
+        throw new DownloadError(DownloadError.Category.UNSUPPORTED_FORMAT);
       ByteBuffer buffer = ByteBuffer.allocateDirect((int) maxInput);
       MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
       long firstTime = Long.MAX_VALUE;
       for (MediaExtractor extractor : extractors)
         if (extractor.getSampleTrackIndex() >= 0)
           firstTime = Math.min(firstTime, extractor.getSampleTime());
-      if (firstTime == Long.MAX_VALUE) throw new IOException("미디어 샘플 없음");
+      if (firstTime == Long.MAX_VALUE)
+        throw new DownloadError(DownloadError.Category.UNSUPPORTED_FORMAT);
       muxer.start();
       started = true;
       while (true) {
@@ -192,7 +198,8 @@ public final class PostProcessor {
           throw new DownloadError(DownloadError.Category.DRM);
         long size = source.getSampleSize();
         if (size > buffer.capacity()) {
-          if (size > 64 * 1024 * 1024) throw new IOException("미디어 샘플 크기 제한 초과");
+          if (size > 64 * 1024 * 1024)
+            throw new DownloadError(DownloadError.Category.UNSUPPORTED_FORMAT);
           buffer = ByteBuffer.allocateDirect((int) size);
         }
         buffer.clear();
