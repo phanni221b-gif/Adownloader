@@ -33,6 +33,7 @@ jobs:
           node ci/test-media-extension.cjs
           node ci/test-deep-detection.cjs
           node ci/test-content-extension.cjs
+          node ci/test-session-context.cjs
           gradle :app:testDebugUnitTest :app:lintRelease :app:assembleRelease --stacktrace
       - uses: actions/upload-artifact@v4
         if: always()

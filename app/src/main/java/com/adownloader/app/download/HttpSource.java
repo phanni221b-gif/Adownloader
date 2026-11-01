@@ -39,6 +39,7 @@ public final class HttpSource implements AutoCloseable {
     return this;
   }
 
+  private boolean browserBootstrapped;
   private CookieListener cookieListener;
 
   public HttpSource onCookies(CookieListener listener) {
@@ -51,7 +52,7 @@ public final class HttpSource implements AutoCloseable {
   }
 
   public boolean hasResponseCookies() {
-    return cookies.hasResponseCookies();
+    return cookies.hasResponseCookies() || browserBootstrapped;
   }
 
   @Override
@@ -595,6 +596,21 @@ public final class HttpSource implements AutoCloseable {
           "native",
           "NATIVE_INITIAL",
           lastSentNames.getOrDefault(url, java.util.List.of()));
+      if (d.text.contains("#EXT-X-STREAM-INF:")) {
+        var proof = MediaNetworkSession.latest(url, topPage);
+        MediaNetworkSession.trace(
+            "MASTER_MANIFEST",
+            d.url,
+            "native",
+            d.status,
+            d.redirects,
+            d.mime,
+            "HLS",
+            lastSentNames.getOrDefault(d.url, java.util.List.of()),
+            proof == null ? java.util.List.of() : proof.headerNames(),
+            proof != null,
+            "NATIVE_INITIAL");
+      }
       return d;
     } catch (Exception first) {
       if (!access(first)) throw first;
@@ -633,10 +649,6 @@ public final class HttpSource implements AutoCloseable {
             || response.body().length == 0
             || url.startsWith("https:") && !response.url().startsWith("https:"))
           throw new DownloadError(DownloadError.Category.ACCESS_BLOCKED);
-        for (var entry : response.responseCookies().entrySet())
-          if (cookies.accept(
-                  java.net.URI.create(entry.getKey()), Map.of("Set-Cookie", entry.getValue()))
-              && cookieListener != null) cookieListener.changed(cookies.snapshot());
         if (!response.requestHeaders().isEmpty()) {
           adoptContext(response.url(), response.requestHeaders());
           if (contextListener != null)
@@ -647,6 +659,11 @@ public final class HttpSource implements AutoCloseable {
           adoptContext(response.url(), fresh.headers());
           if (contextListener != null) contextListener.changed(response.url(), fresh.headers());
         }
+        browserBootstrapped = true;
+        for (var entry : response.responseCookies().entrySet())
+          if (cookies.accept(
+                  java.net.URI.create(entry.getKey()), Map.of("Set-Cookie", entry.getValue()))
+              && cookieListener != null) cookieListener.changed(cookies.snapshot());
         Document d = new Document(response);
         record(
             url,

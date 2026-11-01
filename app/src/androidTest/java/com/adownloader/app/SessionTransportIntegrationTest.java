@@ -80,6 +80,52 @@ public class SessionTransportIntegrationTest {
         if (at > 0)
           h.put(line.substring(0, at).toLowerCase(Locale.ROOT), line.substring(at + 1).trim());
       }
+      if (path.startsWith("/cookie/")) {
+        boolean root = path.endsWith("master.m3u8"), variant = path.endsWith("variant.m3u8");
+        String jar = h.getOrDefault("cookie", "");
+        boolean ok =
+            root
+                || jar.contains("boot=PRIVATE_BOOT")
+                    && (variant || jar.contains("stage=PRIVATE_STAGE"));
+        String text =
+            root
+                ? "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=100\nvariant.m3u8\n"
+                : variant ? "#EXTM3U\n#EXTINF:1,\npiece.ts\n#EXT-X-ENDLIST\n" : "DATA";
+        String set =
+            root
+                ? "Set-Cookie: boot=PRIVATE_BOOT; Path=/cookie/\r\n"
+                : variant ? "Set-Cookie: stage=PRIVATE_STAGE; Path=/cookie/\r\n" : "";
+        respond(
+            c,
+            ok ? 200 : 403,
+            "application/vnd.apple.mpegurl",
+            set,
+            text.getBytes(StandardCharsets.UTF_8));
+        return;
+      }
+      if (path.equals("/redirect.m3u8")) {
+        respond(
+            c,
+            302,
+            "text/plain",
+            "Location: http://localhost:" + server.getLocalPort() + "/foreign.m3u8\r\n",
+            new byte[0]);
+        return;
+      }
+      if (path.equals("/foreign.m3u8")) {
+        boolean clean =
+            !h.containsKey("authorization")
+                && !h.containsKey("x-playback-token")
+                && !h.containsKey("cookie")
+                && !h.containsKey("origin");
+        respond(
+            c,
+            clean ? 200 : 403,
+            "application/vnd.apple.mpegurl",
+            "",
+            "#EXTM3U\n#EXT-X-ENDLIST\n".getBytes(StandardCharsets.UTF_8));
+        return;
+      }
       boolean page = path.startsWith("/watch"),
           root = path.endsWith(".m3u8"),
           browser = "cors".equals(h.get("sec-fetch-mode"));
@@ -125,6 +171,64 @@ public class SessionTransportIntegrationTest {
                   .getBytes(StandardCharsets.US_ASCII));
       c.getOutputStream().write(body);
     } catch (Exception ignored) {
+    }
+  }
+
+  void respond(Socket c, int status, String mime, String extra, byte[] body) throws IOException {
+    c.getOutputStream()
+        .write(
+            ("HTTP/1.1 "
+                    + status
+                    + " OK\r\nContent-Type: "
+                    + mime
+                    + "\r\n"
+                    + extra
+                    + "Content-Length: "
+                    + body.length
+                    + "\r\nConnection: close\r\n\r\n")
+                .getBytes(StandardCharsets.US_ASCII));
+    c.getOutputStream().write(body);
+  }
+
+  @Test
+  public void rootSetCookieReachesVariantThenSegmentAndSurvivesSnapshot() throws Exception {
+    mode = "native";
+    String url = base + "/cookie/master.m3u8";
+    String snapshot;
+    try (HttpSource source = new HttpSource(url, Map.of())) {
+      assertTrue(source.document(url, null, "root").text.contains("STREAM-INF"));
+      assertTrue(
+          source
+              .document(base + "/cookie/variant.m3u8", null, "variant")
+              .text
+              .contains("piece.ts"));
+      snapshot = source.hasResponseCookies() ? "ready" : "";
+      var c = source.open(base + "/cookie/piece.ts", 0, -1);
+      try {
+        assertEquals(200, c.getResponseCode());
+      } finally {
+        source.release(c);
+      }
+    }
+    assertEquals("ready", snapshot);
+  }
+
+  @Test
+  public void foreignRedirectStripsRootAuthenticationAndCookies() throws Exception {
+    mode = "native";
+    try (HttpSource source =
+        new HttpSource(
+            base + "/redirect.m3u8",
+            Map.of(
+                "Authorization",
+                auth,
+                "X-Playback-Token",
+                token,
+                "Cookie",
+                cookie,
+                "Origin",
+                base))) {
+      assertEquals(1, source.document(base + "/redirect.m3u8", null, "root").redirects);
     }
   }
 
