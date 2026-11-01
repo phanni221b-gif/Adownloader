@@ -9,3 +9,6 @@ ffmpeg -y -v error -i "$DEST/direct.mp4" -map 0:v -c copy -hls_time 1 -hls_playl
 ffmpeg -y -v error -i "$DEST/direct.mp4" -map 0:a -c copy -hls_time 1 -hls_playlist_type vod "$DEST/audio.m3u8"
 printf '#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="default",DEFAULT=YES,URI="audio.m3u8"\n#EXT-X-STREAM-INF:BANDWIDTH=500000,RESOLUTION=160x90,FRAME-RATE=24,AUDIO="audio"\nvideo.m3u8\n' > "$DEST/master.m3u8"
 ffmpeg -y -v error -i "$DEST/direct.mp4" -map 0:v -map 0:a -c copy -seg_duration 1 -use_template 1 -use_timeline 1 -f dash "$DEST/manifest.mpd"
+
+mkdir -p "$DEST/stress"
+ffmpeg -y -v error -f lavfi -i 'color=c=pink:size=64x64:rate=1' -t 1000 -an -c:v libx264 -preset ultrafast -g 1 -bf 0 -pix_fmt yuv420p -hls_time 1 -hls_playlist_type vod -hls_segment_type fmp4 -hls_segment_filename "$DEST/stress/part%04d.m4s" "$DEST/stress/playlist.m3u8"

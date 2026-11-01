@@ -1,194 +1,436 @@
 package com.adownloader.app.browser;
 
 import android.content.Context;
+import com.adownloader.app.media.MediaDetector;
+import java.util.*;
+import java.util.function.BiConsumer;
+import org.json.*;
+import org.mozilla.geckoview.*;
 
-import org.mozilla.geckoview.GeckoResult;
-import org.mozilla.geckoview.GeckoRuntime;
-import org.mozilla.geckoview.GeckoSession;
-import org.mozilla.geckoview.GeckoView;
-
-import java.util.List;
-
-/** Owns GeckoRuntime/GeckoSession lifecycle and exposes only browser actions to the Activity. */
+/** Bounded retained Gecko sessions; each tab owns navigation trust and media context. */
 public final class BrowserSessionManager {
-    public interface Listener {
-        void onLocationChanged(String url);
-        void onNavigationStateChanged(boolean canGoBack, boolean canGoForward);
-        void onPageProgress(int progress);
-        void onPopupRequested(String url);
-        void onBrowserCrashed();
+  public interface Listener {
+    void onLocationChanged(String url);
+
+    void onNavigationStateChanged(boolean back, boolean forward);
+
+    void onPageProgress(int progress);
+
+    void onPopupRequested(String url);
+
+    void onBrowserCrashed();
+
+    default void onPageFinished(String url, String title) {}
+
+    default void onTabSelected(MediaDetector detector, String url) {}
+
+    default void onContextLink(String url) {}
+  }
+
+  public static final class Tab {
+    public final GeckoSession session = new GeckoSession();
+    public final MediaDetector detector;
+    private final NavigationPolicy policy = new NavigationPolicy();
+    public String url = "about:blank", title = "";
+    private String state;
+    private boolean back, forward;
+    private int progress = 100;
+
+    private Tab(MediaDetector.Listener listener) {
+      detector = new MediaDetector(listener);
     }
+  }
 
-    private static volatile GeckoRuntime runtime;
+  private static volatile GeckoRuntime runtime;
+  private final GeckoView view;
+  private final Listener listener;
+  private final List<Tab> tabs = new ArrayList<>();
+  private Tab active;
+  private boolean visible = true, constructing = true;
+  private BiConsumer<GeckoSession, Boolean> observer;
 
-    private final GeckoView geckoView;
-    private final Listener listener;
-    private GeckoSession session;
-    private boolean canGoBack;
-    private boolean canGoForward;
-    private String latestState;
-    private String location;
-    private long intentionalNavigationUntil;
-
-    public BrowserSessionManager(Context context, GeckoView geckoView, Listener listener) {
-        this.geckoView = geckoView;
-        this.listener = listener;
-        if (runtime == null) {
-            synchronized (BrowserSessionManager.class) {
-                if (runtime == null) runtime = GeckoRuntime.create(context.getApplicationContext());
-            }
-        }
-        createSession();
+  public BrowserSessionManager(Context context, GeckoView view, Listener listener) {
+    this.view = view;
+    this.listener = listener;
+    synchronized (BrowserSessionManager.class) {
+      if (runtime == null) runtime = GeckoRuntime.create(context.getApplicationContext());
     }
+    newTab(null);
+    constructing = false;
+  }
 
-    private void createSession() {
-        GeckoSession newSession = new GeckoSession();
-        newSession.setNavigationDelegate(new GeckoSession.NavigationDelegate() {
-            @Override
-            public void onLocationChange(GeckoSession geckoSession,
-                                         String url,
-                                         List<GeckoSession.PermissionDelegate.ContentPermission> perms,
-                                         Boolean hasUserGesture) {
-                location = url;
-                if (listener != null && url != null) listener.onLocationChanged(url);
-            }
+  public List<Tab> tabs() {
+    return Collections.unmodifiableList(new ArrayList<>(tabs));
+  }
 
-            @Override
-            public void onCanGoBack(GeckoSession geckoSession, boolean value) {
-                canGoBack = value;
-                emitNavigationState();
-            }
+  public MediaDetector getDetector() {
+    return active == null ? null : active.detector;
+  }
 
-            @Override
-            public void onCanGoForward(GeckoSession geckoSession, boolean value) {
-                canGoForward = value;
-                emitNavigationState();
-            }
+  public MediaDetector detectorFor(GeckoSession session) {
+    for (Tab tab : tabs) if (tab.session == session) return tab.detector;
+    return null;
+  }
 
-            @Override
-            public GeckoResult<org.mozilla.geckoview.AllowOrDeny> onLoadRequest(
-                    GeckoSession geckoSession,
-                    GeckoSession.NavigationDelegate.LoadRequest request) {
-                if (request.hasUserGesture || request.isDirectNavigation) intentionalNavigationUntil = android.os.SystemClock.elapsedRealtime() + 10_000;
-                String scheme = android.net.Uri.parse(request.uri).getScheme();
-                if (!("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme) || "about".equalsIgnoreCase(scheme))) {
-                    if (listener != null) listener.onPopupRequested(request.uri);
-                    return GeckoResult.deny();
-                }
-                if (request.target == GeckoSession.NavigationDelegate.TARGET_WINDOW_NEW) {
-                    if (listener != null) listener.onPopupRequested(request.uri);
-                    return GeckoResult.deny();
-                }
-                // Permit normal link/login redirect chains. Gate unsolicited cross-site page takeovers.
-                if (!request.hasUserGesture && !request.isDirectNavigation && location != null &&
-                        android.os.SystemClock.elapsedRealtime() > intentionalNavigationUntil &&
-                        !sameHost(location, request.uri)) {
-                    if (listener != null) listener.onPopupRequested(request.uri);
-                    return GeckoResult.deny();
-                }
-                return null;
-            }
+  public void setSessionObserver(BiConsumer<GeckoSession, Boolean> value) {
+    observer = value;
+    if (value != null) for (Tab tab : tabs) value.accept(tab.session, true);
+  }
 
-            @Override
-            public GeckoResult<GeckoSession> onNewSession(GeckoSession geckoSession, String uri) {
-                // Fallback for popups that do not expose TARGET_WINDOW_NEW first.
-                if (listener != null) listener.onPopupRequested(uri);
-                return null;
+  public boolean newTab(String url) {
+    if (tabs.size() >= 5) return false;
+    final Tab[] owner = new Tab[1];
+    Tab tab =
+        new Tab(
+            (candidate, count) -> {
+              if (active == owner[0] && listener instanceof MediaDetector.Listener)
+                ((MediaDetector.Listener) listener).onCandidateAdded(candidate, count);
+            });
+    owner[0] = tab;
+    tabs.add(tab);
+    tab.session.setNavigationDelegate(
+        new GeckoSession.NavigationDelegate() {
+          @Override
+          public void onLocationChange(
+              GeckoSession source,
+              String value,
+              List<GeckoSession.PermissionDelegate.ContentPermission> permissions,
+              Boolean gesture) {
+            tab.url = value == null ? "about:blank" : value;
+            tab.state = SafeSessionState.visit(tab.state, tab.url, tab.title);
+            tab.policy.committed(tab.url);
+            if (active == tab && listener != null) listener.onLocationChanged(tab.url);
+          }
+
+          @Override
+          public void onCanGoBack(GeckoSession source, boolean value) {
+            tab.back = value;
+            if (active == tab) emitNavigation();
+          }
+
+          @Override
+          public void onCanGoForward(GeckoSession source, boolean value) {
+            tab.forward = value;
+            if (active == tab) emitNavigation();
+          }
+
+          @Override
+          public GeckoResult<AllowOrDeny> onLoadRequest(GeckoSession source, LoadRequest request) {
+            String scheme = android.net.Uri.parse(request.uri).getScheme();
+            boolean web = "http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme);
+            if ((!web && !"about".equalsIgnoreCase(scheme))
+                || request.target == TARGET_WINDOW_NEW
+                || !tab.policy.allow(
+                    "about:blank".equals(tab.url) ? null : tab.url,
+                    request.uri,
+                    request.hasUserGesture,
+                    request.isDirectNavigation,
+                    request.isRedirect)) {
+              if (active == tab && listener != null) listener.onPopupRequested(request.uri);
+              return GeckoResult.deny();
             }
+            return null;
+          }
+
+          @Override
+          public GeckoResult<GeckoSession> onNewSession(GeckoSession source, String uri) {
+            if (active == tab && listener != null) listener.onPopupRequested(uri);
+            return null;
+          }
+
+          @Override
+          public GeckoResult<String> onLoadError(
+              GeckoSession source, String uri, WebRequestError error) {
+            tab.policy.failed(uri);
+            return null;
+          }
         });
+    tab.session.setProgressDelegate(
+        new GeckoSession.ProgressDelegate() {
+          @Override
+          public void onPageStart(GeckoSession source, String uri) {
+            tab.policy.started(uri);
+          }
 
-        newSession.setProgressDelegate(new GeckoSession.ProgressDelegate() {
-            @Override public void onSessionStateChange(GeckoSession source, GeckoSession.SessionState state) { latestState = state.toString(); }
-            @Override
-            public void onProgressChange(GeckoSession geckoSession, int progress) {
-                if (listener != null) listener.onPageProgress(progress);
-            }
+          @Override
+          public void onPageStop(GeckoSession source, boolean success) {
+            tab.policy.stopped();
+            if (success && listener != null) listener.onPageFinished(tab.url, tab.title);
+          }
+
+          @Override
+          public void onSessionStateChange(GeckoSession source, GeckoSession.SessionState state) {
+            applyHistory(tab, state);
+          }
+
+          @Override
+          public void onProgressChange(GeckoSession source, int progress) {
+            tab.progress = progress;
+            if (active == tab && listener != null) listener.onPageProgress(progress);
+          }
         });
+    tab.session.setContentDelegate(
+        new GeckoSession.ContentDelegate() {
+          @Override
+          public void onContextMenu(GeckoSession source, int x, int y, ContextElement element) {
+            String target = element.linkUri != null ? element.linkUri : element.srcUri;
+            if (active == tab && listener != null && SafeSessionState.safeUrl(target))
+              listener.onContextLink(target);
+          }
 
-        newSession.setContentDelegate(new GeckoSession.ContentDelegate() {
-            @Override
-            public void onCrash(GeckoSession geckoSession) {
-                if (listener != null) listener.onBrowserCrashed();
-            }
+          @Override
+          public void onTitleChange(GeckoSession source, String title) {
+            tab.title = title == null ? "" : title.substring(0, Math.min(300, title.length()));
+            tab.state = SafeSessionState.visit(tab.state, tab.url, tab.title);
+          }
 
-            @Override
-            public void onKill(GeckoSession geckoSession) {
-                if (listener != null) listener.onBrowserCrashed();
-            }
+          @Override
+          public void onCrash(GeckoSession source) {
+            if (active == tab && listener != null) listener.onBrowserCrashed();
+          }
+
+          @Override
+          public void onKill(GeckoSession source) {
+            if (active == tab && listener != null) listener.onBrowserCrashed();
+          }
         });
+    tab.session.setHistoryDelegate(
+        new GeckoSession.HistoryDelegate() {
+          @Override
+          public void onHistoryStateChange(GeckoSession source, HistoryList history) {
+            applyHistory(tab, history);
+          }
+        });
+    tab.session.open(runtime);
+    if (observer != null) observer.accept(tab.session, true);
+    selectTab(tabs.size() - 1);
+    if (url != null) load(url);
+    return true;
+  }
 
-        newSession.open(runtime);
-        session = newSession;
-        geckoView.setSession(newSession);
+  public void selectTab(int index) {
+    if (index < 0 || index >= tabs.size()) return;
+    Tab next = tabs.get(index);
+    if (active == next) return;
+    if (active != null) {
+      active.session.setActive(false);
+      runtime.getWebExtensionController().setTabActive(active.session, false);
+      view.releaseSession();
     }
+    active = next;
+    view.setSession(next.session);
+    next.session.setActive(visible);
+    runtime.getWebExtensionController().setTabActive(next.session, true);
+    if (listener != null && !constructing) {
+      listener.onTabSelected(next.detector, next.url);
+      listener.onLocationChanged(next.url);
+      listener.onPageProgress(next.progress);
+    }
+    emitNavigation();
+  }
 
-    public GeckoRuntime getRuntime() {
-        return runtime;
+  public void closeTab(int index) {
+    if (index < 0 || index >= tabs.size()) return;
+    Tab tab = tabs.get(index);
+    boolean wasActive = active == tab;
+    if (wasActive) {
+      view.releaseSession();
+      active = null;
     }
+    tabs.remove(index);
+    if (observer != null) observer.accept(tab.session, false);
+    tab.session.close();
+    tab.detector.reset();
+    if (tabs.isEmpty()) newTab(null);
+    else if (wasActive) selectTab(Math.min(index, tabs.size() - 1));
+  }
 
-    public GeckoSession getSession() {
-        return session;
-    }
+  public GeckoRuntime getRuntime() {
+    return runtime;
+  }
 
-    public void load(String url) {
-        intentionalNavigationUntil = android.os.SystemClock.elapsedRealtime() + 10_000;
-        if (session != null && url != null && !url.isBlank()) session.loadUri(url);
-    }
+  public GeckoSession getSession() {
+    return active == null ? null : active.session;
+  }
 
-    public void reload() {
-        if (session != null) session.reload();
-    }
+  public String getTitle() {
+    return active == null ? "" : active.title;
+  }
 
-    public void goBack() {
-        if (session != null && canGoBack) session.goBack();
+  public void load(String url) {
+    if (active != null && url != null && !url.isBlank()) {
+      active.policy.beginUserNavigation(url);
+      active.session.loadUri(url);
     }
+  }
 
-    public void goForward() {
-        if (session != null && canGoForward) session.goForward();
+  public void reload() {
+    if (active != null) {
+      active.policy.beginUserNavigation(active.url);
+      active.session.reload();
     }
+  }
 
-    public boolean canGoBack() {
-        return canGoBack;
+  public void goBack() {
+    if (active != null && active.back) {
+      active.state = SafeSessionState.shift(active.state, -1);
+      active.policy.beginUserNavigation(SafeSessionState.currentUrl(active.state));
+      active.session.goBack();
     }
+  }
 
-    public void recover(String url) {
-        try {
-            GeckoSession old = geckoView.releaseSession();
-            if (old != null) old.close();
-        } catch (Throwable ignored) {
-        }
-        canGoBack = false;
-        canGoForward = false;
-        createSession();
-        if (url != null && !url.isBlank()) load(url);
+  public void goForward() {
+    if (active != null && active.forward) {
+      active.state = SafeSessionState.shift(active.state, 1);
+      active.policy.beginUserNavigation(SafeSessionState.currentUrl(active.state));
+      active.session.goForward();
     }
+  }
 
-    public void close() {
-        try {
-            GeckoSession old = geckoView.releaseSession();
-            if (old != null) old.close();
-        } catch (Throwable ignored) {
-        }
-        session = null;
-    }
+  public boolean canGoBack() {
+    return active != null && active.back;
+  }
 
-    public void setActive(boolean active) { if (session != null) session.setActive(active); }
+  public boolean isDesktop() {
+    return active != null
+        && active.session.getSettings().getUserAgentMode()
+            == GeckoSessionSettings.USER_AGENT_MODE_DESKTOP;
+  }
 
-    public void save(java.util.function.Consumer<String> consumer) {
-        if (latestState != null) consumer.accept(latestState);
-    }
+  public void setDesktop(boolean desktop) {
+    if (active == null) return;
+    var settings = active.session.getSettings();
+    settings.setUserAgentMode(
+        desktop
+            ? GeckoSessionSettings.USER_AGENT_MODE_DESKTOP
+            : GeckoSessionSettings.USER_AGENT_MODE_MOBILE);
+    settings.setViewportMode(
+        desktop
+            ? GeckoSessionSettings.VIEWPORT_MODE_DESKTOP
+            : GeckoSessionSettings.VIEWPORT_MODE_MOBILE);
+    reload();
+  }
 
-    public boolean restore(String state) {
-        if (state == null) return false;
-        try { session.restoreState(GeckoSession.SessionState.fromString(state)); return true; }
-        catch (Exception ignored) { return false; }
+  public void recover(String url) {
+    if (active == null) {
+      newTab(url);
+      return;
     }
+    int index = tabs.indexOf(active);
+    Tab old = active;
+    view.releaseSession();
+    active = null;
+    tabs.remove(old);
+    if (observer != null) observer.accept(old.session, false);
+    old.session.close();
+    newTab(url);
+    Tab replacement = active;
+    tabs.remove(replacement);
+    tabs.add(Math.min(index, tabs.size()), replacement);
+  }
 
-    private void emitNavigationState() {
-        if (listener != null) listener.onNavigationStateChanged(canGoBack, canGoForward);
+  public void close() {
+    view.releaseSession();
+    active = null;
+    for (Tab tab : tabs) {
+      if (observer != null) observer.accept(tab.session, false);
+      tab.session.close();
     }
-    private boolean sameHost(String first, String second) {
-        String a = android.net.Uri.parse(first).getHost(), b = android.net.Uri.parse(second).getHost();
-        return a != null && a.equalsIgnoreCase(b);
+    tabs.clear();
+  }
+
+  public void setActive(boolean value) {
+    visible = value;
+    if (active != null) active.session.setActive(value);
+  }
+
+  public void save(java.util.function.Consumer<String> callback) {
+    if (active != null) callback.accept(active.state);
+  }
+
+  public String snapshotTabs() {
+    try {
+      JSONArray saved = new JSONArray();
+      for (Tab tab : tabs) {
+        saved.put(
+            new JSONObject()
+                .put("url", SafeSessionState.safeUrl(tab.url) ? tab.url : "about:blank")
+                .put("title", tab.title.substring(0, Math.min(300, tab.title.length())))
+                .put("session", tab.state)
+                .put(
+                    "desktop",
+                    tab.session.getSettings().getUserAgentMode()
+                        == GeckoSessionSettings.USER_AGENT_MODE_DESKTOP));
+      }
+      return new JSONObject().put("tabs", saved).put("active", tabs.indexOf(active)).toString();
+    } catch (Exception ignored) {
+      return null;
     }
+  }
+
+  public boolean restoreTabs(JSONObject snapshot) {
+    if (snapshot == null) return false;
+    JSONArray saved = snapshot.optJSONArray("tabs");
+    if (saved == null || saved.length() == 0) return false;
+    for (int i = 0; i < Math.min(5, saved.length()); i++) {
+      JSONObject item = saved.optJSONObject(i);
+      if (item == null) continue;
+      if (i > 0) newTab(null);
+      boolean desktop = item.optBoolean("desktop");
+      active
+          .session
+          .getSettings()
+          .setUserAgentMode(
+              desktop
+                  ? GeckoSessionSettings.USER_AGENT_MODE_DESKTOP
+                  : GeckoSessionSettings.USER_AGENT_MODE_MOBILE);
+      active
+          .session
+          .getSettings()
+          .setViewportMode(
+              desktop
+                  ? GeckoSessionSettings.VIEWPORT_MODE_DESKTOP
+                  : GeckoSessionSettings.VIEWPORT_MODE_MOBILE);
+      if (!restore(item.optString("session", null))) {
+        String target = item.optString("url");
+        if (SafeSessionState.safeUrl(target)) load(target);
+      }
+    }
+    selectTab(Math.max(0, Math.min(tabs.size() - 1, snapshot.optInt("active", 0))));
+    return true;
+  }
+
+  public boolean restore(String state) {
+    String safe = SafeSessionState.sanitizeLegacy(state);
+    if (safe == null || active == null) return false;
+    try {
+      JSONObject history = new JSONObject(safe).getJSONObject("history");
+      String target =
+          history
+              .getJSONArray("entries")
+              .getJSONObject(history.getInt("index") - 1)
+              .getString("url");
+      active.policy.beginUserNavigation(target);
+      active.state = safe;
+      active.session.restoreState(GeckoSession.SessionState.fromString(safe));
+      return true;
+    } catch (Exception ignored) {
+      return false;
+    }
+  }
+
+  private void emitNavigation() {
+    if (listener != null)
+      listener.onNavigationStateChanged(
+          active != null && active.back, active != null && active.forward);
+  }
+
+  private void applyHistory(Tab tab, GeckoSession.HistoryDelegate.HistoryList history) {
+    String safe = SafeSessionState.capture(history);
+    if (safe != null && tab.url.equals(SafeSessionState.currentUrl(safe))) {
+      if (tab.back && history.getCurrentIndex() == 0) return;
+      if (tab.forward && history.getCurrentIndex() == history.size() - 1) return;
+      tab.state = safe;
+    }
+  }
 }

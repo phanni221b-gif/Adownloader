@@ -1,56 +1,42 @@
 # Adownloader
 
-Java-only Android app shell with bundled GeckoView 159.0.20261022150525. Android System WebView is not used. Android 11+; ARM64 release for Galaxy Fold devices. No account, ads SDK, billing, vault, cloud backend, VPN, filter-list service or DRM bypass.
+An Android 11+ video download browser with bundled Gecko, a Java application codebase and an ARM64 release for modern Galaxy Fold devices. Android System WebView is not used. The engine version has one source: [`geckoVersion` in gradle.properties](gradle.properties); Gradle also generates the version shown in App info and Device Diagnostics.
 
-## Components
+## v0.6 reliability
 
-- `MainActivity`: address/navigation shell, media chooser, downloads history, system/keyboard/cutout insets and external player intents.
-- `BrowserSessionManager`: Gecko runtime/session ownership, navigation and explicit crash recovery, persisted back/forward session state. One browsing tab in this release.
-- `PopupController`: default-deny new windows and external-app schemes, open once or grant the initiating site. Unsolicited cross-host navigations are gated outside an intentional navigation/redirect chain. Grants can be reset in Settings.
-- `MediaExtensionManager` + bundled `media_sniffer`: Mozilla `ensureBuiltIn` and background native messaging. `webRequest` Content-Type observation plus DOM/Performance fallback. No page-injected native Java bridge.
-- `MediaDetector`: bounded request candidate list, enriched response context and per-navigation clearing.
-- `DownloadService`: queued foreground jobs, progress/completion notifications, private bounded job history and pending MediaStore publication. Browser closure does not stop downloads. Android can stop long dataSync services; interrupted jobs require restarting.
-- `DownloadEngine`, `ManifestParser`, `HttpSource`, `PostProcessor`: browser-independent fetching, static VOD planning, retries and size/range checks, Android MediaExtractor/MediaMuxer sample copy, then track/duration/seek sample validation. No media encoder is created.
+- SQLite job queue survives process termination. Real pause, resume, cancel and retry controls are available in the download list and notifications; one worker runs at a time.
+- Per-installation Android Keystore AES-256-GCM protects source URLs, minimal request headers and durable segment plans. No bearer-token collection, browser cookie-jar export or plaintext secret fallback.
+- Direct transfers verify the saved prefix and HTTP Range/If-Range validators. Changed or non-resumable sources restart safely. HLS/DASH reuse hash-verified committed segments and the saved maximum-quality plan.
+- Android 14+ uses user-initiated data-transfer jobs; Android 11–13 uses an owned foreground service. Interrupted work is reconciled honestly and can be resumed. Completion follows actual track, duration and seek validation.
+- Direct media streams into a pending MediaStore descriptor. Segments remain separate and a virtual source feeds sample-copy mux directly to the pending descriptor, avoiding aggregate files and a second private final copy.
+- Expired URLs enter NEEDS_REFRESH. A newly detected compatible source can be linked after validating identity and transfer/segment compatibility.
 
-## Original-quality behavior
+## Browser and detection
 
-HLS chooses resolution (pixel area), then frame rate, then average/peak bandwidth. A selected external default audio group is also downloaded. Static DASH chooses the maximum original video representation and maximum bitrate audio representation; both are muxed. HLS TS, fMP4, byte ranges and identity AES-128 are supported. DASH SegmentTemplate (Number/Time, padding, inherited attributes, timelines including bounded negative repeats), SegmentList and full-file BaseURL are supported. Direct MP4/WebM files are preserved bit for bit; other supported containers are repacked without encoding.
+Up to five retained Gecko sessions keep their own media candidates and navigation state. Desktop/mobile mode, find, encrypted history/bookmarks, long-press link actions and actual site/all browsing-data deletion are included. UI/theme/window changes retain sessions. Safe persisted history excludes forms, passwords and opaque page state.
 
-Encrypted sample/DRM tracks, SAMPLE-AES, dynamic/live manifests, HLS gaps/discontinuities, multi-Period DASH and unsupported platform muxer codecs fail with an error. There is no quality downgrade fallback. Individual buffered segments are limited to 64 MiB and manifests to 8 MiB. Whole-file DASH BaseURL and direct downloads stream to disk. Android container/codec support remains a practical limit; exotic streams may be rejected.
+New windows are blocked by default with block/open-once/site-permission controls. User-started redirect chains can cross login hosts until actual commit; unsolicited takeover and external-app schemes remain controlled. System filters such as Unicorn Pro/NordVPN are left in charge of network filtering; no internal filter-list service or VPN is added.
 
-The extension retains only Referer/Origin/User-Agent, plus cookies on actual media-classified requests. It never exports a browser cookie jar or captures Authorization headers. Cookies remain in memory, are attached only to the original media origin and are dropped on cross-origin redirects. Required cookies for extensionless non-media-classified requests may be unavailable; those authenticated sites may fail. Download URLs/headers are not saved in history or logged.
+The built-in WebExtension uses Mozilla ensureBuiltIn/native messaging, response MIME and DOM/Performance observations. A bounded temporary request-ID cache forwards Cookie/Referer/Origin/User-Agent only after a response is recognized as media. Logical grouping preserves semantic query parameters and keeps the latest complete signed URL with its own headers. Shared bounded manifest probing avoids unnecessary preview/transfer duplication. File names prefer Content-Disposition, page title and URL name, with sanitization and collision handling.
 
-## Build and validation
+## Original-quality behavior and limits
 
-JDK 17, Gradle 9.6.0, Android platform 37.2 (required by Gecko AAR), build tools 36.0.0. Own app sources are Java; Gecko dependencies may contain Kotlin runtime libraries.
+HLS chooses resolution, then FPS, then bitrate, with the selected default external audio group. Static DASH chooses the highest video and audio representations. Supported plans include HLS TS/fMP4, ranges and identity AES-128, and DASH SegmentTemplate/Timeline, SegmentList and full-file BaseURL. Direct MP4/WebM preserves source bytes; required container conversion uses sample-copy remux. No encoder is instantiated and no lower-quality fallback hides a failure.
 
-```sh
-./gradlew :app:testDebugUnitTest :app:lintRelease :app:assembleRelease
-```
+DRM/SAMPLE-AES, live recording, HLS GAP/discontinuity and multiple-Period DASH are rejected explicitly. The platform-only pipeline does not guarantee rolling-window recording or cross-period timestamp/codec normalization. Alternate audio/subtitle rendition metadata is recognized; embedded subtitle downloads and arbitrary language selection are not offered. Unsupported platform containers/codecs can fail safely. FFmpeg is used only to generate synthetic test assets, never included in the application.
 
-The tracked launcher artwork is the supplied pink 3D icon, with an adaptive icon wrapper. No generated replacement artwork is used. `ci/ic_launcher_xxxhdpi.webp.b64` is retained as its source backup.
+Downloads are saved to Movies/Adownloader or Music/Adownloader. Cancellation removes private workspace and unpublished media; clearing completed history preserves published files. Startup orphan cleanup only targets app-owned unpublished rows in those two directories.
 
-CI also runs Android 36 x86_64 integration tests (`-PtestAbi=x86_64` is for the emulator only): bit-exact MP4 copy, HLS TS remux, DASH video/audio mux, seek/track validation and actual Gecko native-message detection. The release job always uses the default ARM64 ABI. CI checks native Gecko inclusion and the single MainActivity launcher. This is not a Samsung Fold physical-device test.
+## Fold and privacy
 
-## Fixed signing and publishing
+WindowManager uses physical hinge/posture information for grids, browser panes and sheets. Narrow/expanded/landscape/multi-window/keyboard layouts keep system insets. Device Diagnostics lets the user inspect/share only version, Android/model, display/window/insets/posture and enum-only error categories. It excludes URLs, hostnames, cookies, exception text and serial identifiers.
 
-The private RSA-4096 key is never in this repository, logs, artifacts or Releases. It is retained separately with a Windows-DPAPI protected password. The public certificate and SHA-256 fingerprint accompany each release. Signing is intentionally local; GitHub has no signing secret configured by this change. CI only uploads explicitly unsigned build artifacts and never publishes them as installable Releases.
+No account, cloud backend, ads/analytics SDK, billing, vault or advanced internal player. Completion opens the user's default external player. The original supplied pink 3D icon is retained.
 
-```powershell
-./ci/sign-release.ps1 -UnsignedApk app/build/outputs/apk/release/app-release-unsigned.apk -OutputApk Adownloader-v0.5.0-arm64.apk -AndroidSdk <SDK-path> -KeyDirectory <private-key-directory>
-```
+## Build and verification
 
-The script reuses the existing key, refuses to regenerate it, aligns native libraries to 16 KiB, signs with APK v2/v3 and verifies the result. Android 11+ does not require v1 signing. Keep the keystore and a recoverable password backup for all future updates. DPAPI password files can only be decrypted under the same Windows account/machine; export a password backup to a password manager before migrating PCs. A new key cannot update an old installation signed by another key.
+JDK 17, Gradle wrapper and Android SDK 37.2/build-tools 36 are required. Run `node ci/test-media-extension.cjs`, `./gradlew :app:testDebugUnitTest :app:lintRelease :app:assembleRelease`, then the Android integration/process-recovery harness described in [TESTING.md](TESTING.md). Test media is synthetic. [ARCHITECTURE.md](ARCHITECTURE.md) documents the schema, encryption, scheduler, resume and format decisions.
 
-Publish only the verified signed APK, checksum, public certificate, verification report and release notes. Never publish key material.
+CI builds an unsigned ARM64 artifact. Release signing uses the existing locally protected RSA-4096 key via `ci/sign-release.ps1`; private keys/passwords are never committed or uploaded. Dependency updates are weekly reviewable PRs with no auto-merge. Engine upgrades require the complete unit/integration/UI/package checks.
 
-Mozilla integration reference: https://firefox-source-docs.mozilla.org/mobile/android/geckoview/consumer/web-extensions.html
-Android media APIs: https://developer.android.com/reference/android/media/MediaMuxer
-
-## v0.5 UI layer
-
-Four XML-backed screens share one retained GeckoView. MainActivity owns only shell/lifecycle wiring; ui/ controllers own media sheets, downloads/library, settings and UI telemetry. Switching sections never creates a browser session. Light/dark configuration changes rebind the shell while reparenting the same GeckoView. Actual system/cutout/keyboard insets are applied once at the shell.
-
-DownloadService only exports UI progress and safe host/type/MediaStore metadata into the existing private bounded history; its completion intent also respects the default external player. DownloadEngine, HttpSource, ManifestParser, PostProcessor, BrowserSessionManager, MediaExtensionManager, MediaDetector and extension scripts are unchanged from v0.4. PopupController retains its policy with a bottom-sheet presentation and repeat-request debounce. No browser cookies or request URLs are persisted in download history.
-
-UI automation additionally verifies sheets, address navigation, browser-session identity across sections/themes/window resizing, actual completed-file library and external ACTION_VIEW, popup block/open-once/site grants, and relaunch persistence. The CI integration artifact includes phone/Fold-size screenshots in light and dark themes. These are emulator sizes, not a physical Galaxy Fold8 certification. Unknown byte totals/speeds/ETA are deliberately omitted rather than invented; current engine callbacks expose phase and percent. Audio/video container and quality selection are unchanged.
+Emulator evidence is not physical Galaxy Fold8 certification. Actual device installation, hours-long transfers, VPN/filter combinations and a locally installed Owl player require device-side checks. See the release's validation report for the exact tested commit, APK hash and signing-certificate fingerprint.

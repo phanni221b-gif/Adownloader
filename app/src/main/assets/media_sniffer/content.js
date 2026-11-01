@@ -1,5 +1,10 @@
 (() => {
+  if (window.top === window) browser.runtime.sendMessage({kind:"bind"}).then(binding => {
+    if (binding && Number.isInteger(binding.tabId)) return browser.runtime.sendNativeMessage("adownloader",{kind:"bind",tabId:binding.tabId});
+  }).catch(()=>{});
   const sent = new Set();
+  let lastPage="";
+  function reportPage(){const key=location.href+"|"+document.title;if(key===lastPage)return;lastPage=key;browser.runtime.sendMessage({kind:"page-meta",pageUrl:location.href,pageTitle:(document.title||"").slice(0,300)}).catch(()=>{}); }
 
   function report(url, source, contentType) {
     if (!url || typeof url !== "string") return;
@@ -13,6 +18,7 @@
       url,
       contentType: contentType || "",
       source: source || "page-scan",
+      pageTitle: (document.title||"").slice(0,300),
       pageUrl: location.href
     }).catch(() => {});
   }
@@ -47,7 +53,7 @@
   }
 
   try {
-    const observer = new MutationObserver(scanDom);
+    const observer = new MutationObserver(()=>{reportPage();scanDom();});
     observer.observe(document.documentElement || document, {
       childList: true,
       subtree: true,
