@@ -149,6 +149,85 @@ public final class HttpSource {
     throw last;
   }
 
+  public interface Decoder {
+    InputStream wrap(InputStream input) throws Exception;
+  }
+
+  /** Segments stream to a staging file; retries always replace an incomplete attempt. */
+  public void stream(String url, long offset, long length, File file, Decoder decoder)
+      throws Exception {
+    Exception last = null;
+    for (int attempt = 0; attempt < 3; attempt++) {
+      HttpURLConnection connection = null;
+      try {
+        connection = open(url, offset, length);
+        long expected = connection.getContentLengthLong();
+        if (expected > 0 && expected > file.getParentFile().getUsableSpace() - 8L * 1024 * 1024)
+          throw new DownloadError(DownloadError.Category.STORAGE);
+        CountingInput raw = new CountingInput(connection.getInputStream());
+        try (InputStream input = decoder == null ? raw : decoder.wrap(raw);
+            FileOutputStream output = new FileOutputStream(file)) {
+          byte[] buffer = new byte[128 * 1024];
+          int n;
+          long written = 0;
+          while ((n = input.read(buffer)) != -1) {
+            control.check();
+            try {
+              output.write(buffer, 0, n);
+            } catch (IOException storage) {
+              throw new DownloadError(DownloadError.Category.STORAGE);
+            }
+            written += n;
+          }
+          control.check();
+          if (written <= 0
+              || expected >= 0 && raw.count != expected
+              || length > 0 && raw.count != length)
+            throw new DownloadError(DownloadError.Category.NETWORK);
+          try {
+            output.getFD().sync();
+          } catch (IOException storage) {
+            throw new DownloadError(DownloadError.Category.STORAGE);
+          }
+        }
+        return;
+      } catch (Exception error) {
+        control.check();
+        if (error instanceof DownloadError
+            && ((DownloadError) error).category != DownloadError.Category.NETWORK
+            && ((DownloadError) error).category != DownloadError.Category.SERVER) throw error;
+        last = error;
+        if (attempt < 2) Thread.sleep(300L * (attempt + 1));
+      } finally {
+        if (connection != null) release(connection);
+      }
+    }
+    if (last instanceof DownloadError) throw last;
+    throw new DownloadError(DownloadError.Category.NETWORK);
+  }
+
+  private static final class CountingInput extends FilterInputStream {
+    long count;
+
+    CountingInput(InputStream input) {
+      super(input);
+    }
+
+    @Override
+    public int read() throws IOException {
+      int value = in.read();
+      if (value >= 0) count++;
+      return value;
+    }
+
+    @Override
+    public int read(byte[] buffer, int offset, int length) throws IOException {
+      int n = in.read(buffer, offset, length);
+      if (n > 0) count += n;
+      return n;
+    }
+  }
+
   public static final class Document {
     public final String url, text, etag, modified, mime, disposition;
     public final long fetchedAt, length;

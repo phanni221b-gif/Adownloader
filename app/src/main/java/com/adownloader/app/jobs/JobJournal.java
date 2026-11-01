@@ -9,6 +9,8 @@ import org.json.*;
 public final class JobJournal implements EngineCheckpoint {
   private final DownloadJobStore store;
   private final long id;
+  private List<ManifestParser.Track> cachedPlan;
+  private boolean planLoaded;
 
   public JobJournal(DownloadJobStore store, long id) {
     this.store = store;
@@ -25,8 +27,12 @@ public final class JobJournal implements EngineCheckpoint {
 
   @Override
   public List<ManifestParser.Track> loadPlan() throws Exception {
-    JSONObject request = store.request(id);
-    return request.has("plan") ? PlanCodec.decode(request.getJSONArray("plan")) : null;
+    if (!planLoaded) {
+      JSONObject request = store.request(id);
+      cachedPlan = request.has("plan") ? PlanCodec.decode(request.getJSONArray("plan")) : null;
+      planLoaded = true;
+    }
+    return cachedPlan;
   }
 
   @Override
@@ -34,6 +40,8 @@ public final class JobJournal implements EngineCheckpoint {
     JSONObject request = store.request(id);
     request.put("plan", PlanCodec.encode(tracks));
     store.writeContext(id, request);
+    cachedPlan = tracks;
+    planLoaded = true;
   }
 
   public void verifyAll() throws Exception {

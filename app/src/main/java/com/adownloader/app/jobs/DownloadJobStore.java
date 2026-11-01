@@ -195,7 +195,12 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
 
   public synchronized Job get(long id) {
     try (Cursor cursor =
-        getReadableDatabase().rawQuery("SELECT * FROM jobs WHERE id=?", new String[] {"" + id})) {
+        getReadableDatabase()
+            .rawQuery(
+                "SELECT"
+                    + " id,identity,type,name,host,state,created,updated,bytes,total,percent,segment,segments,phase,error,pending,uri,etag,modified,hash,pid,has_page,owner"
+                    + " FROM jobs WHERE id=?",
+                new String[] {"" + id})) {
       return cursor.moveToFirst() ? read(cursor) : null;
     }
   }
@@ -205,7 +210,9 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
     try (Cursor cursor =
         getReadableDatabase()
             .rawQuery(
-                "SELECT * FROM jobs ORDER BY CASE state WHEN 'PREPARING' THEN 0 WHEN 'DOWNLOADING'"
+                "SELECT"
+                    + " id,identity,type,name,host,state,created,updated,bytes,total,percent,segment,segments,phase,error,pending,uri,etag,modified,hash,pid,has_page,owner"
+                    + " FROM jobs ORDER BY CASE state WHEN 'PREPARING' THEN 0 WHEN 'DOWNLOADING'"
                     + " THEN 0 WHEN 'FINALIZING' THEN 0 WHEN 'QUEUED' THEN 1 ELSE 2 END,CASE WHEN"
                     + " state='QUEUED' THEN priority END DESC,CASE WHEN state='QUEUED' THEN created"
                     + " END ASC,created DESC",

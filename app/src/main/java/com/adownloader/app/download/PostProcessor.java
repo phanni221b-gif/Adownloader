@@ -86,18 +86,57 @@ public final class PostProcessor {
   }
 
   public static void mux(List<File> files, File output, TransferControl control) throws Exception {
+    List<Source> sources = new ArrayList<>();
+    for (File file : files)
+      sources.add(extractor -> extractor.setDataSource(file.getAbsolutePath()));
+    muxPrepared(
+        sources,
+        () -> new MediaMuxer(output.getAbsolutePath(), MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4),
+        control);
+  }
+
+  public static void muxSources(
+      List<android.media.MediaDataSource> inputs, File output, TransferControl control)
+      throws Exception {
+    List<Source> sources = new ArrayList<>();
+    for (var input : inputs) sources.add(extractor -> extractor.setDataSource(input));
+    muxPrepared(
+        sources,
+        () -> new MediaMuxer(output.getAbsolutePath(), MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4),
+        control);
+  }
+
+  public static void muxSources(
+      List<android.media.MediaDataSource> inputs,
+      java.io.FileDescriptor output,
+      TransferControl control)
+      throws Exception {
+    List<Source> sources = new ArrayList<>();
+    for (var input : inputs) sources.add(extractor -> extractor.setDataSource(input));
+    muxPrepared(
+        sources,
+        () -> new MediaMuxer(output, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4),
+        control);
+  }
+
+  private interface MuxerFactory {
+    MediaMuxer create() throws Exception;
+  }
+
+  private static void muxPrepared(
+      List<Source> sources, MuxerFactory factory, TransferControl control) throws Exception {
     control.check();
     List<MediaExtractor> extractors = new ArrayList<>();
     List<Map<Integer, Integer>> maps = new ArrayList<>();
     MediaMuxer muxer = null;
     boolean started = false;
     try {
-      muxer = new MediaMuxer(output.getAbsolutePath(), MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
+      muxer = factory.create();
       long maxInput = 4 * 1024 * 1024;
-      for (File file : files) {
+      for (Source input : sources) {
         MediaExtractor extractor = new MediaExtractor();
         extractors.add(extractor);
-        extractor.setDataSource(file.getAbsolutePath());
+        input.apply(extractor);
         if (extractor.getPsshInfo() != null && !extractor.getPsshInfo().isEmpty())
           throw new IOException("DRM 트랙은 지원하지 않습니다");
         Map<Integer, Integer> map = new HashMap<>();
@@ -107,7 +146,8 @@ public final class PostProcessor {
           String mime = format.getString(MediaFormat.KEY_MIME);
           if (mime == null || !(mime.startsWith("video/") || mime.startsWith("audio/"))) continue;
           // If there is a separate audio source, avoid duplicate audio from the video source.
-          if (files.size() > 1 && files.indexOf(file) == 0 && mime.startsWith("audio/")) continue;
+          if (sources.size() > 1 && sources.indexOf(input) == 0 && mime.startsWith("audio/"))
+            continue;
           map.put(t, muxer.addTrack(format));
           extractor.selectTrack(t);
           if (format.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE))
