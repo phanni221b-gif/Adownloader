@@ -6,6 +6,18 @@ import org.junit.Test;
 
 public class NavigationPolicyTest {
   @Test
+  public void explicitAddressNavigationDoesNotRequireGeckoGesture() {
+    NavigationPolicy policy = new NavigationPolicy();
+    policy.beginUserNavigation("https://a.test/watch?token=one");
+    assertFalse(policy.allow("https://old.test", "https://ads.test", false, false, false));
+    assertTrue(policy.allow(null, "https://a.test/watch?token=one", false, false, false));
+    assertTrue(policy.allow(null, "https://auth.test", false, false, true));
+    assertTrue(policy.allow(null, "https://callback.test", false, false, true));
+    policy.committed();
+    assertFalse(policy.allow("https://callback.test", "https://ads.test", false, false, false));
+  }
+
+  @Test
   public void redirectsFollowUserChainUntilCommit() {
     NavigationPolicy policy = new NavigationPolicy();
     policy.beginUserNavigation();

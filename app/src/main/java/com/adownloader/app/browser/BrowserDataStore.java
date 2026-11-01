@@ -15,7 +15,8 @@ public final class BrowserDataStore implements AutoCloseable {
   private static final long AAD = -600;
   private final Context context;
   private final AtomicFile file;
-  private final ExecutorService worker = Executors.newSingleThreadExecutor();
+  // Application-owned serialization also orders old-Activity saves before a new Activity reads.
+  private static final ExecutorService worker = Executors.newSingleThreadExecutor();
   private final Handler main = new Handler(Looper.getMainLooper());
   private JSONObject data;
   private volatile boolean closed;
@@ -177,6 +178,6 @@ public final class BrowserDataStore implements AutoCloseable {
   @Override
   public void close() {
     closed = true;
-    worker.shutdown();
+    main.removeCallbacksAndMessages(null);
   }
 }

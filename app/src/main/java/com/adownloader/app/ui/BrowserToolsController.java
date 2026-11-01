@@ -274,7 +274,9 @@ public final class BrowserToolsController implements AutoCloseable {
             activity,
             R.drawable.ic_block,
             all ? "전체 브라우징 데이터 삭제" : "현재 사이트 데이터 삭제",
-            all ? "쿠키·캐시·사이트 저장소·방문 기록을 지웁니다." : host + "의 쿠키·캐시·사이트 저장소를 지웁니다.",
+            all
+                ? "열린 탭을 닫고 쿠키·캐시·사이트 저장소·방문 기록을 지웁니다."
+                : "열린 탭을 닫고 " + host + "의 쿠키·캐시·사이트 저장소를 지웁니다.",
             "취소",
             "삭제",
             () -> {
@@ -297,13 +299,13 @@ public final class BrowserToolsController implements AutoCloseable {
               operation.accept(
                   done -> {
                     if (all) data.clearHistory();
-                    if (!closed) {
+                    if (!activity.isDestroyed()) {
                       browser.recover(null);
                       message("브라우징 데이터를 삭제했습니다.");
                     }
                   },
                   error -> {
-                    if (!closed) {
+                    if (!activity.isDestroyed()) {
                       browser.recover(null);
                       message("데이터를 삭제하지 못했습니다. 다시 시도해 주세요.");
                     }

@@ -95,7 +95,7 @@ public final class BrowserSessionManager {
               List<GeckoSession.PermissionDelegate.ContentPermission> permissions,
               Boolean gesture) {
             tab.url = value == null ? "about:blank" : value;
-            tab.policy.committed();
+            tab.policy.committed(tab.url);
             if (active == tab && listener != null) listener.onLocationChanged(tab.url);
           }
 
@@ -229,14 +229,14 @@ public final class BrowserSessionManager {
 
   public void load(String url) {
     if (active != null && url != null && !url.isBlank()) {
-      active.policy.beginUserNavigation();
+      active.policy.beginUserNavigation(url);
       active.session.loadUri(url);
     }
   }
 
   public void reload() {
     if (active != null) {
-      active.policy.beginUserNavigation();
+      active.policy.beginUserNavigation(active.url);
       active.session.reload();
     }
   }
@@ -359,7 +359,13 @@ public final class BrowserSessionManager {
     String safe = SafeSessionState.sanitizeLegacy(state);
     if (safe == null || active == null) return false;
     try {
-      active.policy.beginUserNavigation();
+      JSONObject history = new JSONObject(safe).getJSONObject("history");
+      String target =
+          history
+              .getJSONArray("entries")
+              .getJSONObject(history.getInt("index") - 1)
+              .getString("url");
+      active.policy.beginUserNavigation(target);
       active.session.restoreState(GeckoSession.SessionState.fromString(safe));
       return true;
     } catch (Exception ignored) {

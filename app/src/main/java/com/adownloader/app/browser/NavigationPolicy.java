@@ -5,13 +5,25 @@ import java.net.URI;
 /** Trust belongs to one user-initiated document load, never to an elapsed-time window. */
 public final class NavigationPolicy {
   private boolean trusted;
+  private String expected;
 
   public void beginUserNavigation() {
     trusted = true;
   }
 
+  public void beginUserNavigation(String target) {
+    trusted = true;
+    expected = target;
+  }
+
   public void committed() {
     trusted = false;
+    expected = null;
+  }
+
+  public void committed(String target) {
+    trusted = false;
+    if (expected != null && sameTarget(expected, target)) expected = null;
   }
 
   public void stopped() {
@@ -22,15 +34,34 @@ public final class NavigationPolicy {
       String current, String target, boolean gesture, boolean direct, boolean redirect) {
     if (gesture || direct) {
       trusted = true;
+      expected = null;
       return true;
     }
     if (redirect) return trusted || sameOrigin(current, target);
+    if (expected != null && sameTarget(expected, target)) {
+      expected = null;
+      trusted = true;
+      return true;
+    }
     // A script-initiated load cannot borrow trust from another pending navigation.
     if (current == null || sameOrigin(current, target)) {
       trusted = false;
       return true;
     }
     return false;
+  }
+
+  private static boolean sameTarget(String a, String b) {
+    try {
+      URI first = URI.create(a), second = URI.create(b);
+      return sameOrigin(a, b)
+          && (first.getRawPath().isEmpty() ? "/" : first.getRawPath())
+              .equals(second.getRawPath().isEmpty() ? "/" : second.getRawPath())
+          && java.util.Objects.equals(first.getRawQuery(), second.getRawQuery())
+          && java.util.Objects.equals(first.getRawUserInfo(), second.getRawUserInfo());
+    } catch (RuntimeException ignored) {
+      return false;
+    }
   }
 
   private static boolean sameOrigin(String a, String b) {

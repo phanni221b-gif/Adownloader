@@ -305,4 +305,35 @@ public class BrowserCompatibilityTest {
       store.close();
     }
   }
+
+  @Test
+  public void sanitizedSessionRestoresActualBackHistory() throws Exception {
+    open("/tab-0");
+    awaitTitle("tab-0");
+    BrowserSessionManager manager = browser();
+    app.runOnMainSync(() -> manager.load(base + "/tab-1"));
+    awaitTitle("tab-1");
+    AtomicReference<String> saved = new AtomicReference<>();
+    long end = System.currentTimeMillis() + 10000;
+    while (System.currentTimeMillis() < end) {
+      app.runOnMainSync(() -> manager.save(saved::set));
+      if (saved.get() != null
+          && new JSONObject(saved.get()).getJSONObject("history").getJSONArray("entries").length()
+              >= 2) break;
+      Thread.sleep(50);
+    }
+    assertNotNull(saved.get());
+    String state = saved.get();
+    app.runOnMainSync(
+        () -> {
+          manager.recover(null);
+          assertTrue(manager.restore(state));
+        });
+    awaitTitle("tab-1");
+    end = System.currentTimeMillis() + 10000;
+    while (!manager.canGoBack() && System.currentTimeMillis() < end) Thread.sleep(50);
+    assertTrue(manager.canGoBack());
+    app.runOnMainSync(manager::goBack);
+    awaitTitle("tab-0");
+  }
 }
