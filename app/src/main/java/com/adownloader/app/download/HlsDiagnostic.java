@@ -83,7 +83,7 @@ public final class HlsDiagnostic {
         .diagnostic(
             new HlsDiagnostic(
                 doc.url,
-                200,
+                doc.status,
                 doc.mime,
                 doc.redirects,
                 role,
@@ -108,7 +108,13 @@ public final class HlsDiagnostic {
         stage == Stage.ATTRIBUTE && role.equals("master")
             ? "EXT-X-STREAM-INF"
             : stage == Stage.SEGMENT_URI ? "EXTINF" : "";
+    if (message.equals("HLS_INIT_CHANGE")) tag = "EXT-X-MAP";
+    else if (message.equals("HLS_SESSION_KEY")) tag = "EXT-X-SESSION-KEY";
+    else if (message.equals("HLS_DELTA_PLAYLIST")) tag = "EXT-X-SKIP";
+    else if (c == DownloadError.Category.HLS_GAP) tag = "EXT-X-GAP";
+    else if (c == DownloadError.Category.HLS_DISCONTINUITY) tag = "EXT-X-DISCONTINUITY";
     return new DownloadError(c)
-        .diagnostic(new HlsDiagnostic(doc.url, 200, doc.mime, doc.redirects, role, stage, tag, c));
+        .diagnostic(
+            new HlsDiagnostic(doc.url, doc.status, doc.mime, doc.redirects, role, stage, tag, c));
   }
 }

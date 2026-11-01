@@ -110,4 +110,33 @@ public class JobCookieJarTest {
     assertNull(contexts.forUrl("https://cdn.test/stream/one.ts").get("Authorization"));
     contexts.close();
   }
+
+  @Test
+  public void responseDeletionDoesNotReviveCapturedSeedAfterEncryptedStateRestore()
+      throws Exception {
+    var uri = URI.create("https://cdn.test/root");
+    var jar = new JobCookieJar(uri.toString(), Map.of("Cookie", "login=old; keep=yes"));
+    jar.accept(uri, Map.of("Set-Cookie", List.of("login=; Max-Age=0; Path=/")));
+    assertFalse(jar.header(uri).contains("login="));
+    var restored = new JobCookieJar(uri.toString(), Map.of("Cookie", "login=old; keep=yes"));
+    restored.restore(jar.snapshot());
+    assertFalse(restored.header(uri).contains("login="));
+    assertTrue(restored.header(uri).contains("keep=yes"));
+  }
+
+  @Test
+  public void topPageSiteOverridesSameSiteIframeReferer() {
+    var uri = URI.create("https://cdn.test/root");
+    var jar = new JobCookieJar(uri.toString(), Map.of("Referer", "https://cdn.test/frame"));
+    jar.pageContext("https://unrelated.test/post");
+    jar.accept(
+        uri,
+        Map.of(
+            "Set-Cookie",
+            List.of(
+                "strict=x; Secure; SameSite=Strict; Path=/",
+                "lax=x; Secure; SameSite=Lax; Path=/",
+                "none=yes; Secure; SameSite=None; Path=/")));
+    assertEquals("none=yes", jar.header(uri));
+  }
 }

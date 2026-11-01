@@ -16,6 +16,7 @@ public final class JobCookieJar implements AutoCloseable {
 
   private final LinkedHashMap<String, Entry> entries = new LinkedHashMap<>();
   private final String sourceOrigin;
+  private final URI sourceUri;
   private String pageSite;
 
   public synchronized void pageContext(String page) {
@@ -30,7 +31,8 @@ public final class JobCookieJar implements AutoCloseable {
   private String initial;
 
   public JobCookieJar(String source, Map<String, String> headers) {
-    sourceOrigin = origin(URI.create(source));
+    sourceUri = URI.create(source);
+    sourceOrigin = origin(sourceUri);
     initial = header(headers, "cookie");
     String referer = header(headers, "referer");
     URI page;
@@ -110,6 +112,15 @@ public final class JobCookieJar implements AutoCloseable {
               if (c.getName().startsWith("__Secure-") && !secure
                   || c.getName().startsWith("__Host-") && (!secure || !hostOnly || !p.equals("/")))
                 continue;
+              if (domain(CookieSites.normal(sourceUri.getHost()), d)
+                  && path(sourceUri.getPath().isEmpty() ? "/" : sourceUri.getPath(), p)) {
+                String before = initial;
+                List<String> kept = new ArrayList<>();
+                for (String pair : initial.split(";"))
+                  if (!pair.trim().split("=", 2)[0].equals(c.getName())) kept.add(pair.trim());
+                initial = String.join("; ", kept);
+                changed |= !initial.equals(before);
+              }
               String key = d + "|" + p + "|" + c.getName();
               if (c.getMaxAge() == 0) {
                 changed |= entries.remove(key) != null;
@@ -178,6 +189,7 @@ public final class JobCookieJar implements AutoCloseable {
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(bytes);
     out.writeUTF(sourceOrigin);
+    out.writeUTF(initial);
     out.writeInt(entries.size());
     for (Entry e : entries.values()) {
       out.writeUTF(e.name);
@@ -200,6 +212,10 @@ public final class JobCookieJar implements AutoCloseable {
       DataInputStream in =
           new DataInputStream(new ByteArrayInputStream(Base64.getDecoder().decode(state)));
       if (!in.readUTF().equals(sourceOrigin)) return;
+      String seed = in.readUTF();
+      if (seed.length() > 32768 || seed.contains("\r") || seed.contains("\n"))
+        throw new IOException("COOKIE_STATE_INVALID");
+      initial = seed;
       int n = in.readInt();
       if (n < 0 || n > 128) throw new IOException("COOKIE_STATE_INVALID");
       for (int i = 0; i < n; i++) {

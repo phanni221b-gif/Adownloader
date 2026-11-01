@@ -571,7 +571,7 @@ public final class MainActivity extends AppCompatActivity
     started = false;
     if (browser != null) {
       browser.setActive(false);
-      browserData.saveTabs(browser.snapshotTabs());
+      browserData.saveTabs(browser.snapshotTabs(true));
     }
     super.onPause();
   }

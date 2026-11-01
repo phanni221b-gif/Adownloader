@@ -282,8 +282,13 @@ public class HlsHttpIntegrationTest {
     assertTrue("Filtered response must reach the page unchanged", intact.get());
     MediaCandidate current = browser().getDetector().forDownload(found);
     assertEquals("Actual post title", current.getMetadata().get("title"));
-    if (!kind.equals("dash"))
-      assertTrue(current.getMetadata().get("requestContexts").contains("/media/parts/"));
+    if (!kind.equals("dash")) {
+      JSONObject contexts = new JSONObject(current.getMetadata().get("requestContexts"));
+      boolean part = false;
+      for (Iterator<String> keys = contexts.keys(); keys.hasNext(); )
+        part |= URI.create(keys.next()).getPath().startsWith("/media/parts/");
+      assertTrue("Actual segment context must be retained after JSON decoding", part);
+    }
     assertTrue(
         browser().getDetector().snapshot().stream()
             .noneMatch(x -> x.getUrl().matches(".*[.](ts|m4s|cmfv|cmfa)(?:[?].*)?$")));

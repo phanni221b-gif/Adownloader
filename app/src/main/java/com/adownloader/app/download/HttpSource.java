@@ -178,10 +178,19 @@ public final class HttpSource implements AutoCloseable {
       if (previous != null && code == 304 && current.equals(previous.url)) return connection;
       if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
         String location = connection.getHeaderField("Location");
-        connection.disconnect();
-        if (location == null)
-          throw redirectFailure(current, code, connection.getContentType(), hop);
-        String next = URI.create(current).resolve(location).toString();
+        String responseMime = connection.getContentType();
+        release(connection);
+        if (location == null) throw redirectFailure(current, code, responseMime, hop);
+        String next;
+        try {
+          URI redirect = URI.create(current).resolve(location);
+          if (!java.util.Set.of("http", "https").contains(redirect.getScheme())
+              || redirect.getHost() == null
+              || redirect.getUserInfo() != null) throw new IllegalArgumentException();
+          next = redirect.toString();
+        } catch (IllegalArgumentException invalid) {
+          throw redirectFailure(current, code, responseMime, hop);
+        }
         if (current.startsWith("https:") && !next.startsWith("https:"))
           throw redirectFailure(current, code, connection.getContentType(), hop);
         current = next;
@@ -354,8 +363,11 @@ public final class HttpSource implements AutoCloseable {
     public final String url, text, etag, modified, mime, disposition;
     public final long fetchedAt, length;
     public int redirects;
+    public final int status;
 
-    Document(String url, String text, HttpURLConnection response, Document previous) {
+    Document(String url, String text, HttpURLConnection response, Document previous)
+        throws IOException {
+      status = response.getResponseCode();
       this.url = url;
       this.text = text;
       etag = header(response, "ETag", previous == null ? "" : previous.etag);
