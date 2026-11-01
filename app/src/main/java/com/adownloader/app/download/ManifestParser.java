@@ -41,6 +41,8 @@ public final class ManifestParser {
 
   public static final class HlsSelection {
     public String video, audio;
+    public final List<Map<String, String>> audioRenditions = new ArrayList<>(),
+        subtitleRenditions = new ArrayList<>();
   }
 
   private static final Pattern ATTR = Pattern.compile("([A-Z0-9-]+)=(\"[^\"]*\"|[^,]*)");
@@ -87,6 +89,15 @@ public final class ManifestParser {
         audioGroup = a.get("AUDIO");
       }
     }
+    for (String line : lines)
+      if (line.trim().startsWith("#EXT-X-MEDIA:")) {
+        Map<String, String> rendition = attributes(line.trim());
+        if (rendition.containsKey("URI")) rendition.put("URI", resolve(url, rendition.get("URI")));
+        if ("AUDIO".equals(rendition.get("TYPE")))
+          result.audioRenditions.add(Collections.unmodifiableMap(rendition));
+        if ("SUBTITLES".equals(rendition.get("TYPE")))
+          result.subtitleRenditions.add(Collections.unmodifiableMap(rendition));
+      }
     if (audioGroup != null) {
       int best = -1;
       for (String line : lines)
@@ -106,12 +117,17 @@ public final class ManifestParser {
   }
 
   public static Track hlsTrack(String url, String text) {
+    require(text.trim().startsWith("#EXTM3U"), "올바른 HLS 목록이 아닙니다");
     require(
-        text.trim().startsWith("#EXTM3U") && text.contains("#EXT-X-ENDLIST"),
-        "완료된 VOD HLS만 저장할 수 있습니다");
+        text.contains("#EXT-X-ENDLIST"),
+        DownloadError.Category.LIVE_UNSUPPORTED,
+        "라이브는 VOD 다운로드로 저장하지 않습니다");
     require(
-        !text.contains("#EXT-X-GAP") && !text.contains("#EXT-X-DISCONTINUITY"),
-        "누락/불연속 HLS는 안전하게 병합할 수 없습니다");
+        !text.contains("#EXT-X-GAP"), DownloadError.Category.HLS_GAP, "누락된 HLS 조각을 건너뛰어 저장하지 않습니다");
+    require(
+        !text.contains("#EXT-X-DISCONTINUITY"),
+        DownloadError.Category.HLS_DISCONTINUITY,
+        "타임스탬프가 불연속인 HLS는 안전한 병합을 지원하지 않습니다");
     Track track = new Track();
     long sequence = 0, offset = 0, length = -1;
     String previousUrl = null, key = null, iv = null;
@@ -133,6 +149,7 @@ public final class ManifestParser {
           require(
               "AES-128".equals(method)
                   && "identity".equals(a.getOrDefault("KEYFORMAT", "identity")),
+              DownloadError.Category.DRM,
               "DRM/SAMPLE-AES는 지원하지 않습니다");
           require(a.containsKey("URI"), "HLS 키 주소 누락");
           key = resolve(url, a.get("URI"));
@@ -186,10 +203,19 @@ public final class ManifestParser {
             .parse(new InputSource(new StringReader(xml)))
             .getDocumentElement();
     require("MPD".equals(mpd.getTagName()), "올바른 MPD가 아닙니다");
-    require(!"dynamic".equals(mpd.getAttribute("type")), "라이브 DASH는 지원하지 않습니다");
-    require(mpd.getElementsByTagName("ContentProtection").getLength() == 0, "DRM 스트림은 지원하지 않습니다");
+    require(
+        !"dynamic".equals(mpd.getAttribute("type")),
+        DownloadError.Category.LIVE_UNSUPPORTED,
+        "라이브 DASH는 지원하지 않습니다");
+    require(
+        mpd.getElementsByTagName("ContentProtection").getLength() == 0,
+        DownloadError.Category.DRM,
+        "DRM 스트림은 지원하지 않습니다");
     List<Element> periods = children(mpd, "Period");
-    require(periods.size() == 1, "단일 Period VOD DASH만 지원합니다");
+    require(
+        periods.size() == 1,
+        DownloadError.Category.DASH_MULTIPERIOD,
+        "여러 Period DASH의 트랙/시간 연속성은 검증되지 않아 저장하지 않습니다");
     Element period = periods.get(0);
     double duration = duration(period.getAttribute("duration"));
     if (duration <= 0) duration = duration(mpd.getAttribute("mediaPresentationDuration"));
@@ -413,7 +439,11 @@ public final class ManifestParser {
     return URI.create(base).resolve(child).toString();
   }
 
+  private static void require(boolean condition, DownloadError.Category category, String message) {
+    if (!condition) throw new DownloadError.ManifestFailure(category, message);
+  }
+
   private static void require(boolean condition, String message) {
-    if (!condition) throw new IllegalArgumentException(message);
+    require(condition, DownloadError.Category.MANIFEST_INVALID, message);
   }
 }

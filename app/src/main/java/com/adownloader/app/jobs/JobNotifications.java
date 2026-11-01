@@ -115,6 +115,20 @@ public final class JobNotifications {
         return "임시 파일 정리를 다음 실행에서 다시 시도합니다.";
       case "STORAGE":
         return "저장 공간 또는 임시 파일을 확인해 주세요.";
+      case "HLS_GAP":
+        return "영상 조각이 누락되어 완전한 파일로 저장할 수 없습니다.";
+      case "HLS_DISCONTINUITY":
+        return "시간 정보가 불연속인 HLS의 안전한 병합은 지원하지 않습니다.";
+      case "DASH_MULTIPERIOD":
+        return "여러 구간으로 나뉜 DASH의 안전한 연결은 지원하지 않습니다.";
+      case "LIVE_UNSUPPORTED":
+        return "라이브 스트림은 일반 영상 다운로드로 저장할 수 없습니다.";
+      case "MANIFEST_INVALID":
+        return "영상 목록이 올바르지 않거나 필수 정보가 누락되었습니다.";
+      case "UNSUPPORTED_CODEC":
+        return "원본 코덱을 이 기기에서 무손실 병합할 수 없습니다.";
+      case "UNSUPPORTED_FORMAT":
+        return "원본 형식의 안전한 저장을 지원하지 않습니다.";
       case "DRM":
         return "보호된 영상은 다운로드할 수 없습니다.";
       case "AUTH":

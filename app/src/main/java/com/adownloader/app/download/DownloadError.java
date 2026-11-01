@@ -13,10 +13,22 @@ public final class DownloadError extends IOException {
     UNSUPPORTED_FORMAT,
     UNSUPPORTED_CODEC,
     LIVE_UNSUPPORTED,
+    HLS_GAP,
+    HLS_DISCONTINUITY,
+    DASH_MULTIPERIOD,
     MANIFEST_INVALID,
     CANCELED,
     SERVER,
     UNKNOWN
+  }
+
+  public static final class ManifestFailure extends IllegalArgumentException {
+    public final Category category;
+
+    ManifestFailure(Category category, String message) {
+      super(message);
+      this.category = category;
+    }
   }
 
   public final Category category;

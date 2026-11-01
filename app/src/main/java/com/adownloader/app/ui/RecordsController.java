@@ -89,6 +89,8 @@ public final class RecordsController implements SharedPreferences.OnSharedPrefer
     libraryRefresh.setOnRefreshListener(() -> refresh(true));
     downloads.setLayoutManager(new GridLayoutManager(activity, 1));
     library.setLayoutManager(new GridLayoutManager(activity, 2));
+    downloads.addItemDecoration(FoldLayoutController.gridDecoration(activity));
+    library.addItemDecoration(FoldLayoutController.gridDecoration(activity));
     downloads.setAdapter(downloadAdapter);
     library.setAdapter(libraryAdapter);
     downloads.setItemAnimator(null);
@@ -115,10 +117,17 @@ public final class RecordsController implements SharedPreferences.OnSharedPrefer
   }
 
   public void resize() {
-    float width = activity.getResources().getConfiguration().screenWidthDp;
-    ((GridLayoutManager) downloads.getLayoutManager()).setSpanCount(width >= 840 ? 2 : 1);
+    float density = activity.getResources().getDisplayMetrics().density;
+    float width =
+        downloads.getWidth() > 0
+            ? downloads.getWidth() / density
+            : activity.getResources().getConfiguration().screenWidthDp;
+    boolean split = FoldLayoutController.spansVerticalHinge(activity, downloads);
+    ((GridLayoutManager) downloads.getLayoutManager()).setSpanCount(split || width >= 840 ? 2 : 1);
+    float libraryWidth = library.getWidth() > 0 ? library.getWidth() / density : width;
+    boolean librarySplit = FoldLayoutController.spansVerticalHinge(activity, library);
     ((GridLayoutManager) library.getLayoutManager())
-        .setSpanCount(width >= 1000 ? 4 : width >= 700 ? 3 : 2);
+        .setSpanCount(libraryWidth >= 1000 ? 4 : librarySplit ? 2 : libraryWidth >= 700 ? 3 : 2);
   }
 
   @Override

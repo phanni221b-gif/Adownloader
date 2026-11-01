@@ -98,4 +98,42 @@ public class StreamingIntegrationTest {
       root.delete();
     }
   }
+
+  @Test
+  public void thousandRealHlsSegmentsDownloadAndRemuxWithoutAggregateFile() throws Exception {
+    DownloadIntegrationTest fixture = new DownloadIntegrationTest();
+    fixture.start();
+    var field = DownloadIntegrationTest.class.getDeclaredField("base");
+    field.setAccessible(true);
+    String url = field.get(fixture) + "stress/playlist.m3u8";
+    File root =
+        Files.createTempDirectory(
+                InstrumentationRegistry.getInstrumentation()
+                    .getTargetContext()
+                    .getCacheDir()
+                    .toPath(),
+                "thousand-hls-")
+            .toFile();
+    DownloadEngine engine = new DownloadEngine(root, (message, percent) -> {});
+    try {
+      var probe =
+          MediaProbeService.shared()
+              .probe(
+                  url, MediaCandidate.MediaType.HLS, Collections.emptyMap(), new TransferControl());
+      assertEquals(1000, probe.tracks().get(0).parts.size());
+      var result = engine.download(url, MediaCandidate.MediaType.HLS, Collections.emptyMap());
+      var inspected = PostProcessor.inspect(result.file, 1000, true, false);
+      assertTrue(inspected.video);
+      assertFalse(inspected.audio);
+      assertTrue(inspected.durationUs > 999000000L);
+      assertEquals(1001, root.listFiles().length);
+      assertFalse(
+          Arrays.stream(root.listFiles()).anyMatch(file -> file.getName().endsWith(".media")));
+    } finally {
+      engine.cleanup();
+      assertEquals(0, root.listFiles().length);
+      root.delete();
+      fixture.stop();
+    }
+  }
 }

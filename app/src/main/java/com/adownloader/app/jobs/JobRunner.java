@@ -135,13 +135,19 @@ public final class JobRunner {
         DownloadError.Category category =
             error instanceof DownloadError
                 ? ((DownloadError) error).category
-                : error instanceof java.security.GeneralSecurityException
-                    ? DownloadError.Category.AUTH
-                    : error instanceof java.net.SocketException
-                            || error instanceof java.net.SocketTimeoutException
-                            || error instanceof java.net.UnknownHostException
-                        ? DownloadError.Category.NETWORK
-                        : DownloadError.Category.UNKNOWN;
+                : error instanceof DownloadError.ManifestFailure
+                    ? ((DownloadError.ManifestFailure) error).category
+                    : error instanceof org.xml.sax.SAXException
+                            || error instanceof NumberFormatException
+                        ? DownloadError.Category.MANIFEST_INVALID
+                        : error instanceof java.security.GeneralSecurityException
+                            ? DownloadError.Category.AUTH
+                            : error instanceof java.net.SocketException
+                                    || error instanceof java.net.SocketTimeoutException
+                                    || error instanceof java.net.UnknownHostException
+                                ? DownloadError.Category.NETWORK
+                                : DownloadError.Category.UNKNOWN;
+        com.adownloader.app.ui.DeviceDiagnostics.failure(context, category);
         store.state(
             job.id,
             category == DownloadError.Category.AUTH
@@ -189,7 +195,11 @@ public final class JobRunner {
       uri =
           context
               .getContentResolver()
-              .insert(MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values);
+              .insert(
+                  mime.startsWith("audio/")
+                      ? MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                      : MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
+                  values);
       if (uri == null) throw new DownloadError(DownloadError.Category.STORAGE);
       store.pending(id, uri.toString());
     }

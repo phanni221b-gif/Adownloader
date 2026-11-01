@@ -2,7 +2,10 @@ plugins {
     id("com.android.application")
 }
 
+val geckoVersion = project.property("geckoVersion").toString()
+
 android {
+    buildFeatures { buildConfig = true }
     namespace = "com.adownloader.app"
     compileSdk {
         version = release(37) {
@@ -16,6 +19,7 @@ android {
         targetSdk = 36
         versionCode = 9
         versionName = "0.5.0"
+        buildConfigField("String", "GECKO_VERSION", "\"$geckoVersion\"")
 
         ndk {
             // Current release is optimized for modern Android phones such as Fold8.
@@ -43,7 +47,9 @@ android {
 }
 
 dependencies {
-    implementation("org.mozilla.geckoview:geckoview:159.0.20261022150525")
+    implementation("org.mozilla.geckoview:geckoview:$geckoVersion")
+    implementation("androidx.window:window-java:1.5.1")
+    androidTestImplementation("androidx.window:window-testing:1.5.1")
     implementation("com.google.android.material:material:1.13.0")
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("androidx.recyclerview:recyclerview:1.4.0")
