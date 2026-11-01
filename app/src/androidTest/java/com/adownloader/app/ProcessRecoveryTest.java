@@ -645,7 +645,8 @@ public class ProcessRecoveryTest {
       var next = (com.adownloader.app.browser.BrowserSessionManager) browserField.get(reopened);
       assertNotSame(session, next.getSession());
       deadline = System.currentTimeMillis() + 15000;
-      while (get("/stats").getJSONObject("counts").optInt("/task-page") <= pageRequests
+      while ((get("/stats").getJSONObject("counts").optInt("/task-page") <= pageRequests
+              || !next.tabs().get(0).url.contains("/task-page"))
           && System.currentTimeMillis() < deadline) Thread.sleep(100);
       assertTrue(get("/stats").getJSONObject("counts").optInt("/task-page") > pageRequests);
       assertTrue(next.tabs().get(0).url.contains("/task-page"));

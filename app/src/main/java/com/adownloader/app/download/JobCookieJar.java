@@ -122,13 +122,10 @@ public final class JobCookieJar implements AutoCloseable {
                 changed |= !initial.equals(before);
               }
               String key = d + "|" + p + "|" + c.getName();
-              if (c.getMaxAge() == 0) {
-                changed |= entries.remove(key) != null;
-                continue;
-              }
+
               Entry e = new Entry();
               e.name = c.getName();
-              e.value = c.getValue();
+              e.value = c.getMaxAge() == 0 ? "" : c.getValue();
               e.domain = d;
               e.path = p;
               e.hostOnly = hostOnly;
@@ -163,16 +160,19 @@ public final class JobCookieJar implements AutoCloseable {
         String[] kv = pair.trim().split("=", 2);
         if (kv.length == 2 && !kv[0].isEmpty()) cookies.put(kv[0], kv[1]);
       }
-    entries.values().removeIf(e -> e.expires <= System.currentTimeMillis());
+
     List<Entry> selected = new ArrayList<>();
     String host = CookieSites.normal(target.getHost()),
         p = target.getPath().isEmpty() ? "/" : target.getPath();
     for (Entry e : entries.values())
-      if ((e.hostOnly ? host.equals(e.domain) : domain(host, e.domain))
-          && path(p, e.path)
-          && (!e.secure || "https".equals(target.getScheme()))
-          && (e.sameSite.equals("none") || pageSite.equals(CookieSites.site(target))))
-        selected.add(e);
+      if ((e.hostOnly ? host.equals(e.domain) : domain(host, e.domain)) && path(p, e.path)) {
+        if (e.expires <= System.currentTimeMillis()) {
+          cookies.remove(e.name);
+          e.value = "";
+        } else if ((!e.secure || "https".equals(target.getScheme()))
+            && (e.sameSite.equals("none") || pageSite.equals(CookieSites.site(target))))
+          selected.add(e);
+      }
     selected.sort((a, b) -> Integer.compare(b.path.length(), a.path.length()));
     Set<String> set = new HashSet<>();
     for (Entry e : selected) if (set.add(e.name)) cookies.put(e.name, e.value);

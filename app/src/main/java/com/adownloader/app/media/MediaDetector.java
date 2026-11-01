@@ -94,6 +94,10 @@ public final class MediaDetector {
     capture(url, mime, source, page, headers, Collections.emptyMap());
   }
 
+  private static boolean networkSource(String source) {
+    return "network-response".equals(source) || "response-signature".equals(source);
+  }
+
   public synchronized void capture(
       String url,
       String mime,
@@ -119,9 +123,8 @@ public final class MediaDetector {
         iterator.hasNext(); ) {
       MediaCandidate prior = iterator.next().getValue();
       if (prior.getUrl().equals(clean) && prior.getType() != type) {
-        if ("network-response".equals(prior.getSource()) && !"network-response".equals(source))
-          return;
-        if ("network-response".equals(source) && !"network-response".equals(prior.getSource())) {
+        if (networkSource(prior.getSource()) && !networkSource(source)) return;
+        if (networkSource(source) && !networkSource(prior.getSource())) {
           exact.remove(prior.getExactKey());
           iterator.remove();
         }
@@ -145,9 +148,7 @@ public final class MediaDetector {
     String exactKey = next.getExactKey(), key = exact.getOrDefault(exactKey, next.getIdentityKey());
     MediaCandidate previous = groups.get(key);
     boolean authoritative =
-        previous != null
-            && "network-response".equals(previous.getSource())
-            && !"network-response".equals(source);
+        previous != null && networkSource(previous.getSource()) && !networkSource(source);
     if (authoritative && !previous.getUrl().equals(clean)) return;
     if (previous != null && previous.getUrl().equals(clean)) {
       Map<String, String> merged = new LinkedHashMap<>(previous.getHeaders());

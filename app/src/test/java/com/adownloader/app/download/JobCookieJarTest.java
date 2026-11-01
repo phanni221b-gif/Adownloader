@@ -140,4 +140,16 @@ public class JobCookieJarTest {
                 "none=yes; Secure; SameSite=None; Path=/")));
     assertEquals("none=yes", jar.header(uri));
   }
+
+  @Test
+  public void serverDeletionOverridesStaleCapturedSegmentCookieAfterRestore() throws Exception {
+    var root = URI.create("https://cdn.test/master");
+    var part = URI.create("https://cdn.test/parts/a.ts");
+    var jar = new JobCookieJar(root.toString(), Map.of());
+    jar.accept(root, Map.of("Set-Cookie", List.of("sid=; Max-Age=0; Path=/parts/")));
+    assertEquals("keep=yes", jar.header(part, "sid=stale; keep=yes"));
+    var restored = new JobCookieJar(root.toString(), Map.of());
+    restored.restore(jar.snapshot());
+    assertEquals("keep=yes", restored.header(part, "sid=stale; keep=yes"));
+  }
 }
