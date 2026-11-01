@@ -94,9 +94,9 @@ public class ExtensionPerformanceIntegrationTest {
           browser.getDetector().snapshot().stream()
               .anyMatch(c -> c.getUrl().contains("/late/movie.mp4"));
       assertTrue("Late dynamic media stays detectable", late);
-      Files.writeString(
+      Files.write(
           new File(context.getExternalFilesDir(null), "extension-performance.json").toPath(),
-          metrics.toString(2));
+          metrics.toString(2).getBytes(StandardCharsets.UTF_8));
     } finally {
       ins.runOnMainSync(activity::finish);
       server.close();
