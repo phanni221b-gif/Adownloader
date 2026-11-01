@@ -205,10 +205,19 @@ public final class MediaDetector {
   }
 
   public synchronized List<MediaCandidate> snapshot() {
-    List<MediaCandidate> ordered=new ArrayList<>(groups.values());ordered.sort((a,b)->Integer.compare(frameScore(b),frameScore(a)));return ordered;
+    List<MediaCandidate> ordered = new ArrayList<>(groups.values());
+    ordered.sort((a, b) -> Integer.compare(frameScore(b), frameScore(a)));
+    return ordered;
   }
 
-  private static int frameScore(MediaCandidate item){try{return Math.max(0,Math.min(100,Integer.parseInt(item.getMetadata().getOrDefault("frameScore","0"))));}catch(Exception ignored){return 0;}}
+  private static int frameScore(MediaCandidate item) {
+    try {
+      return Math.max(
+          0, Math.min(100, Integer.parseInt(item.getMetadata().getOrDefault("frameScore", "0"))));
+    } catch (Exception ignored) {
+      return 0;
+    }
+  }
 
   public synchronized MediaCandidate latest(String identity) {
     MediaCandidate hit = groups.get(identity);

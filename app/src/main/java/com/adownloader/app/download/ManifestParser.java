@@ -86,9 +86,22 @@ public final class ManifestParser {
     return text != null && text.startsWith("\ufeff") ? text.substring(1) : text;
   }
 
+  private static void sessionKeys(String text) {
+    for (String raw : text.split("\\r?\\n"))
+      if (raw.trim().startsWith("#EXT-X-SESSION-KEY:")) {
+        Map<String, String> a = attributes(raw.trim());
+        require(
+            "AES-128".equals(a.get("METHOD"))
+                && "identity".equals(a.getOrDefault("KEYFORMAT", "identity")),
+            DownloadError.Category.DRM,
+            "HLS_SESSION_KEY");
+      }
+  }
+
   public static HlsSelection hlsSelection(String url, String text) {
     text = normalizeHls(text);
     require(text.trim().startsWith("#EXTM3U"), "올바른 HLS 목록이 아닙니다");
+    sessionKeys(text);
     HlsSelection result = new HlsSelection();
     result.video = url;
     long bestPixels = -1, bestBandwidth = -1;
@@ -162,6 +175,11 @@ public final class ManifestParser {
         !Pattern.compile("(?m)^#EXT-X-DISCONTINUITY\\s*$").matcher(text).find(),
         DownloadError.Category.HLS_DISCONTINUITY,
         "타임스탬프가 불연속인 HLS는 안전한 병합을 지원하지 않습니다");
+    sessionKeys(text);
+    require(
+        !text.contains("#EXT-X-SKIP:"),
+        DownloadError.Category.HLS_UNSUPPORTED,
+        "HLS_DELTA_PLAYLIST");
     Track track = new Track();
     long sequence = 0, offset = 0, length = -1;
     String previousUrl = null, key = null, iv = null;
@@ -170,9 +188,12 @@ public final class ManifestParser {
     boolean pendingDuration = false, previousRange = false;
     for (String raw : text.split("\\r?\\n")) {
       String line = raw.trim();
-      if (line.startsWith("#EXT-X-MEDIA-SEQUENCE:"))
+      if (line.startsWith("#EXT-X-TARGETDURATION:") || line.startsWith("#EXT-X-VERSION:")) {
+        require(Long.parseLong(line.substring(line.indexOf(':') + 1)) > 0, "HLS_ATTRIBUTE");
+      } else if (line.startsWith("#EXT-X-MEDIA-SEQUENCE:")) {
         sequence = Long.parseLong(line.substring(line.indexOf(':') + 1));
-      else if (line.startsWith("#EXTINF:")) {
+        require(sequence >= 0, "HLS_ATTRIBUTE");
+      } else if (line.startsWith("#EXTINF:")) {
         require(!pendingDuration, "HLS_SEGMENT_URI");
         double duration = Double.parseDouble(line.substring(8).split(",")[0]);
         require(Double.isFinite(duration) && duration > 0, "HLS_ATTRIBUTE");
@@ -204,6 +225,9 @@ public final class ManifestParser {
           require(r.length == 2, "초기화 범위 오프셋 누락");
           mapLength = Long.parseLong(r[0]);
           mapOffset = Long.parseLong(r[1]);
+          require(
+              mapLength > 0 && mapOffset >= 0 && mapOffset <= Long.MAX_VALUE - mapLength,
+              "HLS_ATTRIBUTE");
         }
         require(key == null || iv != null, "암호화된 초기화 세그먼트 IV 누락");
         Part nextInit =
@@ -226,13 +250,18 @@ public final class ManifestParser {
         length = Long.parseLong(r[0]);
         require(length > 0, "잘못된 바이트 범위");
         explicitOffset = r.length == 2;
-        if (explicitOffset) offset = Long.parseLong(r[1]);
-        else require(previousUrl != null && previousRange, "바이트 범위 오프셋 누락");
+        if (explicitOffset) {
+          offset = Long.parseLong(r[1]);
+          require(offset >= 0 && offset <= Long.MAX_VALUE - length, "HLS_ATTRIBUTE");
+        } else require(previousUrl != null && previousRange, "바이트 범위 오프셋 누락");
       } else if (!line.isEmpty() && !line.startsWith("#")) {
         require(pendingDuration, "HLS_SEGMENT_URI");
         pendingDuration = false;
         String partUrl = resolve(url, line);
         if (length > 0 && !explicitOffset) require(partUrl.equals(previousUrl), "범위 파일이 변경되었습니다");
+        require(
+            sequence < Long.MAX_VALUE && (length < 0 || offset <= Long.MAX_VALUE - length),
+            "HLS_ATTRIBUTE");
         track.parts.add(new Part(partUrl, length > 0 ? offset : 0, length, sequence++, key, iv));
         offset = length > 0 ? offset + length : 0;
         previousUrl = partUrl;
