@@ -120,13 +120,13 @@ public class StreamingIntegrationTest {
           MediaProbeService.shared()
               .probe(
                   url, MediaCandidate.MediaType.HLS, Collections.emptyMap(), new TransferControl());
-      assertEquals(1000, probe.tracks().get(0).parts.size());
+      assertEquals(1001, probe.tracks().get(0).parts.size()); // 1000 media segments plus init.
       var result = engine.download(url, MediaCandidate.MediaType.HLS, Collections.emptyMap());
       var inspected = PostProcessor.inspect(result.file, 1000, true, false);
       assertTrue(inspected.video);
       assertFalse(inspected.audio);
-      assertTrue(inspected.durationUs > 999000000L);
-      assertEquals(1001, root.listFiles().length);
+      assertEquals(1000000000L, inspected.durationUs, 1000000L);
+      assertEquals(1002, root.listFiles().length);
       assertFalse(
           Arrays.stream(root.listFiles()).anyMatch(file -> file.getName().endsWith(".media")));
     } finally {
