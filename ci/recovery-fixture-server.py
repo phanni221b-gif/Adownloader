@@ -36,6 +36,7 @@ class Handler(BaseHTTPRequestHandler):
    return self.reply(json.dumps(data).encode(),'application/json')
   if path=='/page':return self.reply(b'<!doctype html><title>Recovery fixture</title><h1>Recovery test</h1>','text/html')
   with LOCK:COUNTS[path]=COUNTS.get(path,0)+1
+  if path=='/task-page':return self.reply(b'<!doctype html><title>Task reload fixture</title><h1>Task reload fixture</h1>','text/html')
   if EXPIRED and token=='old':return self.send_error(403)
   if path=='/process/fail-once' and COUNTS[path]==1:return self.send_error(500)
   if path in ('/process/direct','/process/fail-once','/process/asset-123.mp4'):
@@ -53,6 +54,17 @@ class Handler(BaseHTTPRequestHandler):
      length=min(64*1024,SIZE-offset);self.wfile.write(block(offset,length));self.wfile.flush();offset+=length;time.sleep(.015)
    except (BrokenPipeError,ConnectionResetError):pass
    return
+  if path=='/cookie/playlist.m3u8':
+   if 'fixture=PRIVATE_REQUEST_CONTEXT' not in self.headers.get('Cookie',''):return self.send_error(403)
+   return self.reply((ROOT/'playlist.m3u8').read_bytes(),'text/plain',{'Set-Cookie':'resume=PRIVATE_SERVER_COOKIE_JAR; Path=/cookie/; HttpOnly; SameSite=Lax'})
+  if path.startswith('/cookie/'):
+   if 'resume=PRIVATE_SERVER_COOKIE_JAR' not in self.headers.get('Cookie',''):
+    with LOCK:COUNTS['cookie-denied']=COUNTS.get('cookie-denied',0)+1
+    return self.send_error(403)
+   file=ROOT/path.rsplit('/',1)[-1]
+   if not file.is_file():return self.send_error(404)
+   time.sleep(1.2)
+   return self.reply(file.read_bytes(),'video/mp2t')
   if path=='/process/asset-123.m3u8':
    text=(ROOT/'playlist.m3u8').read_text();text='\n'.join(line+('?token='+token) if line and not line.startswith('#') else line for line in text.splitlines())+'\n'
    return self.reply(text.encode(),'application/vnd.apple.mpegurl')
@@ -66,8 +78,10 @@ class Handler(BaseHTTPRequestHandler):
    mime='application/vnd.apple.mpegurl' if name.endswith('.m3u8') else 'application/dash+xml' if name.endswith('.mpd') else 'application/octet-stream'
    return self.reply(data,mime)
   self.send_error(404)
- def reply(self,data,mime):
-  self.send_response(200);self.send_header('Content-Type',mime);self.send_header('Content-Length',str(len(data)));self.send_header('Connection','close');self.end_headers()
+ def reply(self,data,mime,headers=None):
+  self.send_response(200)
+  for name,value in (headers or {}).items():self.send_header(name,value)
+  self.send_header('Content-Type',mime);self.send_header('Content-Length',str(len(data)));self.send_header('Connection','close');self.end_headers()
   try:self.wfile.write(data)
   except (BrokenPipeError,ConnectionResetError):pass
 ThreadingHTTPServer(('127.0.0.1',9009),Handler).serve_forever()

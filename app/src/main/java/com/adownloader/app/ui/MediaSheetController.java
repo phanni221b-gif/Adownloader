@@ -24,6 +24,8 @@ public final class MediaSheetController {
   private final Map<String, String> information = new ConcurrentHashMap<>();
   private BottomSheetDialog dialog;
   private boolean closed;
+  private MediaAdapter activeAdapter;
+  private View activeContent;
 
   public MediaSheetController(Activity activity, Downloader downloader) {
     this.activity = activity;
@@ -43,12 +45,27 @@ public final class MediaSheetController {
   }
 
   public static String name(MediaCandidate item, int index) {
-    String segment = Uri.parse(item.getUrl()).getLastPathSegment();
-    if (segment != null
-        && segment.length() < 70
-        && segment.matches("(?i).+\\.(mp4|webm|m4a|mp3|mov)$"))
-      return String.format(Locale.ROOT, "%02d", index + 1) + " · " + segment;
-    return "영상 " + String.format(Locale.ROOT, "%02d", index + 1);
+    for (String key : List.of("title", "mediaTitle")) {
+      String title = DownloadFileName.sanitize(item.getMetadata().get(key));
+      if (!title.isEmpty()) return title;
+    }
+    String label = DownloadFileName.label(Collections.emptyMap(), item.getUrl());
+    return label.equals("동영상 다운로드") ? "영상 " + String.format(Locale.ROOT, "%02d", index + 1) : label;
+  }
+
+  public void update(List<MediaCandidate> candidates) {
+    if (closed || dialog == null || !dialog.isShowing() || activeAdapter == null) return;
+    activeAdapter.items.clear();
+    activeAdapter.items.addAll(candidates);
+    activeAdapter.notifyDataSetChanged();
+    if (activeContent != null) {
+      ((TextView) activeContent.findViewById(R.id.sheet_title))
+          .setText("감지된 미디어" + (candidates.isEmpty() ? "" : " " + candidates.size()));
+      activeContent
+          .findViewById(R.id.sheet_empty)
+          .setVisibility(candidates.isEmpty() ? View.VISIBLE : View.GONE);
+    }
+    loadPreviews(candidates, activeAdapter);
   }
 
   public void show(List<MediaCandidate> candidates) {
@@ -59,6 +76,8 @@ public final class MediaSheetController {
     RecyclerView list = content.findViewById(R.id.sheet_list);
     list.setLayoutManager(new LinearLayoutManager(activity));
     MediaAdapter adapter = new MediaAdapter(candidates);
+    activeAdapter = adapter;
+    activeContent = content;
     list.setAdapter(adapter);
     if (candidates.isEmpty()) {
       View empty = content.findViewById(R.id.sheet_empty);
@@ -70,6 +89,10 @@ public final class MediaSheetController {
     }
     dialog = UiSheets.show(activity, content, true);
     content.findViewById(R.id.sheet_close).setOnClickListener(v -> dialog.dismiss());
+    loadPreviews(candidates, adapter);
+  }
+
+  private void loadPreviews(List<MediaCandidate> candidates, MediaAdapter adapter) {
     for (MediaCandidate item : candidates.subList(0, Math.min(6, candidates.size())))
       if (!information.containsKey(item.getUrl())) {
         information.put(item.getUrl(), "정보 분석 중");
@@ -90,9 +113,7 @@ public final class MediaSheetController {
     if (item.getType() != MediaCandidate.MediaType.HLS
         && item.getType() != MediaCandidate.MediaType.DASH) return "원본 파일 그대로 저장";
     try {
-      return MediaProbeService.shared()
-          .preview(item.getUrl(), item.getType(), item.getHeaders())
-          .description;
+      return MediaProbeService.shared().preview(item).description;
     } catch (Exception unavailable) {
       return "세부 정보 확인 불가 · 원본 자동 선택";
     }
@@ -145,7 +166,7 @@ public final class MediaSheetController {
     private final Set<String> expanded = new HashSet<>();
 
     MediaAdapter(List<MediaCandidate> items) {
-      this.items = items;
+      this.items = new ArrayList<>(items);
     }
 
     @Override
@@ -196,6 +217,9 @@ public final class MediaSheetController {
   public void close() {
     closed = true;
     if (dialog != null) dialog.dismiss();
+    dialog = null;
+    activeAdapter = null;
+    activeContent = null;
     io.shutdownNow();
   }
 }

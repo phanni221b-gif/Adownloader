@@ -15,6 +15,8 @@ public final class DownloadError extends IOException {
     UNSUPPORTED_CODEC,
     LIVE_UNSUPPORTED,
     HLS_GAP,
+    HLS_UNSUPPORTED,
+    ACCESS_BLOCKED,
     HLS_DISCONTINUITY,
     DASH_MULTIPERIOD,
     MANIFEST_INVALID,
@@ -30,6 +32,13 @@ public final class DownloadError extends IOException {
       super(message);
       this.category = category;
     }
+  }
+
+  public HlsDiagnostic diagnostic;
+
+  public DownloadError diagnostic(HlsDiagnostic detail) {
+    diagnostic = detail;
+    return this;
   }
 
   public final Category category;

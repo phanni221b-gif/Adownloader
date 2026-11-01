@@ -80,7 +80,8 @@ public class AuthenticatedMediaIntegrationTest {
           allowed = page || headers.getOrDefault("cookie", "").contains(cookie);
       byte[] body =
           page
-              ? ("<!doctype html><meta charset='utf-8'><title>인증 영상</title><h1>Authenticated"
+              ? ("<!doctype html><meta charset='utf-8'><meta property='og:title' content='인증"
+                     + " 영상'><title>인증 영상</title><h1>Authenticated"
                      + " fixture</h1><script>fetch('/protected/play?id=1').then(r=>r.arrayBuffer());</script>")
                   .getBytes(StandardCharsets.UTF_8)
               : allowed ? media : new byte[0];

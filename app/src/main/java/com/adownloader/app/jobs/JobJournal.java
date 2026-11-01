@@ -18,6 +18,57 @@ public final class JobJournal implements EngineCheckpoint {
   }
 
   @Override
+  public String topLevelPage() throws Exception {
+    return store.request(id).optString("page", null);
+  }
+
+  @Override
+  public boolean cookieBootstrap() throws Exception {
+    return store.request(id).optBoolean("cookieBootstrap");
+  }
+
+  @Override
+  public Map<String, Map<String, String>> requestContexts() throws Exception {
+    Map<String, Map<String, String>> out = new LinkedHashMap<>();
+    JSONObject meta = store.request(id).optJSONObject("metadata");
+    if (meta == null) return out;
+    String raw = meta.optString("requestContexts", "");
+    if (raw.isEmpty() || raw.length() > 8388608) return out;
+    JSONObject all = new JSONObject(raw);
+    Iterator<String> urls = all.keys();
+    while (urls.hasNext() && out.size() < 128) {
+      String url = urls.next();
+      JSONObject h = all.optJSONObject(url);
+      if (h == null) continue;
+      Map<String, String> headers = new LinkedHashMap<>();
+      for (String key :
+          List.of(
+              "Cookie",
+              "Referer",
+              "Origin",
+              "User-Agent",
+              "cookie",
+              "referer",
+              "origin",
+              "user-agent")) if (h.has(key)) headers.put(key, h.optString(key));
+      out.put(url, headers);
+    }
+    return out;
+  }
+
+  @Override
+  public String cookieState() throws Exception {
+    return store.request(id).optString("cookieState", "");
+  }
+
+  @Override
+  public void cookieState(String state) throws Exception {
+    JSONObject request = store.request(id);
+    request.put("cookieState", state);
+    store.writeContext(id, request);
+  }
+
+  @Override
   public boolean previouslyAccepted() {
     var job = store.get(id);
     return job != null && job.bytes > 0;
@@ -115,6 +166,7 @@ public final class JobJournal implements EngineCheckpoint {
   public void savePlan(List<ManifestParser.Track> tracks) throws Exception {
     JSONObject request = store.request(id);
     request.put("plan", PlanCodec.encode(tracks));
+    request.remove("cookieBootstrap");
     store.writeContext(id, request);
     cachedPlan = tracks;
     planLoaded = true;

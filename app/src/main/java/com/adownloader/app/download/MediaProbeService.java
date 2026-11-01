@@ -45,7 +45,7 @@ public final class MediaProbeService implements AutoCloseable {
 
   public MediaProbeResult preview(
       String url, MediaCandidate.MediaType type, Map<String, String> headers) throws Exception {
-    return get(url, type, headers, new TransferControl(), true);
+    return get(url, type, headers, new TransferControl(), true, null);
   }
 
   public MediaProbeResult probe(
@@ -54,7 +54,65 @@ public final class MediaProbeService implements AutoCloseable {
       Map<String, String> headers,
       TransferControl control)
       throws Exception {
-    return get(url, type, headers, control, false);
+    return get(url, type, headers, control, false, null);
+  }
+
+  public MediaProbeResult preview(MediaCandidate item) throws Exception {
+    return get(
+        item.getUrl(),
+        item.getType(),
+        item.getHeaders(),
+        new TransferControl(),
+        true,
+        item.getPageUrl());
+  }
+
+  public MediaProbeResult probe(MediaCandidate item, TransferControl control) throws Exception {
+    return get(item.getUrl(), item.getType(), item.getHeaders(), control, false, item.getPageUrl());
+  }
+
+  private static String pageKey(String page) {
+    try {
+      URI u = URI.create(page);
+      return u.getHost() != null && Set.of("http", "https").contains(u.getScheme())
+          ? CookieSites.site(u)
+          : "";
+    } catch (Exception e) {
+      return "";
+    }
+  }
+
+  public MediaProbeResult forTransfer(
+      HttpSource source,
+      String url,
+      MediaCandidate.MediaType type,
+      Map<String, String> headers,
+      TransferControl control)
+      throws Exception {
+    TreeMap<String, String> canonical = new TreeMap<>();
+    headers.forEach((k, v) -> canonical.put(k.toLowerCase(Locale.ROOT), v));
+    Entry found;
+    synchronized (this) {
+      found =
+          cache.get(
+              MediaIdentity.hash(type + "|" + url + "|" + canonical + "|" + source.pageSiteKey()));
+    }
+    if (found != null) {
+      while (!found.future.isDone()) {
+        control.check();
+        try {
+          found.future.get(100, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException wait) {
+        } catch (ExecutionException failure) {
+          break;
+        }
+      }
+      MediaProbeResult ready = found.result;
+      if (ready != null
+          && ready.expiresAt > System.currentTimeMillis()
+          && !ready.requiresCookieSession) return ready;
+    }
+    return fetchWithSource(source, url, type, null);
   }
 
   private MediaProbeResult get(
@@ -62,11 +120,12 @@ public final class MediaProbeService implements AutoCloseable {
       MediaCandidate.MediaType type,
       Map<String, String> headers,
       TransferControl control,
-      boolean detached)
+      boolean detached,
+      String page)
       throws Exception {
     TreeMap<String, String> canonical = new TreeMap<>();
     headers.forEach((k, v) -> canonical.put(k.toLowerCase(Locale.ROOT), v));
-    String key = MediaIdentity.hash(type + "|" + url + "|" + canonical);
+    String key = MediaIdentity.hash(type + "|" + url + "|" + canonical + "|" + pageKey(page));
     Entry entry;
     boolean created = false;
     MediaProbeResult previous = null;
@@ -107,7 +166,8 @@ public final class MediaProbeService implements AutoCloseable {
                       type,
                       new LinkedHashMap<>(headers),
                       old,
-                      detached ? new TransferControl() : control);
+                      detached ? new TransferControl() : control,
+                      page);
               if (result.weight() > 16L * 1024 * 1024)
                 throw new DownloadError(DownloadError.Category.MANIFEST_INVALID);
               owner.result = result;
@@ -152,41 +212,58 @@ public final class MediaProbeService implements AutoCloseable {
       MediaCandidate.MediaType type,
       Map<String, String> headers,
       MediaProbeResult previous,
-      TransferControl control)
+      TransferControl control,
+      String page)
       throws Exception {
-    HttpSource source = new HttpSource(url, headers, control);
+    try (HttpSource source = new HttpSource(url, headers, control).pageContext(page)) {
+      return fetchWithSource(
+          source, url, type, previous != null && previous.requiresCookieSession ? null : previous);
+    }
+  }
+
+  private MediaProbeResult fetchWithSource(
+      HttpSource source, String url, MediaCandidate.MediaType type, MediaProbeResult previous)
+      throws Exception {
     Map<String, HttpSource.Document> documents = new LinkedHashMap<>();
     HttpSource.Document root = document(source, url, previous, documents);
     List<ManifestParser.Track> tracks;
     if (type == MediaCandidate.MediaType.HLS) {
-      ManifestParser.HlsSelection selection = ManifestParser.hlsSelection(root.url, root.text);
+      String rootText = HlsDiagnostic.body(root, "root");
+      ManifestParser.HlsSelection selection;
+      try {
+        selection = ManifestParser.hlsSelection(root.url, rootText);
+      } catch (RuntimeException error) {
+        throw HlsDiagnostic.parse(root, rootText, "master", error);
+      }
       HttpSource.Document video =
           selection.video.equals(root.url)
               ? root
               : document(source, selection.video, previous, documents);
-      ManifestParser.Track track = ManifestParser.hlsTrack(video.url, video.text);
+      String videoText = HlsDiagnostic.body(video, video == root ? "root" : "variant");
+      ManifestParser.Track track;
+      try {
+        track = ManifestParser.hlsTrack(video.url, videoText);
+      } catch (RuntimeException error) {
+        throw HlsDiagnostic.parse(video, videoText, "media", error);
+      }
       tracks = new ArrayList<>();
       tracks.add(track);
-      String[] lines = root.text.split("\\r?\\n");
-      for (int i = 0; i < lines.length; i++)
-        if (lines[i].trim().startsWith("#EXT-X-STREAM-INF:")) {
-          int next = i + 1;
-          while (next < lines.length && lines[next].trim().isEmpty()) next++;
-          if (next < lines.length
-              && ManifestParser.resolve(root.url, lines[next].trim()).equals(selection.video)) {
-            Map<String, String> attrs = ManifestParser.attributes(lines[i].trim());
-            String[] size = attrs.getOrDefault("RESOLUTION", "0x0").split("x");
-            if (size.length == 2) {
-              track.width = Integer.parseInt(size[0]);
-              track.height = Integer.parseInt(size[1]);
-            }
-            track.bitRate = Long.parseLong(attrs.getOrDefault("BANDWIDTH", "0"));
-            track.frameRate = Double.parseDouble(attrs.getOrDefault("FRAME-RATE", "0"));
-            track.codecs = attrs.getOrDefault("CODECS", "");
-            track.representation = selection.video;
-            break;
+      Map<String, String> attrs = selection.selectedAttributes;
+      if (!attrs.isEmpty()) {
+        try {
+          String[] size = attrs.getOrDefault("RESOLUTION", "0x0").split("x");
+          if (size.length == 2) {
+            track.width = Integer.parseInt(size[0]);
+            track.height = Integer.parseInt(size[1]);
           }
+          track.bitRate = Long.parseLong(attrs.getOrDefault("BANDWIDTH", "0"));
+          track.frameRate = Double.parseDouble(attrs.getOrDefault("FRAME-RATE", "0"));
+          track.codecs = attrs.getOrDefault("CODECS", "");
+          track.representation = selection.video;
+        } catch (RuntimeException error) {
+          throw HlsDiagnostic.parse(root, rootText, "master", error);
         }
+      }
       if (selection.audio != null) {
         HttpSource.Document audio = document(source, selection.audio, previous, documents);
         ManifestParser.Track a = ManifestParser.hlsTrack(audio.url, audio.text);
@@ -198,7 +275,11 @@ public final class MediaProbeService implements AutoCloseable {
       tracks = ManifestParser.dash(root.url, root.text);
     else throw new DownloadError(DownloadError.Category.UNSUPPORTED_FORMAT);
     return new MediaProbeResult(
-        root, documents, tracks, Math.min(System.currentTimeMillis() + ttl, expiry(url)));
+        root,
+        documents,
+        tracks,
+        Math.min(System.currentTimeMillis() + ttl, expiry(url)),
+        source.hasResponseCookies());
   }
 
   private HttpSource.Document document(
@@ -210,7 +291,8 @@ public final class MediaProbeService implements AutoCloseable {
     HttpSource.Document hit = documents.get(url);
     if (hit != null) return hit;
     HttpSource.Document old = previous == null ? null : previous.documents.get(url);
-    HttpSource.Document result = source.document(url, old);
+    HttpSource.Document result =
+        source.document(url, old, documents.isEmpty() ? "root" : "variant");
     documents.put(url, result);
     if (!url.equals(result.url)) documents.put(result.url, result);
     long size = 0;

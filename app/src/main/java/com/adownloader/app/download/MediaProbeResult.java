@@ -7,6 +7,7 @@ import java.util.*;
  */
 public final class MediaProbeResult {
   public final long fetchedAt, expiresAt;
+  public final boolean requiresCookieSession;
   public final String finalManifestUrl, etag, modified, disposition, description;
   public final Map<String, HttpSource.Document> documents;
   private final List<ManifestParser.Track> plan;
@@ -15,7 +16,9 @@ public final class MediaProbeResult {
       HttpSource.Document root,
       Map<String, HttpSource.Document> documents,
       List<ManifestParser.Track> tracks,
-      long expiresAt) {
+      long expiresAt,
+      boolean requiresCookieSession) {
+    this.requiresCookieSession = requiresCookieSession;
     this.fetchedAt = System.currentTimeMillis();
     this.expiresAt = expiresAt;
     finalManifestUrl = root.url;

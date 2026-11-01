@@ -20,12 +20,12 @@ public class DownloadFileNameTest {
   }
 
   @Test
-  public void titleThenUrlThenMetadataThenFallback() {
+  public void titleThenMetadataThenUrlThenFallback() {
     assertEquals(
         "페이지 제목.mp4",
         DownloadFileName.choose("", "페이지 제목", "https://cdn.test/file.mp4", "metadata", ".mp4", 0));
     assertEquals(
-        "file.mp4",
+        "metadata.mp4",
         DownloadFileName.choose(
             "", "", "https://cdn.test/file.mp4?token=PRIVATE", "metadata", ".mp4", 0));
     assertEquals(
@@ -66,5 +66,28 @@ public class DownloadFileNameTest {
     assertTrue(filename.getBytes(StandardCharsets.UTF_8).length <= 184);
     assertFalse(filename.contains("�"));
     assertFalse(filename.endsWith(" .mp4"));
+  }
+
+  @Test
+  public void genericDispositionAndHashNamesDoNotOverridePostTitle() {
+    for (String name :
+        new String[] {
+          "master.mp4",
+          "index.mp4",
+          "playlist.mp4",
+          "d47fb7af-b6b7-4a6b-9988-038efa64df56.mp4",
+          "0123456789abcdef0123456789abcdef.mp4"
+        })
+      assertEquals(
+          "게시글 제목.mp4",
+          DownloadFileName.choose(
+              "attachment; filename=\"" + name + "\"",
+              "게시글 제목",
+              "https://cdn.test/0123456789abcdef0123456789abcdef.mp4",
+              "metadata",
+              ".mp4",
+              0));
+    assertEquals(
+        "file.mp4", DownloadFileName.choose("", "", "https://cdn.test/file.mp4", "", ".mp4", 0));
   }
 }

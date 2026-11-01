@@ -104,6 +104,12 @@ public final class DownloadService extends Service implements DownloadJobs.Host 
     stopSelf();
   }
 
+  /** Recents removal ends browser UI, never the independent queue or transfer host. */
+  @Override
+  public void onTaskRemoved(Intent intent) {
+    super.onTaskRemoved(intent);
+  }
+
   @Override
   public void onDestroy() {
     stopped = true;

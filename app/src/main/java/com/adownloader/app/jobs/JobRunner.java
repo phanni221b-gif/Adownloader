@@ -149,10 +149,18 @@ public final class JobRunner {
                                 ? DownloadError.Category.NETWORK
                                 : DownloadError.Category.UNKNOWN;
         com.adownloader.app.ui.DeviceDiagnostics.failure(context, category);
+        if (error instanceof DownloadError && ((DownloadError) error).diagnostic != null)
+          context
+              .getSharedPreferences("device_diagnostics", 0)
+              .edit()
+              .putString(
+                  "hls", new JSONObject(((DownloadError) error).diagnostic.safeFields()).toString())
+              .apply();
         store.state(
             job.id,
             category == DownloadError.Category.AUTH
                     || category == DownloadError.Category.EXPIRED_URL
+                    || category == DownloadError.Category.ACCESS_BLOCKED
                 ? DownloadJobStore.State.NEEDS_REFRESH
                 : DownloadJobStore.State.FAILED,
             category.name());

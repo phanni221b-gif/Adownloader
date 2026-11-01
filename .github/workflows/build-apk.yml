@@ -1,7 +1,7 @@
 name: Build and verify Adownloader
 on:
   push:
-    branches: [main, rebuild-gecko-v2, rebuild-gecko-release, ui-ux-v050, reliability-v060, validation-v060, stabilize-v061, validation-v061]
+    branches: [main, rebuild-gecko-v2, rebuild-gecko-release, ui-ux-v050, reliability-v060, validation-v060, stabilize-v061, validation-v061, compatibility-v062, validation-v062]
   pull_request:
   workflow_dispatch:
 permissions:
@@ -23,14 +23,29 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.6.0'
+      - name: Reserve runner space for the real 2 GiB transfer regression
+        run: |
+          # Android/Java do not use the runner's preinstalled .NET SDK.
+          sudo rm -rf -- /usr/share/dotnet
+          df -h "$GITHUB_WORKSPACE"
       - name: Unit tests, lint, ARM64 release
         run: |
           node ci/test-media-extension.cjs
+          node ci/test-deep-detection.cjs
+          node ci/test-content-extension.cjs
           gradle :app:testDebugUnitTest :app:lintRelease :app:assembleRelease --stacktrace
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: host-test-results
+          path: |
+            app/build/test-results/testDebugUnitTest/
+            app/build/reports/tests/testDebugUnitTest/
       - name: Check packaged engine, ABI and launcher
         run: |
           APK=app/build/outputs/apk/release/app-release-unsigned.apk
           unzip -l "$APK" | grep 'lib/arm64-v8a/libxul.so'
+          unzip -l "$APK" | grep 'public_suffix_list.dat'
           if unzip -l "$APK" | grep -E 'lib/(x86|armeabi)'; then exit 1; fi
           "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | tee apk-badging.txt
           grep "launchable-activity: name='com.adownloader.app.MainActivity'" apk-badging.txt
@@ -87,6 +102,7 @@ jobs:
             app/build/outputs/androidTest-results/
             ui-proof/
             ui-logcat.txt
+            extension-performance.json
             process-recovery-results/
 # The fixed private release key remains off GitHub. This workflow cannot publish an unsigned APK.
 
