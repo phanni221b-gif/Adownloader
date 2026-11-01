@@ -327,7 +327,7 @@ public class BrowserCompatibilityTest {
     app.runOnMainSync(() -> manager.load(base + "/tab-1"));
     awaitTitle("tab-1");
     AtomicReference<String> saved = new AtomicReference<>();
-    long end = System.currentTimeMillis() + 10000;
+    long end = System.currentTimeMillis() + 2000;
     while (System.currentTimeMillis() < end) {
       app.runOnMainSync(() -> manager.save(saved::set));
       if (saved.get() != null
@@ -335,7 +335,9 @@ public class BrowserCompatibilityTest {
               >= 2) break;
       Thread.sleep(50);
     }
-    assertNotNull(saved.get());
+    assertNotNull("Committed minimal history must not wait for periodic Gecko state", saved.get());
+    assertTrue(
+        new JSONObject(saved.get()).getJSONObject("history").getJSONArray("entries").length() >= 2);
     String state = saved.get();
     app.runOnMainSync(
         () -> {

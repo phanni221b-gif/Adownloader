@@ -47,7 +47,7 @@ public final class DirectTransfer {
     return s.toString();
   }
 
-  private static MessageDigest digest(FileChannel channel, long length) throws Exception {
+  private static MessageDigest digest(SeekableByteChannel channel, long length) throws Exception {
     MessageDigest digest = MessageDigest.getInstance("SHA-256");
     channel.position(0);
     ByteBuffer buffer = ByteBuffer.allocate(128 * 1024);
@@ -63,7 +63,7 @@ public final class DirectTransfer {
     return digest;
   }
 
-  private static String snapshot(MessageDigest digest, FileChannel channel, long length)
+  private static String snapshot(MessageDigest digest, SeekableByteChannel channel, long length)
       throws Exception {
     try {
       return hex(((MessageDigest) digest.clone()).digest());
@@ -79,6 +79,17 @@ public final class DirectTransfer {
       HttpSource source,
       String url,
       FileChannel target,
+      State prior,
+      Checkpoint checkpoint,
+      TransferControl control)
+      throws Exception {
+    copy(source, url, DurableChannel.wrap(target), prior, checkpoint, control);
+  }
+
+  public static void copy(
+      HttpSource source,
+      String url,
+      DurableChannel target,
       State prior,
       Checkpoint checkpoint,
       TransferControl control)
@@ -130,6 +141,7 @@ public final class DirectTransfer {
           digest = MessageDigest.getInstance("SHA-256");
         }
       }
+      target.reserve(total > done ? total - done : 0);
       byte[] buffer = new byte[128 * 1024];
       long saved = done;
       boolean success = false;

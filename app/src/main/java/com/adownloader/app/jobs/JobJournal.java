@@ -9,6 +9,8 @@ import org.json.*;
 public final class JobJournal implements EngineCheckpoint {
   private final DownloadJobStore store;
   private final long id;
+  private List<ManifestParser.Track> cachedPlan;
+  private boolean planLoaded;
 
   public JobJournal(DownloadJobStore store, long id) {
     this.store = store;
@@ -25,8 +27,12 @@ public final class JobJournal implements EngineCheckpoint {
 
   @Override
   public List<ManifestParser.Track> loadPlan() throws Exception {
-    JSONObject request = store.request(id);
-    return request.has("plan") ? PlanCodec.decode(request.getJSONArray("plan")) : null;
+    if (!planLoaded) {
+      JSONObject request = store.request(id);
+      cachedPlan = request.has("plan") ? PlanCodec.decode(request.getJSONArray("plan")) : null;
+      planLoaded = true;
+    }
+    return cachedPlan;
   }
 
   @Override
@@ -34,10 +40,22 @@ public final class JobJournal implements EngineCheckpoint {
     JSONObject request = store.request(id);
     request.put("plan", PlanCodec.encode(tracks));
     store.writeContext(id, request);
+    cachedPlan = tracks;
+    planLoaded = true;
   }
 
   public void verifyAll() throws Exception {
     JSONObject request = store.request(id), files = request.optJSONObject("directFiles");
+    if (loadFinal() != null) return;
+    JSONObject direct = request.optJSONObject("directMedia");
+    if (direct != null && direct.optLong("bytes") > 0) {
+      try (var fd = store.openPending(id, "r");
+          var input = new DescriptorChannel(fd.getFileDescriptor())) {
+        if (input.size() < direct.getLong("bytes")
+            || !prefixHash(input, direct.getLong("bytes")).equals(direct.getString("hash")))
+          throw new DownloadError(DownloadError.Category.STORAGE);
+      }
+    }
     if (files != null) {
       Iterator<String> names = files.keys();
       while (names.hasNext()) {
@@ -87,6 +105,98 @@ public final class JobJournal implements EngineCheckpoint {
       while ((n = in.read(buffer)) != -1) digest.update(buffer, 0, n);
     }
     return DirectTransfer.hex(digest.digest());
+  }
+
+  private static String prefixHash(java.nio.channels.SeekableByteChannel input, long length)
+      throws Exception {
+    MessageDigest hash = MessageDigest.getInstance("SHA-256");
+    java.nio.ByteBuffer buffer = java.nio.ByteBuffer.allocate(128 * 1024);
+    input.position(0);
+    long remaining = length;
+    while (remaining > 0) {
+      buffer.clear();
+      buffer.limit((int) Math.min(buffer.capacity(), remaining));
+      int read = input.read(buffer);
+      if (read <= 0) throw new DownloadError(DownloadError.Category.STORAGE);
+      hash.update(buffer.array(), 0, read);
+      remaining -= read;
+    }
+    return DirectTransfer.hex(hash.digest());
+  }
+
+  @Override
+  public DownloadEngine.Result loadFinal() throws Exception {
+    JSONObject value = store.request(id).optJSONObject("finalOutput");
+    if (value == null) return null;
+    String name = value.getString("name");
+    if (!name.matches("output-[0-9]+[.]mp4"))
+      throw new DownloadError(DownloadError.Category.STORAGE);
+    File file = new File(store.directory(id), name);
+    if (!file.isFile() || !hash(file).equals(value.getString("hash")))
+      throw new DownloadError(DownloadError.Category.STORAGE);
+    return new DownloadEngine.Result(file, value.getString("mime"), value.getString("extension"));
+  }
+
+  @Override
+  public void saveFinal(File file, String mime, String extension) throws Exception {
+    JSONObject request = store.request(id);
+    request.put(
+        "finalOutput",
+        new JSONObject()
+            .put("name", file.getName())
+            .put("hash", hash(file))
+            .put("mime", mime)
+            .put("extension", extension));
+    store.writeContext(id, request);
+  }
+
+  @Override
+  public void copy(
+      HttpSource source, String url, FileDescriptor descriptor, TransferControl control)
+      throws Exception {
+    JSONObject prior = store.request(id).optJSONObject("directMedia");
+    DirectTransfer.State state =
+        prior == null
+            ? DirectTransfer.State.empty()
+            : new DirectTransfer.State(
+                prior.getLong("bytes"),
+                prior.optLong("total", -1),
+                prior.optString("etag"),
+                prior.optString("modified"),
+                prior.optString("hash"),
+                prior.optBoolean("complete"),
+                false);
+    try (DescriptorChannel target = new DescriptorChannel(descriptor)) {
+      DirectTransfer.copy(
+          source,
+          url,
+          target,
+          state,
+          checkpoint -> {
+            JSONObject request = store.request(id);
+            request.put(
+                "directMedia",
+                new JSONObject()
+                    .put("bytes", checkpoint.bytes)
+                    .put("total", checkpoint.total)
+                    .put("etag", checkpoint.etag)
+                    .put("modified", checkpoint.modified)
+                    .put("hash", checkpoint.sha256)
+                    .put("complete", checkpoint.complete));
+            store.writeContext(id, request);
+            store.progress(
+                id,
+                checkpoint.restarted ? "이어받기 불가 · 처음부터 다시 받는 중" : "원본 저장 중",
+                checkpoint.total > 0 ? (int) (checkpoint.bytes * 100 / checkpoint.total) : 0,
+                checkpoint.bytes,
+                checkpoint.total,
+                0,
+                0);
+          },
+          control);
+    } finally {
+      sourceMetadata(source.disposition());
+    }
   }
 
   @Override

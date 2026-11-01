@@ -8,7 +8,7 @@ import org.mozilla.geckoview.GeckoSession;
 public final class SafeSessionState {
   private SafeSessionState() {}
 
-  public static String capture(GeckoSession.SessionState state) {
+  public static String capture(GeckoSession.HistoryDelegate.HistoryList state) {
     try {
       JSONArray entries = new JSONArray();
       int current = state.getCurrentIndex(), selected = 0;
@@ -21,6 +21,57 @@ public final class SafeSessionState {
         if (i <= current) selected = entries.length();
       }
       return history(entries, selected);
+    } catch (Exception ignored) {
+      return null;
+    }
+  }
+
+  /** Immediate minimal fallback while Gecko's periodic session-store update is pending. */
+  public static String visit(String value, String url, String name) {
+    if (!safeUrl(url)) return value;
+    try {
+      JSONObject old =
+          value == null ? new JSONObject() : new JSONObject(value).optJSONObject("history");
+      JSONArray entries = old == null ? null : old.optJSONArray("entries"), next = new JSONArray();
+      int selected = old == null ? 0 : old.optInt("index", 1);
+      if (entries != null
+          && selected > 0
+          && selected <= entries.length()
+          && url.equals(entries.getJSONObject(selected - 1).optString("url"))) {
+        entries.getJSONObject(selected - 1).put("title", title(name));
+        return history(entries, selected);
+      }
+      if (entries != null)
+        for (int i = Math.max(0, selected - 99); i < Math.min(selected, entries.length()); i++)
+          next.put(entries.getJSONObject(i));
+      next.put(new JSONObject().put("url", url).put("title", title(name)));
+      return history(next, next.length());
+    } catch (Exception ignored) {
+      return value;
+    }
+  }
+
+  public static String shift(String value, int delta) {
+    try {
+      JSONObject root = new JSONObject(value), history = root.getJSONObject("history");
+      history.put(
+          "index",
+          Math.max(
+              1,
+              Math.min(history.getJSONArray("entries").length(), history.getInt("index") + delta)));
+      return root.toString();
+    } catch (Exception ignored) {
+      return value;
+    }
+  }
+
+  public static String currentUrl(String value) {
+    try {
+      JSONObject history = new JSONObject(value).getJSONObject("history");
+      return history
+          .getJSONArray("entries")
+          .getJSONObject(history.getInt("index") - 1)
+          .getString("url");
     } catch (Exception ignored) {
       return null;
     }

@@ -27,6 +27,7 @@ public final class MainActivity extends AppCompatActivity
   private BrowserSessionManager browser;
   private BrowserDataStore browserData;
   private BrowserToolsController browserTools;
+  private FoldLayoutController folds;
   private MediaExtensionManager mediaExtension;
   private PopupController popups;
   private MediaDetector detector;
@@ -80,6 +81,12 @@ public final class MainActivity extends AppCompatActivity
               }
             });
     mediaExtension.install();
+    folds =
+        new FoldLayoutController(
+            this,
+            () -> {
+              if (records != null) records.resize();
+            });
     getOnBackPressedDispatcher()
         .addCallback(
             this,
@@ -237,6 +244,7 @@ public final class MainActivity extends AppCompatActivity
     navigation.setSelectedItemId(selected);
     showPage(selected);
     root.requestApplyInsets();
+    if (folds != null) folds.refresh();
   }
 
   private void navigate(String raw) {
@@ -427,6 +435,7 @@ public final class MainActivity extends AppCompatActivity
 
   @Override
   public void onBrowserCrashed() {
+    DeviceDiagnostics.browserCrash(this);
     runOnUiThread(
         () ->
             UiSheets.action(
@@ -571,6 +580,8 @@ public final class MainActivity extends AppCompatActivity
     handler.removeCallbacksAndMessages(null);
     if (records != null) records.close();
     if (mediaSheet != null) mediaSheet.close();
+    UiSheets.close(this);
+    if (folds != null) folds.close();
     if (popups != null) popups.close();
     if (mediaExtension != null) mediaExtension.close();
     if (browser != null) browser.close();

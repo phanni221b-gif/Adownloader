@@ -23,6 +23,7 @@ public final class JobRunner {
 
   public void run(DownloadJobStore.Job job, TransferControl control) {
     DownloadEngine engine = null;
+    ParcelFileDescriptor destination = null;
     int legacy = (int) job.id;
     try {
       JSONObject request = store.request(job.id);
@@ -40,6 +41,12 @@ public final class JobRunner {
       if (!store.transition(
           job.id, DownloadJobStore.State.PREPARING, DownloadJobStore.State.DOWNLOADING)) return;
       DownloadHistory.begin(context, legacy, job.host, job.type);
+      boolean segmented = "HLS".equals(job.type) || "DASH".equals(job.type);
+      Uri pending =
+          ensurePending(job.id, job.name, "AUDIO".equals(job.type) ? "audio/mp4" : "video/mp4");
+      destination =
+          context.getContentResolver().openFileDescriptor(pending, segmented ? "rwt" : "rw");
+      if (destination == null) throw new DownloadError(DownloadError.Category.STORAGE);
       engine =
           new DownloadEngine(
               store.directory(job.id),
@@ -62,10 +69,20 @@ public final class JobRunner {
                         JobNotifications.running(context, store.get(job.id)));
               },
               new JobJournal(store, job.id),
-              control);
+              control,
+              destination == null ? null : destination.getFileDescriptor());
       DownloadEngine.Result result =
           engine.download(
               request.getString("url"), MediaCandidate.MediaType.valueOf(job.type), headers);
+      if (destination != null) {
+        try {
+          destination.getFileDescriptor().sync();
+          destination.close();
+          destination = null;
+        } catch (IOException storage) {
+          throw new DownloadError(DownloadError.Category.STORAGE);
+        }
+      }
       control.check();
       if (!store.transition(
           job.id, DownloadJobStore.State.DOWNLOADING, DownloadJobStore.State.FINALIZING)) return;
@@ -118,13 +135,19 @@ public final class JobRunner {
         DownloadError.Category category =
             error instanceof DownloadError
                 ? ((DownloadError) error).category
-                : error instanceof java.security.GeneralSecurityException
-                    ? DownloadError.Category.AUTH
-                    : error instanceof java.net.SocketException
-                            || error instanceof java.net.SocketTimeoutException
-                            || error instanceof java.net.UnknownHostException
-                        ? DownloadError.Category.NETWORK
-                        : DownloadError.Category.UNKNOWN;
+                : error instanceof DownloadError.ManifestFailure
+                    ? ((DownloadError.ManifestFailure) error).category
+                    : error instanceof org.xml.sax.SAXException
+                            || error instanceof NumberFormatException
+                        ? DownloadError.Category.MANIFEST_INVALID
+                        : error instanceof java.security.GeneralSecurityException
+                            ? DownloadError.Category.AUTH
+                            : error instanceof java.net.SocketException
+                                    || error instanceof java.net.SocketTimeoutException
+                                    || error instanceof java.net.UnknownHostException
+                                ? DownloadError.Category.NETWORK
+                                : DownloadError.Category.UNKNOWN;
+        com.adownloader.app.ui.DeviceDiagnostics.failure(context, category);
         store.state(
             job.id,
             category == DownloadError.Category.AUTH
@@ -139,6 +162,12 @@ public final class JobRunner {
             null);
       }
       JobNotifications.status(context, store.get(job.id));
+    } finally {
+      if (destination != null)
+        try {
+          destination.close();
+        } catch (IOException ignored) {
+        }
     }
   }
 
@@ -151,46 +180,41 @@ public final class JobRunner {
     }
   }
 
+  private Uri ensurePending(long id, String name, String mime) throws Exception {
+    return store.ensurePending(id, name, mime);
+  }
+
   private Uri publish(long id, DownloadEngine.Result result, String name, TransferControl control)
       throws Exception {
-    DownloadJobStore.Job job = store.get(id);
-    Uri uri = job.pending.isEmpty() ? null : Uri.parse(job.pending);
-    if (uri == null) {
-      ContentValues values = new ContentValues();
-      values.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
-      values.put(MediaStore.MediaColumns.MIME_TYPE, result.mime);
-      values.put(
-          MediaStore.MediaColumns.RELATIVE_PATH,
-          (result.mime.startsWith("audio/")
-                  ? Environment.DIRECTORY_MUSIC
-                  : Environment.DIRECTORY_MOVIES)
-              + "/Adownloader");
-      values.put(MediaStore.MediaColumns.IS_PENDING, 1);
-      uri =
-          context
-              .getContentResolver()
-              .insert(
-                  result.mime.startsWith("audio/")
-                      ? MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-                      : MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-                  values);
-      if (uri == null) throw new DownloadError(DownloadError.Category.STORAGE);
-      store.pending(id, uri.toString());
-    }
-    if (new StatFs(context.getFilesDir().getPath()).getAvailableBytes()
-        < result.file.length() + 8 * 1024 * 1024)
+    Uri uri = ensurePending(id, name, result.mime);
+    ContentValues metadata = new ContentValues();
+    metadata.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+    metadata.put(MediaStore.MediaColumns.MIME_TYPE, result.mime);
+    metadata.put(
+        MediaStore.MediaColumns.RELATIVE_PATH,
+        (result.mime.startsWith("audio/")
+                ? Environment.DIRECTORY_MUSIC
+                : Environment.DIRECTORY_MOVIES)
+            + "/Adownloader");
+    if (context.getContentResolver().update(uri, metadata, null, null) <= 0)
       throw new DownloadError(DownloadError.Category.STORAGE);
-    try (InputStream in = new FileInputStream(result.file);
-        OutputStream out = context.getContentResolver().openOutputStream(uri, "wt")) {
-      if (out == null) throw new DownloadError(DownloadError.Category.STORAGE);
-      byte[] buffer = new byte[128 * 1024];
-      int n;
-      while ((n = in.read(buffer)) != -1) {
-        control.check();
-        out.write(buffer, 0, n);
+    if (result.file != null) {
+      if (new StatFs(context.getFilesDir().getPath()).getAvailableBytes()
+          < result.file.length() + 8 * 1024 * 1024)
+        throw new DownloadError(DownloadError.Category.STORAGE);
+      try (InputStream in = new FileInputStream(result.file);
+          OutputStream out = context.getContentResolver().openOutputStream(uri, "wt")) {
+        if (out == null) throw new DownloadError(DownloadError.Category.STORAGE);
+        byte[] buffer = new byte[128 * 1024];
+        int n;
+        while ((n = in.read(buffer)) != -1) {
+          control.check();
+          out.write(buffer, 0, n);
+        }
       }
     }
-    try (ParcelFileDescriptor fd = context.getContentResolver().openFileDescriptor(uri, "r")) {
+    try (ParcelFileDescriptor fd = context.getContentResolver().openFileDescriptor(uri, "rw")) {
+      if (fd != null) fd.getFileDescriptor().sync();
       if (fd == null) throw new DownloadError(DownloadError.Category.STORAGE);
       PostProcessor.inspect(
           fd.getFileDescriptor(),
@@ -201,7 +225,8 @@ public final class JobRunner {
     control.check();
     ContentValues published = new ContentValues();
     published.put(MediaStore.MediaColumns.IS_PENDING, 0);
-    context.getContentResolver().update(uri, published, null, null);
+    if (context.getContentResolver().update(uri, published, null, null) <= 0)
+      throw new DownloadError(DownloadError.Category.STORAGE);
     return uri;
   }
 }

@@ -43,7 +43,7 @@ public final class PostProcessor {
     try {
       source.apply(extractor);
       if (extractor.getPsshInfo() != null && !extractor.getPsshInfo().isEmpty())
-        throw new IOException("DRM 미디어는 지원하지 않습니다");
+        throw new DownloadError(DownloadError.Category.DRM);
       Inspection result = new Inspection();
       for (int i = 0; i < extractor.getTrackCount(); i++) {
         MediaFormat format = extractor.getTrackFormat(i);
@@ -70,7 +70,7 @@ public final class PostProcessor {
             || extractor.readSampleData(ByteBuffer.allocate((int) sampleSize), 0) != sampleSize)
           throw new IOException("미디어 샘플이 잘렸습니다");
         if ((extractor.getSampleFlags() & MediaExtractor.SAMPLE_FLAG_ENCRYPTED) != 0)
-          throw new IOException("DRM 트랙은 지원하지 않습니다");
+          throw new DownloadError(DownloadError.Category.DRM);
         extractor.unselectTrack(i);
       }
       if (result.durationUs <= 0 || (needVideo && !result.video) || (needAudio && !result.audio))
@@ -86,20 +86,67 @@ public final class PostProcessor {
   }
 
   public static void mux(List<File> files, File output, TransferControl control) throws Exception {
+    List<Source> sources = new ArrayList<>();
+    for (File file : files)
+      sources.add(extractor -> extractor.setDataSource(file.getAbsolutePath()));
+    muxPrepared(
+        sources,
+        () -> new MediaMuxer(output.getAbsolutePath(), MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4),
+        control);
+  }
+
+  public static void muxSources(
+      List<android.media.MediaDataSource> inputs, File output, TransferControl control)
+      throws Exception {
+    List<Source> sources = new ArrayList<>();
+    for (var input : inputs) sources.add(extractor -> extractor.setDataSource(input));
+    muxPrepared(
+        sources,
+        () -> new MediaMuxer(output.getAbsolutePath(), MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4),
+        control);
+  }
+
+  public static void muxSources(
+      List<android.media.MediaDataSource> inputs,
+      java.io.FileDescriptor output,
+      TransferControl control)
+      throws Exception {
+    List<Source> sources = new ArrayList<>();
+    for (var input : inputs) sources.add(extractor -> extractor.setDataSource(input));
+    muxPrepared(
+        sources,
+        () -> new MediaMuxer(output, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4),
+        control);
+  }
+
+  private interface MuxerFactory {
+    MediaMuxer create() throws Exception;
+  }
+
+  public static void muxDescriptor(
+      java.io.FileDescriptor input, File output, TransferControl control) throws Exception {
+    muxPrepared(
+        Collections.singletonList(extractor -> extractor.setDataSource(input)),
+        () -> new MediaMuxer(output.getAbsolutePath(), MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4),
+        control);
+  }
+
+  private static void muxPrepared(
+      List<Source> sources, MuxerFactory factory, TransferControl control) throws Exception {
     control.check();
     List<MediaExtractor> extractors = new ArrayList<>();
     List<Map<Integer, Integer>> maps = new ArrayList<>();
     MediaMuxer muxer = null;
     boolean started = false;
     try {
-      muxer = new MediaMuxer(output.getAbsolutePath(), MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
+      muxer = factory.create();
       long maxInput = 4 * 1024 * 1024;
-      for (File file : files) {
+      for (Source input : sources) {
         MediaExtractor extractor = new MediaExtractor();
         extractors.add(extractor);
-        extractor.setDataSource(file.getAbsolutePath());
+        input.apply(extractor);
         if (extractor.getPsshInfo() != null && !extractor.getPsshInfo().isEmpty())
-          throw new IOException("DRM 트랙은 지원하지 않습니다");
+          throw new DownloadError(DownloadError.Category.DRM);
         Map<Integer, Integer> map = new HashMap<>();
         maps.add(map);
         for (int t = 0; t < extractor.getTrackCount(); t++) {
@@ -107,22 +154,29 @@ public final class PostProcessor {
           String mime = format.getString(MediaFormat.KEY_MIME);
           if (mime == null || !(mime.startsWith("video/") || mime.startsWith("audio/"))) continue;
           // If there is a separate audio source, avoid duplicate audio from the video source.
-          if (files.size() > 1 && files.indexOf(file) == 0 && mime.startsWith("audio/")) continue;
-          map.put(t, muxer.addTrack(format));
+          if (sources.size() > 1 && sources.indexOf(input) == 0 && mime.startsWith("audio/"))
+            continue;
+          try {
+            map.put(t, muxer.addTrack(format));
+          } catch (IllegalArgumentException unsupported) {
+            throw new DownloadError(DownloadError.Category.UNSUPPORTED_CODEC);
+          }
           extractor.selectTrack(t);
           if (format.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE))
             maxInput = Math.max(maxInput, format.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE));
         }
-        if (map.isEmpty()) throw new IOException("병합할 트랙이 없습니다");
+        if (map.isEmpty()) throw new DownloadError(DownloadError.Category.UNSUPPORTED_FORMAT);
       }
-      if (maxInput > 64 * 1024 * 1024) throw new IOException("미디어 샘플 크기 제한 초과");
+      if (maxInput > 64 * 1024 * 1024)
+        throw new DownloadError(DownloadError.Category.UNSUPPORTED_FORMAT);
       ByteBuffer buffer = ByteBuffer.allocateDirect((int) maxInput);
       MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
       long firstTime = Long.MAX_VALUE;
       for (MediaExtractor extractor : extractors)
         if (extractor.getSampleTrackIndex() >= 0)
           firstTime = Math.min(firstTime, extractor.getSampleTime());
-      if (firstTime == Long.MAX_VALUE) throw new IOException("미디어 샘플 없음");
+      if (firstTime == Long.MAX_VALUE)
+        throw new DownloadError(DownloadError.Category.UNSUPPORTED_FORMAT);
       muxer.start();
       started = true;
       while (true) {
@@ -141,10 +195,11 @@ public final class PostProcessor {
         MediaExtractor source = extractors.get(selected);
         int flags = source.getSampleFlags();
         if ((flags & MediaExtractor.SAMPLE_FLAG_ENCRYPTED) != 0)
-          throw new IOException("DRM 샘플은 지원하지 않습니다");
+          throw new DownloadError(DownloadError.Category.DRM);
         long size = source.getSampleSize();
         if (size > buffer.capacity()) {
-          if (size > 64 * 1024 * 1024) throw new IOException("미디어 샘플 크기 제한 초과");
+          if (size > 64 * 1024 * 1024)
+            throw new DownloadError(DownloadError.Category.UNSUPPORTED_FORMAT);
           buffer = ByteBuffer.allocateDirect((int) size);
         }
         buffer.clear();

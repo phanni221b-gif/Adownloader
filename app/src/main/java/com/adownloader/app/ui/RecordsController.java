@@ -42,7 +42,10 @@ public final class RecordsController implements SharedPreferences.OnSharedPrefer
   private final SharedPreferences prefs;
   private List<JSONObject> all = new ArrayList<>();
   private List<JSONObject> ownedVideos = new ArrayList<>();
-  private boolean disposed, loading, pendingRefresh;
+  private volatile boolean disposed;
+  private boolean loading, pendingRefresh;
+  private final ConcurrentMap<String, CancellationSignal> thumbnailRequests =
+      new ConcurrentHashMap<>();
   private int filter = R.id.filter_all;
 
   public RecordsController(Activity activity) {
@@ -89,6 +92,8 @@ public final class RecordsController implements SharedPreferences.OnSharedPrefer
     libraryRefresh.setOnRefreshListener(() -> refresh(true));
     downloads.setLayoutManager(new GridLayoutManager(activity, 1));
     library.setLayoutManager(new GridLayoutManager(activity, 2));
+    downloads.addItemDecoration(FoldLayoutController.gridDecoration(activity));
+    library.addItemDecoration(FoldLayoutController.gridDecoration(activity));
     downloads.setAdapter(downloadAdapter);
     library.setAdapter(libraryAdapter);
     downloads.setItemAnimator(null);
@@ -115,10 +120,17 @@ public final class RecordsController implements SharedPreferences.OnSharedPrefer
   }
 
   public void resize() {
-    float width = activity.getResources().getConfiguration().screenWidthDp;
-    ((GridLayoutManager) downloads.getLayoutManager()).setSpanCount(width >= 840 ? 2 : 1);
+    float density = activity.getResources().getDisplayMetrics().density;
+    float width =
+        downloads.getWidth() > 0
+            ? downloads.getWidth() / density
+            : activity.getResources().getConfiguration().screenWidthDp;
+    boolean split = FoldLayoutController.spansVerticalHinge(activity, downloads);
+    ((GridLayoutManager) downloads.getLayoutManager()).setSpanCount(split || width >= 840 ? 2 : 1);
+    float libraryWidth = library.getWidth() > 0 ? library.getWidth() / density : width;
+    boolean librarySplit = FoldLayoutController.spansVerticalHinge(activity, library);
     ((GridLayoutManager) library.getLayoutManager())
-        .setSpanCount(width >= 1000 ? 4 : width >= 700 ? 3 : 2);
+        .setSpanCount(libraryWidth >= 1000 ? 4 : librarySplit ? 2 : libraryWidth >= 700 ? 3 : 2);
   }
 
   @Override
@@ -320,6 +332,7 @@ public final class RecordsController implements SharedPreferences.OnSharedPrefer
   }
 
   private void thumbnail(ImageView view, JSONObject row) {
+    if (disposed) return;
     String uri = row.optString("uri");
     view.setTag(uri);
     view.setImageResource(R.drawable.ic_media);
@@ -337,24 +350,33 @@ public final class RecordsController implements SharedPreferences.OnSharedPrefer
       view.setImageBitmap(cached);
       return;
     }
+    CancellationSignal signal = new CancellationSignal();
+    if (thumbnailRequests.putIfAbsent(uri, signal) != null) return;
+    java.lang.ref.WeakReference<ImageView> target = new java.lang.ref.WeakReference<>(view);
+    Context application = activity.getApplicationContext();
     images.execute(
         () -> {
           try {
+            if (disposed) return;
             Bitmap bitmap =
-                activity
+                application
                     .getContentResolver()
-                    .loadThumbnail(Uri.parse(uri), new Size(480, 270), null);
+                    .loadThumbnail(Uri.parse(uri), new Size(480, 270), signal);
+            if (disposed) return;
             thumbnails.put(uri, bitmap);
             main.post(
                 () -> {
-                  if (!disposed && uri.equals(view.getTag())) {
-                    view.setImageTintList(null);
-                    view.setPadding(0, 0, 0, 0);
-                    view.setScaleType(ImageView.ScaleType.CENTER_CROP);
-                    view.setImageBitmap(bitmap);
+                  ImageView image = target.get();
+                  if (!disposed && image != null && uri.equals(image.getTag())) {
+                    image.setImageTintList(null);
+                    image.setPadding(0, 0, 0, 0);
+                    image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                    image.setImageBitmap(bitmap);
                   }
                 });
           } catch (Exception ignored) {
+          } finally {
+            thumbnailRequests.remove(uri, signal);
           }
         });
   }
@@ -575,6 +597,9 @@ public final class RecordsController implements SharedPreferences.OnSharedPrefer
     prefs.unregisterOnSharedPreferenceChangeListener(this);
     main.removeCallbacksAndMessages(null);
     io.shutdownNow();
+    thumbnailRequests.values().forEach(CancellationSignal::cancel);
+    thumbnailRequests.clear();
     images.shutdownNow();
+    thumbnails.evictAll();
   }
 }

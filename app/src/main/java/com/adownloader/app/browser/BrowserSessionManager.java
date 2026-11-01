@@ -97,6 +97,7 @@ public final class BrowserSessionManager {
               List<GeckoSession.PermissionDelegate.ContentPermission> permissions,
               Boolean gesture) {
             tab.url = value == null ? "about:blank" : value;
+            tab.state = SafeSessionState.visit(tab.state, tab.url, tab.title);
             tab.policy.committed(tab.url);
             if (active == tab && listener != null) listener.onLocationChanged(tab.url);
           }
@@ -159,7 +160,7 @@ public final class BrowserSessionManager {
 
           @Override
           public void onSessionStateChange(GeckoSession source, GeckoSession.SessionState state) {
-            tab.state = SafeSessionState.capture(state);
+            applyHistory(tab, state);
           }
 
           @Override
@@ -179,7 +180,8 @@ public final class BrowserSessionManager {
 
           @Override
           public void onTitleChange(GeckoSession source, String title) {
-            tab.title = title == null ? "" : title;
+            tab.title = title == null ? "" : title.substring(0, Math.min(300, title.length()));
+            tab.state = SafeSessionState.visit(tab.state, tab.url, tab.title);
           }
 
           @Override
@@ -190,6 +192,13 @@ public final class BrowserSessionManager {
           @Override
           public void onKill(GeckoSession source) {
             if (active == tab && listener != null) listener.onBrowserCrashed();
+          }
+        });
+    tab.session.setHistoryDelegate(
+        new GeckoSession.HistoryDelegate() {
+          @Override
+          public void onHistoryStateChange(GeckoSession source, HistoryList history) {
+            applyHistory(tab, history);
           }
         });
     tab.session.open(runtime);
@@ -264,14 +273,16 @@ public final class BrowserSessionManager {
 
   public void goBack() {
     if (active != null && active.back) {
-      active.policy.beginUserNavigation();
+      active.state = SafeSessionState.shift(active.state, -1);
+      active.policy.beginUserNavigation(SafeSessionState.currentUrl(active.state));
       active.session.goBack();
     }
   }
 
   public void goForward() {
     if (active != null && active.forward) {
-      active.policy.beginUserNavigation();
+      active.state = SafeSessionState.shift(active.state, 1);
+      active.policy.beginUserNavigation(SafeSessionState.currentUrl(active.state));
       active.session.goForward();
     }
   }
@@ -400,6 +411,7 @@ public final class BrowserSessionManager {
               .getJSONObject(history.getInt("index") - 1)
               .getString("url");
       active.policy.beginUserNavigation(target);
+      active.state = safe;
       active.session.restoreState(GeckoSession.SessionState.fromString(safe));
       return true;
     } catch (Exception ignored) {
@@ -411,5 +423,14 @@ public final class BrowserSessionManager {
     if (listener != null)
       listener.onNavigationStateChanged(
           active != null && active.back, active != null && active.forward);
+  }
+
+  private void applyHistory(Tab tab, GeckoSession.HistoryDelegate.HistoryList history) {
+    String safe = SafeSessionState.capture(history);
+    if (safe != null && tab.url.equals(SafeSessionState.currentUrl(safe))) {
+      if (tab.back && history.getCurrentIndex() == 0) return;
+      if (tab.forward && history.getCurrentIndex() == history.size() - 1) return;
+      tab.state = safe;
+    }
   }
 }
