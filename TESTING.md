@@ -49,3 +49,12 @@ The final stress assertion exposed an unused empty `.media` placeholder on the n
 ## Phase E / v0.6.0 acceptance
 
 [Workflow 41298112814](https://github.com/phanni221b-gif/Adownloader/actions/runs/41298112814), snapshot `ca212e06d3e02afe2714ad19307fb2c74ced0f1c`: 50 host tests, 30 Android integration/UI tests, nine external recovery/control invocations, lint, ARM64 release and engine/ABI/launcher package checks passed. The final app is version 0.6.0 / code 10. Phase E changes only settings grouping, restrained section/download typography and redundant dividers; it does not modify the accepted engine. Emulator UI captures cover light/dark, phone/Fold sizes, landscape, sheets and keyboard.
+
+
+## v0.6.1 stabilization acceptance
+
+[Workflow 41303247976](https://github.com/phanni221b-gif/Adownloader/actions/runs/41303247976), snapshot `08566a030b65a5c5e8c0689ae130a9e36f693e13`: build, 62 host tests, lint, ARM64 release, media-extension JS/package checks, 36 Android integration/UI tests and all 11 external recovery/control invocations passed. The XML reports zero failures/errors/skips. Existing 50 host / 30 native / nine external checks remain, with the foreground-queue test observing SQLite instead of retired duplicate preferences and retaining the two-completion assertion plus a new no-legacy-write assertion.
+
+The new native tests cover real encrypted v1-to-v2 upgrade, failed-upgrade rollback/downgrade rejection, durable final-output cleanup/reopen/corruption, insufficient capacity, typed ENOSPC and SQLite-only state. The external harness expires source URLs between finalization and actual force-stop recovery and asserts no extra media requests. Added host cases cover synthetic 20 GiB capacity and conservative CDN/JWT/refresh identity. The first validation snapshot failed only because a legacy foreground test still read SharedPreferences; the final test reads authoritative job IDs and still requires both actual jobs to finish after Activity closure. Its timeout and success requirement were not relaxed.
+
+Peak segment+output storage during platform mux remains a disclosed limitation; the final checkpoint adds full-hash I/O. No physical Fold8 was available; native evidence is Android 36 x86_64. Same-key ARM64 package/signature checks are recorded with the published release.

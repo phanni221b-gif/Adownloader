@@ -20,36 +20,18 @@ public final class MediaIdentity {
       if (uri.getUserInfo() != null) return exact(type, url);
       String path = uri.getRawPath() == null ? "/" : uri.getRawPath();
       String query = uri.getRawQuery();
-      List<String> parts = new ArrayList<>();
-      boolean stable = specific(path), aws = false;
-      if (query != null) {
-        for (String part : query.split("&")) {
-          String key = decode(part.split("=", 2)[0]).toLowerCase(Locale.ROOT);
-          if (key.equals("id") || key.equals("videoid") || key.equals("representation"))
-            stable = true;
-          if (key.equals("x-amz-algorithm")) aws = true;
-        }
-      }
-      if (!stable && !aws) return exact(type, url);
+      boolean stable = specific(path);
       if (query != null)
         for (String part : query.split("&")) {
-          String key = decode(part.split("=", 2)[0]).toLowerCase(Locale.ROOT);
-          boolean volatileKey =
-              Set.of("token", "signature", "expires", "timestamp", "_").contains(key)
-                  || (aws && key.startsWith("x-amz-"));
-          if (!volatileKey) parts.add(part);
+          String[] kv = part.split("=", 2);
+          String key = decode(kv[0]).toLowerCase(Locale.ROOT);
+          if (Set.of("id", "videoid", "representation").contains(key)
+              && kv.length == 2
+              && !kv[1].isEmpty()) stable = true;
         }
+      String identityQuery = CdnQueryPolicy.identityQuery(uri, stable);
 
-      return hash(
-          type
-              + "|"
-              + origin(page)
-              + "|"
-              + origin(url)
-              + "|"
-              + path
-              + "?"
-              + String.join("&", parts));
+      return hash(type + "|" + origin(page) + "|" + origin(url) + "|" + path + "?" + identityQuery);
     } catch (Exception invalid) {
       return exact(type, url);
     }

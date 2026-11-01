@@ -220,19 +220,7 @@ public final class MediaProbeService implements AutoCloseable {
   }
 
   private static long expiry(String url) {
-    try {
-      String query = URI.create(url).getRawQuery();
-      if (query != null)
-        for (String part : query.split("&")) {
-          String[] kv = part.split("=", 2);
-          if (kv.length == 2 && kv[0].equalsIgnoreCase("expires")) {
-            long seconds = Long.parseLong(kv[1]);
-            if (seconds > 1500000000L && seconds < Long.MAX_VALUE / 1000) return seconds * 1000;
-          }
-        }
-    } catch (Exception ignored) {
-    }
-    return Long.MAX_VALUE;
+    return com.adownloader.app.media.CdnQueryPolicy.expiresAt(url);
   }
 
   @Override
