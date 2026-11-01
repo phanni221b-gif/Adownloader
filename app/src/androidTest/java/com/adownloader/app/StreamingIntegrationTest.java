@@ -172,12 +172,7 @@ public class StreamingIntegrationTest {
           context.getContentResolver().insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values);
       assertNotNull(published);
       store.reconcile();
-      try (var cursor =
-          context
-              .getContentResolver()
-              .query(orphan, new String[] {MediaStore.MediaColumns._ID}, null, null, null)) {
-        assertTrue(cursor == null || !cursor.moveToFirst());
-      }
+      assertFalse("Unreferenced pending row must be absent", exists(context, orphan));
       for (Uri kept : new Uri[] {protectedUri, published})
         try (var cursor =
             context
@@ -190,8 +185,20 @@ public class StreamingIntegrationTest {
       store.state(id, com.adownloader.app.jobs.DownloadJobStore.State.CANCELED, "");
       store.cleanup(id);
       store.clearTerminal(com.adownloader.app.jobs.DownloadJobStore.State.CANCELED);
-      if (orphan != null) context.getContentResolver().delete(orphan, null, null);
+      if (orphan != null && exists(context, orphan))
+        context.getContentResolver().delete(orphan, null, null);
       if (published != null) context.getContentResolver().delete(published, null, null);
+    }
+  }
+
+  private static boolean exists(Context context, Uri uri) {
+    try (var cursor =
+        context
+            .getContentResolver()
+            .query(uri, new String[] {MediaStore.MediaColumns._ID}, null, null, null)) {
+      return cursor != null && cursor.moveToFirst();
+    } catch (SecurityException noLongerOwned) {
+      return false;
     }
   }
 }

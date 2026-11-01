@@ -113,6 +113,8 @@ public final class JobNotifications {
     switch (error) {
       case "CLEANUP_PENDING":
         return "임시 파일 정리를 다음 실행에서 다시 시도합니다.";
+      case "STORAGE_FULL":
+        return "저장 공간이 부족합니다. 파일을 정리한 뒤 다시 시도해 주세요.";
       case "STORAGE":
         return "저장 공간 또는 임시 파일을 확인해 주세요.";
       case "HLS_GAP":

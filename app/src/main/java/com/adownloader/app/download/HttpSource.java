@@ -163,7 +163,7 @@ public final class HttpSource {
         connection = open(url, offset, length);
         long expected = connection.getContentLengthLong();
         if (expected > 0 && expected > file.getParentFile().getUsableSpace() - 8L * 1024 * 1024)
-          throw new DownloadError(DownloadError.Category.STORAGE);
+          throw new DownloadError(DownloadError.Category.STORAGE_FULL);
         CountingInput raw = new CountingInput(connection.getInputStream());
         try (InputStream input = decoder == null ? raw : decoder.wrap(raw);
             FileOutputStream output = new FileOutputStream(file)) {

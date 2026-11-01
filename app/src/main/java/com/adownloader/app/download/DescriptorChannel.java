@@ -41,7 +41,10 @@ public final class DescriptorChannel implements DurableChannel {
       position += read;
       return read;
     } catch (ErrnoException error) {
-      throw storage();
+      throw new DownloadError(
+          error.errno == OsConstants.ENOSPC
+              ? DownloadError.Category.STORAGE_FULL
+              : DownloadError.Category.STORAGE);
     }
   }
 
@@ -128,7 +131,8 @@ public final class DescriptorChannel implements DurableChannel {
       } catch (ArithmeticException huge) {
         available = Long.MAX_VALUE;
       }
-      if (remaining > available - 8L * 1024 * 1024) throw storage();
+      if (remaining > available - 8L * 1024 * 1024)
+        throw new DownloadError(DownloadError.Category.STORAGE_FULL);
     } catch (ErrnoException error) {
       throw storage();
     }

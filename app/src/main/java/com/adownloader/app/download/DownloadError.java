@@ -9,6 +9,7 @@ public final class DownloadError extends IOException {
     AUTH,
     EXPIRED_URL,
     STORAGE,
+    STORAGE_FULL,
     DRM,
     UNSUPPORTED_FORMAT,
     UNSUPPORTED_CODEC,
