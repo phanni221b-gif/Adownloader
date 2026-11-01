@@ -25,6 +25,7 @@ import org.mozilla.geckoview.GeckoView;
 public final class MainActivity extends AppCompatActivity
     implements BrowserSessionManager.Listener, MediaDetector.Listener {
   private BrowserSessionManager browser;
+  private MediaExtensionManager mediaExtension;
   private PopupController popups;
   private MediaDetector detector;
   private RecordsController records;
@@ -41,7 +42,8 @@ public final class MainActivity extends AppCompatActivity
   private float shellDensity, shellFontScale;
   private int selected = R.id.nav_browser, pageProgress = 100, mediaCount;
   private final Handler handler = new Handler(Looper.getMainLooper());
-  private boolean detectionNoticePending;
+  private boolean detectionNoticePending, refreshNoticeVisible;
+  private final java.util.LinkedHashSet<String> refreshOffers = new java.util.LinkedHashSet<>();
 
   @Override
   protected void onCreate(Bundle state) {
@@ -54,7 +56,8 @@ public final class MainActivity extends AppCompatActivity
     detector = new MediaDetector(this);
     browser = new BrowserSessionManager(this, geckoView, this);
     popups = new PopupController(this, browser::load);
-    new MediaExtensionManager(
+    mediaExtension =
+        new MediaExtensionManager(
             browser.getRuntime(),
             detector,
             new MediaExtensionManager.StatusListener() {
@@ -71,8 +74,8 @@ public final class MainActivity extends AppCompatActivity
                       notice("영상 감지를 준비하지 못했습니다. 앱을 다시 열어 주세요.");
                     });
               }
-            })
-        .install();
+            });
+    mediaExtension.install();
     getOnBackPressedDispatcher()
         .addCallback(
             this,
@@ -269,9 +272,11 @@ public final class MainActivity extends AppCompatActivity
   }
 
   private void startDownload(MediaCandidate item) {
+    MediaCandidate current = detector.latest(item.getIdentityKey());
+    MediaCandidate selected = current == null ? item : current;
     com.adownloader.app.jobs.DownloadJobs.get(this)
         .enqueue(
-            item,
+            selected,
             id -> {
               if (isDestroyed()) return;
               Snackbar.make(
@@ -285,6 +290,7 @@ public final class MainActivity extends AppCompatActivity
   }
 
   public void openJobPage(long id) {
+    refreshOffers.clear();
     com.adownloader.app.jobs.DownloadJobs.get(this)
         .openPage(
             id,
@@ -402,17 +408,80 @@ public final class MainActivity extends AppCompatActivity
           boolean first = mediaCount == 0 && count > 0;
           mediaCount = count;
           updateMediaBadge();
+          if (item != null) offerRefreshedMedia(item);
           if (first && !detectionNoticePending) {
             detectionNoticePending = true;
             handler.postDelayed(
                 () -> {
                   detectionNoticePending = false;
-                  if (mediaCount > 0 && selected == R.id.nav_browser)
+                  if (mediaCount > 0 && selected == R.id.nav_browser && !refreshNoticeVisible)
                     notice("동영상 " + mediaCount + "개 감지됨");
                 },
                 700);
           }
         });
+  }
+
+  private void offerRefreshedMedia(MediaCandidate candidate) {
+    java.lang.ref.WeakReference<MainActivity> weak = new java.lang.ref.WeakReference<>(this);
+    String identity = candidate.getIdentityKey();
+    com.adownloader.app.jobs.DownloadJobs.get(this)
+        .offerRefresh(
+            candidate,
+            id -> {
+              MainActivity activity = weak.get();
+              if (activity == null
+                  || activity.isDestroyed()
+                  || !activity.started
+                  || activity.selected != R.id.nav_browser) return;
+              MediaCandidate latest = activity.detector.latest(identity);
+              if (latest == null) return;
+              String fingerprint =
+                  id
+                      + "|"
+                      + com.adownloader.app.media.MediaIdentity.hash(
+                          latest.getUrl() + "|" + new java.util.TreeMap<>(latest.getHeaders()));
+              if (!activity.refreshOffers.add(fingerprint)) return;
+              while (activity.refreshOffers.size() > 64)
+                activity.refreshOffers.remove(activity.refreshOffers.iterator().next());
+              activity.refreshNoticeVisible = true;
+              Snackbar.make(activity.root, "중단된 다운로드에 새 주소를 연결할 수 있습니다.", Snackbar.LENGTH_LONG)
+                  .setAnchorView(activity.findViewById(R.id.media_action))
+                  .setAction(
+                      "새 주소 연결",
+                      view -> {
+                        MediaCandidate current = activity.detector.latest(identity);
+                        if (current == null) return;
+                        UiSheets.action(
+                            activity,
+                            R.drawable.ic_download,
+                            "새 주소로 이어서 진행",
+                            "같은 영상인지 확인한 뒤 재개합니다. 영상 구성이 다르면 다시 받으며, 낮은 화질로는 자동 변경하지 않습니다.",
+                            "취소",
+                            "연결하고 재개",
+                            () ->
+                                com.adownloader.app.jobs.DownloadJobs.get(activity)
+                                    .refresh(
+                                        id,
+                                        current,
+                                        message -> {
+                                          MainActivity owner = weak.get();
+                                          if (owner != null && !owner.isDestroyed())
+                                            owner.notice(message);
+                                        }),
+                            null,
+                            null);
+                      })
+                  .addCallback(
+                      new Snackbar.Callback() {
+                        @Override
+                        public void onDismissed(Snackbar bar, int event) {
+                          MainActivity owner = weak.get();
+                          if (owner != null) owner.refreshNoticeVisible = false;
+                        }
+                      })
+                  .show();
+            });
   }
 
   @Override
@@ -464,6 +533,7 @@ public final class MainActivity extends AppCompatActivity
     handler.removeCallbacksAndMessages(null);
     if (records != null) records.close();
     if (mediaSheet != null) mediaSheet.close();
+    if (mediaExtension != null) mediaExtension.close();
     if (browser != null) browser.close();
     super.onDestroy();
   }

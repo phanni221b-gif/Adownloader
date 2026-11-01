@@ -24,7 +24,9 @@ jobs:
         with:
           gradle-version: '9.6.0'
       - name: Unit tests, lint, ARM64 release
-        run: gradle :app:testDebugUnitTest :app:lintRelease :app:assembleRelease --stacktrace
+        run: |
+          node ci/test-media-extension.cjs
+          gradle :app:testDebugUnitTest :app:lintRelease :app:assembleRelease --stacktrace
       - name: Check packaged engine, ABI and launcher
         run: |
           APK=app/build/outputs/apk/release/app-release-unsigned.apk

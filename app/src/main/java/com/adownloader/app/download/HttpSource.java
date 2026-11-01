@@ -8,6 +8,13 @@ import java.util.Map;
 /** Bounded manifest/segment requests, checked byte counts, explicit safe redirects. */
 public final class HttpSource {
   private final RequestContext context;
+  private final String rootUrl;
+  private volatile String responseDisposition = "";
+
+  public String disposition() {
+    return responseDisposition;
+  }
+
   private final TransferControl control;
 
   public HttpSource(String source, Map<String, String> headers) {
@@ -15,6 +22,7 @@ public final class HttpSource {
   }
 
   public HttpSource(String source, Map<String, String> headers, TransferControl control) {
+    rootUrl = source;
     context = new RequestContext(source, headers);
     this.control = control;
   }
@@ -34,6 +42,12 @@ public final class HttpSource {
 
   private HttpURLConnection request(
       String url, long offset, long length, String validator, boolean resume) throws Exception {
+    return request(url, offset, length, validator, resume, null);
+  }
+
+  private HttpURLConnection request(
+      String url, long offset, long length, String validator, boolean resume, Document previous)
+      throws Exception {
     control.check();
     String current = url;
     for (int hop = 0; hop < 8; hop++) {
@@ -45,6 +59,11 @@ public final class HttpSource {
       connection.setReadTimeout(45_000);
       connection.setRequestProperty("Accept-Encoding", "identity");
       headers.forEach(connection::setRequestProperty);
+      if (previous != null && current.equals(previous.url)) {
+        if (!previous.etag.isEmpty()) connection.setRequestProperty("If-None-Match", previous.etag);
+        else if (!previous.modified.isEmpty())
+          connection.setRequestProperty("If-Modified-Since", previous.modified);
+      }
       if (resume && offset > 0) {
         connection.setRequestProperty("Range", "bytes=" + offset + "-");
         if (validator != null && !validator.isEmpty())
@@ -60,7 +79,8 @@ public final class HttpSource {
         control.check();
         throw error;
       }
-      if (code >= 300 && code <= 399) {
+      if (previous != null && code == 304 && current.equals(previous.url)) return connection;
+      if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
         String location = connection.getHeaderField("Location");
         connection.disconnect();
         if (location == null) throw new IOException("리다이렉트 주소 없음");
@@ -76,6 +96,10 @@ public final class HttpSource {
           || (!resume && length <= 0 && code == 206)) {
         connection.disconnect();
         throw DownloadError.http(code);
+      }
+      if (url.equals(rootUrl)) {
+        String disposition = connection.getHeaderField("Content-Disposition");
+        if (disposition != null && disposition.length() <= 4096) responseDisposition = disposition;
       }
       if (length > 0) {
         String range = connection.getHeaderField("Content-Range");
@@ -126,22 +150,57 @@ public final class HttpSource {
   }
 
   public static final class Document {
-    public final String url, text;
+    public final String url, text, etag, modified, mime, disposition;
+    public final long fetchedAt, length;
 
-    Document(String url, String text) {
+    Document(String url, String text, HttpURLConnection response, Document previous) {
       this.url = url;
       this.text = text;
+      etag = header(response, "ETag", previous == null ? "" : previous.etag);
+      modified = header(response, "Last-Modified", previous == null ? "" : previous.modified);
+      mime = header(response, "Content-Type", previous == null ? "" : previous.mime);
+      disposition =
+          header(response, "Content-Disposition", previous == null ? "" : previous.disposition);
+      fetchedAt = System.currentTimeMillis();
+      length = response.getContentLengthLong();
+    }
+
+    private static String header(HttpURLConnection response, String name, String fallback) {
+      String value = response.getHeaderField(name);
+      return value == null ? fallback : value;
     }
   }
 
   public Document document(String url) throws Exception {
-    HttpURLConnection connection = open(url, 0, -1);
+    return document(url, null);
+  }
+
+  public Document document(String url, Document previous) throws Exception {
+    HttpURLConnection connection = request(url, 0, -1, null, false, previous);
     try {
       String effective = connection.getURL().toString();
+      if (connection.getResponseCode() == 304 && previous != null)
+        return new Document(effective, previous.text, connection, previous);
+      long expected = connection.getContentLengthLong();
+      if (expected > 8 * 1024 * 1024)
+        throw new DownloadError(DownloadError.Category.MANIFEST_INVALID);
+      ByteArrayOutputStream out = new ByteArrayOutputStream();
+      try (InputStream in = connection.getInputStream()) {
+        byte[] buffer = new byte[64 * 1024];
+        int n;
+        while ((n = in.read(buffer)) != -1) {
+          control.check();
+          if (out.size() + (long) n > 8 * 1024 * 1024)
+            throw new DownloadError(DownloadError.Category.MANIFEST_INVALID);
+          out.write(buffer, 0, n);
+        }
+      }
+      if (out.size() == 0 || expected >= 0 && out.size() != expected)
+        throw new DownloadError(DownloadError.Category.NETWORK);
       return new Document(
-          effective, new String(bytes(effective, 0, -1, 8 * 1024 * 1024), StandardCharsets.UTF_8));
+          effective, new String(out.toByteArray(), StandardCharsets.UTF_8), connection, null);
     } finally {
-      connection.disconnect();
+      release(connection);
     }
   }
 

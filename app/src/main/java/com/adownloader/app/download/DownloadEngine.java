@@ -68,21 +68,9 @@ public final class DownloadEngine {
     if (type == MediaCandidate.MediaType.HLS || type == MediaCandidate.MediaType.DASH) {
       List<ManifestParser.Track> tracks = checkpoint == null ? null : checkpoint.loadPlan();
       if (tracks == null) {
-        HttpSource.Document document = source.document(url);
-        if (type == MediaCandidate.MediaType.HLS) {
-          ManifestParser.HlsSelection selection =
-              ManifestParser.hlsSelection(document.url, document.text);
-          HttpSource.Document video =
-              selection.video.equals(document.url) ? document : source.document(selection.video);
-          tracks = new ArrayList<>();
-          tracks.add(ManifestParser.hlsTrack(video.url, video.text));
-          if (selection.audio != null) {
-            HttpSource.Document audio = source.document(selection.audio);
-            ManifestParser.Track a = ManifestParser.hlsTrack(audio.url, audio.text);
-            a.audio = true;
-            tracks.add(a);
-          }
-        } else tracks = ManifestParser.dash(document.url, document.text);
+        MediaProbeResult probe = MediaProbeService.shared().probe(url, type, headers, control);
+        tracks = probe.tracks();
+        if (checkpoint != null) checkpoint.sourceMetadata(probe.disposition);
         if (checkpoint != null) checkpoint.savePlan(tracks);
       }
       List<File> inputs = new ArrayList<>();

@@ -1,95 +1,14 @@
-const NATIVE_APP = "adownloader";
-const requestHeaders = new Map();
-
-function lower(value) {
-  return (value || "").toLowerCase();
-}
-
-function looksLikeMedia(url, contentType, requestType) {
-  const u = lower(url);
-  const ct = lower(contentType);
-  if (u.includes(".m3u8") || u.includes(".mpd")) return true;
-  if (/\.(mp4|webm|m4v|mov|mkv|m4a|mp3|aac|ogg|opus)(\?|#|$)/i.test(u)) return true;
-  if (ct.startsWith("video/") || ct.startsWith("audio/")) return true;
-  if (ct.includes("mpegurl") || ct.includes("dash+xml")) return true;
-  return requestType === "media";
-}
-
-function headersToObject(list, mediaRequest) {
-  const out = {};
-  if (!Array.isArray(list)) return out;
-  for (const item of list) {
-    if (!item || !item.name) continue;
-    const name = lower(item.name);
-    if (["referer", "origin", "user-agent"].includes(name) || (mediaRequest && name === "cookie")) {
-      out[item.name] = item.value || "";
-    }
-  }
-  return out;
-}
-
-function contentTypeFromHeaders(list) {
-  if (!Array.isArray(list)) return "";
-  const hit = list.find(h => h && lower(h.name) === "content-type");
-  return hit ? (hit.value || "") : "";
-}
-
-function sendCandidate(details, contentType, source) {
-  if (!details || !details.url) return;
-  if (!looksLikeMedia(details.url, contentType, details.type)) return;
-  const payload = {
-    kind: "candidate",
-    url: details.url,
-    contentType: contentType || "",
-    source: source || "webRequest",
-    pageUrl: details.originUrl || details.documentUrl || "",
-    headers: requestHeaders.get(details.requestId) || {}
-  };
-  browser.runtime.sendNativeMessage(NATIVE_APP, payload).catch(() => {});
-}
-
-browser.webRequest.onBeforeSendHeaders.addListener(
-  details => {
-    if (requestHeaders.size > 1024) requestHeaders.delete(requestHeaders.keys().next().value);
-    requestHeaders.set(details.requestId, headersToObject(details.requestHeaders, looksLikeMedia(details.url, "", details.type)));
-  },
-  { urls: ["<all_urls>"] },
-  ["requestHeaders"]
-);
-
-browser.webRequest.onBeforeRequest.addListener(
-  details => sendCandidate(details, "", "network-request"),
-  { urls: ["<all_urls>"] }
-);
-
-browser.webRequest.onHeadersReceived.addListener(
-  details => {
-    const contentType = contentTypeFromHeaders(details.responseHeaders);
-    sendCandidate(details, contentType, "network-response");
-  },
-  { urls: ["<all_urls>"] },
-  ["responseHeaders"]
-);
-
-browser.webRequest.onCompleted.addListener(
-  details => requestHeaders.delete(details.requestId),
-  { urls: ["<all_urls>"] }
-);
-
-browser.webRequest.onErrorOccurred.addListener(
-  details => requestHeaders.delete(details.requestId),
-  { urls: ["<all_urls>"] }
-);
-
-browser.runtime.onMessage.addListener((message, sender) => {
-  if (!message || message.kind !== "candidate" || !message.url) return;
-  const payload = {
-    kind: "candidate",
-    url: message.url,
-    contentType: message.contentType || "",
-    source: message.source || "page-scan",
-    pageUrl: (sender && sender.tab && sender.tab.url) || message.pageUrl || "",
-    headers: {}
-  };
-  browser.runtime.sendNativeMessage(NATIVE_APP, payload).catch(() => {});
-});
+"use strict";
+const NATIVE_APP="adownloader";
+const requestHeaders=new Map(),pages=new Map(),confirmedTabs=new Set();
+const lower=value=>(value||"").toLowerCase();
+const http=url=>/^https?:\/\//i.test(url||"");
+function safeHeaders(list){const out={};for(const item of list||[]){if(item&&["cookie","referer","origin","user-agent"].includes(lower(item.name))&&typeof item.value==="string"&&item.value.length<=32768&&!/[\r\n]/.test(item.value))out[item.name]=item.value;}return out;}
+function responseMetadata(list){const out={};const names={"content-type":"mime","content-disposition":"disposition","etag":"etag","last-modified":"modified","content-length":"length"};for(const item of list||[]){const key=names[lower(item&&item.name)];if(key&&typeof item.value==="string"&&item.value.length<=4096)out[key]=item.value;}return out;}
+function media(url,mime,type){if(!http(url))return false;const ct=lower(mime).split(";",1)[0];if(ct.startsWith("video/")||ct.startsWith("audio/")||ct.includes("mpegurl")||ct.includes("dash+xml"))return true;if(ct&&ct!=="application/octet-stream")return false;try{return /\.(m3u8|mpd|mp4|webm|m4v|mov|mkv|m4a|mp3|aac|ogg|opus)$/i.test(new URL(url).pathname)||type==="media";}catch(_){return false;}}
+function emit(payload){browser.runtime.sendNativeMessage(NATIVE_APP,payload).catch(()=>{});}
+browser.webRequest.onBeforeSendHeaders.addListener(details=>{if(!http(details.url))return;const now=Date.now();for(const [id,entry] of requestHeaders)if(now-entry.at>120000)requestHeaders.delete(id);if(requestHeaders.size>=1024)requestHeaders.delete(requestHeaders.keys().next().value);requestHeaders.set(details.requestId,{at:now,headers:safeHeaders(details.requestHeaders)});},{urls:["http://*/*","https://*/*"]},["requestHeaders"]);
+browser.webRequest.onHeadersReceived.addListener(details=>{const metadata=responseMetadata(details.responseHeaders);if(!(details.statusCode>=200&&details.statusCode<300||details.statusCode===304)||!media(details.url,metadata.mime,details.type))return;const page=pages.get(details.tabId);if(page)metadata.title=page.title;const saved=requestHeaders.get(details.requestId);confirmedTabs.add(details.tabId);emit({kind:"candidate",url:details.url,contentType:metadata.mime||"",metadata,source:"network-response",pageUrl:page&&page.url||details.documentUrl||details.originUrl||"",headers:saved?saved.headers:{}});},{urls:["http://*/*","https://*/*"]},["responseHeaders"]);
+for(const event of [browser.webRequest.onCompleted,browser.webRequest.onErrorOccurred])event.addListener(details=>requestHeaders.delete(details.requestId),{urls:["http://*/*","https://*/*"]});
+browser.runtime.onMessage.addListener((message,sender)=>{if(!message||!sender||!sender.tab)return;const pageUrl=sender.tab.url||message.pageUrl||"";if(!http(pageUrl))return;const title=typeof message.pageTitle==="string"?message.pageTitle.slice(0,300):"";if(message.kind==="page-meta"){if(sender.frameId!==0)return;if(pages.size>=50&&!pages.has(sender.tab.id))pages.delete(pages.keys().next().value);pages.set(sender.tab.id,{url:pageUrl,title});if(confirmedTabs.has(sender.tab.id))emit({kind:"page-meta",pageUrl,title});return;}if(message.kind!=="candidate"||!http(message.url))return;emit({kind:"candidate",url:message.url,contentType:message.contentType||"",metadata:{title},source:message.source||"page-scan",pageUrl,headers:{}});});
+if(browser.tabs&&browser.tabs.onRemoved)browser.tabs.onRemoved.addListener(id=>{pages.delete(id);confirmedTabs.delete(id);});

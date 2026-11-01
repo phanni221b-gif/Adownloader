@@ -45,3 +45,5 @@ done
 run_case pauseCancelRetry
 
 run_case uiPauseResumeCancel
+
+run_case refreshSources

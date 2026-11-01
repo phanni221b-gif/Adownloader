@@ -361,4 +361,125 @@ public class ProcessRecoveryTest {
     DownloadJobStore.Job stopped = await(jobs, canceled, DownloadJobStore.State.CANCELED);
     assertEquals("", stopped.pending);
   }
+
+  private long enqueueSource(DownloadJobs jobs, String path, MediaCandidate.MediaType type)
+      throws Exception {
+    CountDownLatch done = new CountDownLatch(1);
+    long[] id = {-1};
+    instrumentation.runOnMainSync(
+        () ->
+            jobs.enqueue(
+                new MediaCandidate(
+                    BASE + path,
+                    type,
+                    "test",
+                    BASE + "/page",
+                    Collections.emptyMap(),
+                    System.currentTimeMillis()),
+                value -> {
+                  id[0] = value;
+                  done.countDown();
+                }));
+    assertTrue(done.await(15, TimeUnit.SECONDS));
+    assertTrue(id[0] > 0);
+    return id[0];
+  }
+
+  private void parts(DownloadJobs jobs, long id, int count) throws Exception {
+    long until = System.currentTimeMillis() + 15000;
+    while (System.currentTimeMillis() < until) {
+      try (android.database.Cursor c =
+          jobs.store
+              .getReadableDatabase()
+              .rawQuery("SELECT COUNT(*) FROM parts WHERE job=?", new String[] {"" + id})) {
+        c.moveToFirst();
+        if (c.getInt(0) >= count) return;
+      }
+      Thread.sleep(20);
+    }
+    fail("No committed media segment");
+  }
+
+  private void refreshCase(DownloadJobs jobs, MediaCandidate.MediaType type, boolean changed)
+      throws Exception {
+    get("/reset");
+    String extension =
+        type == MediaCandidate.MediaType.HLS
+            ? "m3u8"
+            : type == MediaCandidate.MediaType.DASH ? "mpd" : "mp4";
+    String path = "/process/asset-123." + extension;
+    long id = enqueueSource(jobs, path + "?token=old", type);
+    boolean direct = type == MediaCandidate.MediaType.VIDEO;
+    if (direct) checkpoint(jobs, id);
+    else parts(jobs, id, type == MediaCandidate.MediaType.DASH ? 2 : 1);
+    action(jobs, id, "PAUSE");
+    await(jobs, id, DownloadJobStore.State.PAUSED);
+    String reusedPart = null;
+    if (!direct) {
+      List<ManifestParser.Track> plan =
+          PlanCodec.decode(jobs.store.request(id).getJSONArray("plan"));
+      reusedPart =
+          Uri.parse(plan.get(0).parts.get(type == MediaCandidate.MediaType.DASH ? 1 : 0).url)
+              .getPath();
+    }
+    get(changed ? "/change" : "/expire");
+    action(jobs, id, "RESUME");
+    DownloadJobStore.Job expired = await(jobs, id, DownloadJobStore.State.NEEDS_REFRESH);
+    assertEquals("EXPIRED_URL", expired.error);
+    MediaCandidate fresh =
+        new MediaCandidate(
+            BASE + path + "?token=new",
+            type,
+            "network-response",
+            BASE + "/page",
+            Collections.emptyMap(),
+            System.currentTimeMillis());
+    CountDownLatch offered = new CountDownLatch(1);
+    long[] matched = {-1};
+    jobs.offerRefresh(
+        fresh,
+        value -> {
+          matched[0] = value;
+          offered.countDown();
+        });
+    assertTrue(offered.await(10, TimeUnit.SECONDS));
+    assertEquals(id, matched[0]);
+    CountDownLatch attached = new CountDownLatch(1);
+    instrumentation.runOnMainSync(() -> jobs.refresh(id, fresh, message -> attached.countDown()));
+    assertTrue(attached.await(20, TimeUnit.SECONDS));
+    DownloadJobStore.Job complete = await(jobs, id, DownloadJobStore.State.COMPLETED);
+    Uri uri = Uri.parse(complete.uri);
+    try (ParcelFileDescriptor fd = context.getContentResolver().openFileDescriptor(uri, "r")) {
+      assertNotNull(fd);
+      PostProcessor.inspect(fd.getFileDescriptor(), 3, true, true);
+    }
+    JSONObject stats = get("/stats");
+    if (direct) {
+      MessageDigest digest = MessageDigest.getInstance("SHA-256");
+      try (InputStream in = context.getContentResolver().openInputStream(uri)) {
+        byte[] buffer = new byte[128 * 1024];
+        int n;
+        while ((n = in.read(buffer)) != -1) digest.update(buffer, 0, n);
+      }
+      assertEquals(stats.getString("sha256"), DirectTransfer.hex(digest.digest()));
+      JSONArray offsets = stats.getJSONArray("ranges");
+      boolean positive = false;
+      for (int n = 0; n < offsets.length(); n++) positive |= offsets.getLong(n) > 0;
+      assertEquals("Changed files must restart; unchanged files must resume", !changed, positive);
+    } else
+      assertEquals(
+          "Saved media parts must survive signed URL refresh",
+          1,
+          stats.getJSONObject("counts").getInt(reusedPart));
+    context.getContentResolver().delete(uri, null, null);
+  }
+
+  @Test
+  public void refreshSources() throws Exception {
+    DownloadJobs jobs = launch();
+    refreshCase(jobs, MediaCandidate.MediaType.VIDEO, false);
+    refreshCase(jobs, MediaCandidate.MediaType.VIDEO, true);
+    refreshCase(jobs, MediaCandidate.MediaType.HLS, false);
+    refreshCase(jobs, MediaCandidate.MediaType.DASH, false);
+  }
 }

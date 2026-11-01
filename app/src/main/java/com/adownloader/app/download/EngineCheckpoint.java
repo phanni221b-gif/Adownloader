@@ -7,6 +7,8 @@ import java.util.*;
 public interface EngineCheckpoint {
   List<ManifestParser.Track> loadPlan() throws Exception;
 
+  default void sourceMetadata(String disposition) throws Exception {}
+
   void savePlan(List<ManifestParser.Track> tracks) throws Exception;
 
   boolean verified(File file, int track, int part) throws Exception;
