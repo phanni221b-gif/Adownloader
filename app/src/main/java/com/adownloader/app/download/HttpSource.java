@@ -35,7 +35,7 @@ public final class HttpSource implements AutoCloseable {
 
   public HttpSource resourceContexts(Map<String, Map<String, String>> values) {
     captured.close();
-    captured = new CapturedRequestContexts(values);
+    captured = new CapturedRequestContexts(values, true);
     return this;
   }
 
@@ -61,11 +61,100 @@ public final class HttpSource implements AutoCloseable {
     cookieListener = null;
   }
 
-  private final RequestContext context;
+  public interface ContextListener {
+    void changed(String url, Map<String, String> headers) throws Exception;
+  }
+
+  private ContextListener contextListener;
+
+  public HttpSource onContext(ContextListener value) {
+    contextListener = value;
+    return this;
+  }
+
+  private final java.util.Set<String>
+      contextRetried = java.util.Collections.synchronizedSet(new java.util.HashSet<>()),
+      bootstrapped = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
+  private final Map<String, String> resourceStages = new java.util.concurrent.ConcurrentHashMap<>();
+  private final Map<String, Map<String, String>> lastHeaders =
+      new java.util.concurrent.ConcurrentHashMap<>();
+
+  public void registerTracks(java.util.List<ManifestParser.Track> tracks) {
+    for (var t : tracks)
+      for (var p : t.parts) {
+        resourceStages.put(
+            p.url, p.initialization ? "INIT_SEGMENT" : t.audio ? "AUDIO_SEGMENT" : "VIDEO_SEGMENT");
+        if (p.keyUrl != null) resourceStages.put(p.keyUrl, "AES_KEY");
+      }
+  }
+
+  private String stage(String url) {
+    if (!documentRole.isEmpty())
+      return documentRole.equals("root")
+          ? "ROOT_MANIFEST"
+          : documentRole.equals("audio") ? "AUDIO_PLAYLIST" : "VARIANT_PLAYLIST";
+    return resourceStages.getOrDefault(url, "DIRECT");
+  }
+
+  private static boolean access(Exception e) {
+    return e instanceof DownloadError
+        && (((DownloadError) e).category == DownloadError.Category.AUTH
+            || ((DownloadError) e).category == DownloadError.Category.ACCESS_BLOCKED);
+  }
+
+  private void record(
+      String url,
+      int code,
+      int hops,
+      String mime,
+      String body,
+      String transport,
+      String action,
+      java.util.Collection<String> names) {
+    var observation = MediaNetworkSession.latest(url, topPage);
+    MediaNetworkSession.trace(
+        stage(url),
+        url,
+        transport,
+        code,
+        hops,
+        mime,
+        body,
+        names,
+        observation == null ? java.util.List.of() : observation.headerNames(),
+        observation != null,
+        action);
+  }
+
+  private final Map<String, java.util.Collection<String>> lastSentNames =
+      new java.util.concurrent.ConcurrentHashMap<>();
+
+  private boolean refreshContext(String url) throws Exception {
+    var latest = MediaNetworkSession.latest(url, topPage);
+    if (latest == null || contextRetried.size() >= 128 || !contextRetried.add(url)) return false;
+    Map<String, String> values = MediaHeaders.select(latest.headers());
+    if (values.equals(lastHeaders.get(url))) return false;
+    adoptContext(url, values);
+    if (contextListener != null) contextListener.changed(url, values);
+    record(url, 0, 0, "", "UNKNOWN", "native", "NATIVE_CONTEXT_RETRY", values.keySet());
+    return true;
+  }
+
+  private void adoptContext(String url, Map<String, String> values) throws Exception {
+    captured.update(url, values);
+    if (url.equals(rootUrl)) {
+      context = new RequestContext(rootUrl, values);
+      if (cookies.refreshSeed(url, values) && cookieListener != null)
+        cookieListener.changed(cookies.snapshot());
+    }
+  }
+
+  private RequestContext context;
   private final String rootUrl;
   private volatile String responseDisposition = "";
   private boolean acceptedResource;
   private int lastRedirects;
+  private volatile String lastRequestUrl;
   private String documentRole = "";
 
   public HttpSource previouslyAccepted(boolean accepted) {
@@ -111,6 +200,36 @@ public final class HttpSource implements AutoCloseable {
   private HttpURLConnection request(
       String url, long offset, long length, String validator, boolean resume, Document previous)
       throws Exception {
+    try {
+      return nativeRequest(url, offset, length, validator, resume, previous);
+    } catch (Exception first) {
+      if (!access(first)) throw first;
+      if (refreshContext(lastRequestUrl == null ? url : lastRequestUrl))
+        try {
+          return nativeRequest(url, offset, length, validator, resume, previous);
+        } catch (Exception retry) {
+          if (!access(retry)) throw retry;
+          first = retry;
+        }
+      if (documentRole.isEmpty() && resourceStages.containsKey(url))
+        record(
+            url,
+            first instanceof DownloadError && ((DownloadError) first).diagnostic != null
+                ? ((DownloadError) first).diagnostic.status
+                : 403,
+            lastRedirects,
+            "",
+            "UNKNOWN",
+            "native",
+            "SEGMENT_NATIVE_BLOCKED",
+            lastSentNames.getOrDefault(url, java.util.List.of()));
+      throw first;
+    }
+  }
+
+  private HttpURLConnection nativeRequest(
+      String url, long offset, long length, String validator, boolean resume, Document previous)
+      throws Exception {
     control.check();
     String current = url;
     for (int hop = 0; hop < 8; hop++) {
@@ -126,6 +245,7 @@ public final class HttpSource implements AutoCloseable {
         }
       String cookie = cookies.header(URI.create(current), observedCookie);
       if (!cookie.isEmpty()) headers.put("Cookie", cookie);
+      lastRequestUrl = current;
       HttpURLConnection connection = (HttpURLConnection) new URL(current).openConnection();
       control.attach(connection);
       connection.setInstanceFollowRedirects(false);
@@ -134,6 +254,7 @@ public final class HttpSource implements AutoCloseable {
       connection.setRequestProperty("Accept-Encoding", "identity");
       connection.setRequestProperty("Accept", "*/*");
       headers.forEach(connection::setRequestProperty);
+      lastHeaders.put(current, new java.util.LinkedHashMap<>(headers));
       if (previous != null && current.equals(previous.url)) {
         if (!previous.etag.isEmpty()) connection.setRequestProperty("If-None-Match", previous.etag);
         else if (!previous.modified.isEmpty())
@@ -146,6 +267,8 @@ public final class HttpSource implements AutoCloseable {
       }
       if (length > 0)
         connection.setRequestProperty("Range", "bytes=" + offset + "-" + (offset + length - 1));
+      java.util.Set<String> sentNames =
+          new java.util.HashSet<>(connection.getRequestProperties().keySet());
       int code;
       try {
         code = connection.getResponseCode();
@@ -167,6 +290,16 @@ public final class HttpSource implements AutoCloseable {
                     DownloadError.Category.NETWORK));
       }
       lastRedirects = hop;
+      lastSentNames.put(current, sentNames);
+      record(
+          current,
+          code,
+          hop,
+          connection.getContentType(),
+          "UNKNOWN",
+          "native",
+          "NATIVE_INITIAL",
+          sentNames);
       if (cookies.accept(URI.create(current), connection.getHeaderFields())
           && cookieListener != null)
         try {
@@ -195,6 +328,26 @@ public final class HttpSource implements AutoCloseable {
           throw redirectFailure(current, code, connection.getContentType(), hop);
         current = next;
         continue;
+      }
+      if (code == 401 || code == 403) {
+        String kind = "UNKNOWN";
+        try (InputStream error = connection.getErrorStream()) {
+          if (error != null) {
+            byte[] prefix = new byte[4096];
+            int n = error.read(prefix);
+            if (n > 0) kind = bodyKind(new String(prefix, 0, n, StandardCharsets.UTF_8));
+          }
+        } catch (IOException ignored) {
+        }
+        record(
+            current,
+            code,
+            hop,
+            connection.getContentType(),
+            kind,
+            "native",
+            "NATIVE_INITIAL",
+            sentNames);
       }
       if (code < 200
           || code > 299
@@ -379,6 +532,19 @@ public final class HttpSource implements AutoCloseable {
       length = response.getContentLengthLong();
     }
 
+    Document(MediaNetworkSession.Bootstrap b) {
+      url = b.url();
+      status = b.status();
+      redirects = b.redirects();
+      text = new String(b.body(), StandardCharsets.UTF_8);
+      mime = b.metadata().getOrDefault("content-type", "");
+      etag = b.metadata().getOrDefault("etag", "");
+      modified = b.metadata().getOrDefault("last-modified", "");
+      disposition = b.metadata().getOrDefault("content-disposition", "");
+      fetchedAt = System.currentTimeMillis();
+      length = b.body().length;
+    }
+
     private static String header(HttpURLConnection response, String name, String fallback) {
       String value = response.getHeaderField(name);
       return value == null ? fallback : value;
@@ -413,6 +579,118 @@ public final class HttpSource implements AutoCloseable {
   }
 
   public Document document(String url, Document previous) throws Exception {
+    try {
+      Document d = nativeDocument(url, previous);
+      if (d.text
+          .stripLeading()
+          .toLowerCase(java.util.Locale.ROOT)
+          .matches("(?s)<(?:!doctype|html|head|body|form).*"))
+        HlsDiagnostic.body(d, documentRole.isEmpty() ? "root" : documentRole);
+      record(
+          url,
+          d.status,
+          d.redirects,
+          d.mime,
+          bodyKind(d.text),
+          "native",
+          "NATIVE_INITIAL",
+          lastSentNames.getOrDefault(url, java.util.List.of()));
+      return d;
+    } catch (Exception first) {
+      if (!access(first)) throw first;
+      if (refreshContext(url))
+        try {
+          Document d = nativeDocument(url, null);
+          if (bodyKind(d.text).startsWith("HTML")) HlsDiagnostic.body(d, documentRole);
+          return d;
+        } catch (Exception retry) {
+          if (!access(retry)) throw retry;
+          first = retry;
+        }
+      var observed = MediaNetworkSession.latest(url, topPage);
+      var provider = MediaNetworkSession.provider();
+      record(
+          url,
+          first instanceof DownloadError && ((DownloadError) first).diagnostic != null
+              ? ((DownloadError) first).diagnostic.status
+              : 403,
+          lastRedirects,
+          "",
+          "UNKNOWN",
+          "native",
+          "MANIFEST_NATIVE_BLOCKED",
+          lastSentNames.getOrDefault(url, java.util.List.of()));
+      if (observed == null
+          || provider == null
+          || bootstrapped.size() >= 8
+          || !bootstrapped.add(url)) throw first;
+      try {
+        record(url, 0, 0, "", "UNKNOWN", "gecko", "GECKO_BOOTSTRAP", observed.headerNames());
+        var response = provider.manifest(url, topPage, observed.headers(), control);
+        if (response.status() < 200
+            || response.status() >= 300
+            || response.body().length > 8388608
+            || response.body().length == 0
+            || url.startsWith("https:") && !response.url().startsWith("https:"))
+          throw new DownloadError(DownloadError.Category.ACCESS_BLOCKED);
+        for (var entry : response.responseCookies().entrySet())
+          if (cookies.accept(
+                  java.net.URI.create(entry.getKey()), Map.of("Set-Cookie", entry.getValue()))
+              && cookieListener != null) cookieListener.changed(cookies.snapshot());
+        if (!response.requestHeaders().isEmpty()) {
+          adoptContext(response.url(), response.requestHeaders());
+          if (contextListener != null)
+            contextListener.changed(response.url(), response.requestHeaders());
+        }
+        var fresh = MediaNetworkSession.latest(response.url(), topPage);
+        if (fresh != null) {
+          adoptContext(response.url(), fresh.headers());
+          if (contextListener != null) contextListener.changed(response.url(), fresh.headers());
+        }
+        Document d = new Document(response);
+        record(
+            url,
+            d.status,
+            d.redirects,
+            d.mime,
+            bodyKind(d.text),
+            "gecko",
+            "GECKO_BOOTSTRAP",
+            fresh == null ? observed.headerNames() : fresh.headerNames());
+        if (bodyKind(d.text).startsWith("HTML")) HlsDiagnostic.body(d, documentRole);
+        return d;
+      } catch (TransferControl.Stopped stopped) {
+        throw stopped;
+      } catch (Exception blocked) {
+        record(
+            url,
+            blocked instanceof DownloadError && ((DownloadError) blocked).diagnostic != null
+                ? ((DownloadError) blocked).diagnostic.status
+                : 0,
+            0,
+            "",
+            "UNKNOWN",
+            "gecko",
+            "MANIFEST_NATIVE_BLOCKED",
+            observed.headerNames());
+        throw first;
+      }
+    }
+  }
+
+  private static String bodyKind(String text) {
+    String p = text.replaceFirst("^\\uFEFF", "").stripLeading();
+    if (p.startsWith("#EXTM3U")) return "HLS";
+    if (p.matches("(?s)(?:<\\?xml[^>]*>\\s*)?<MPD(?:\\s|>).*")) return "DASH";
+    if (p.toLowerCase(java.util.Locale.ROOT).matches("(?s)<(?:!doctype|html|head|body|form).*"))
+      return p.toLowerCase(java.util.Locale.ROOT)
+              .matches("(?s).*(challenge|captcha|cloudflare|access.denied).*")
+          ? "HTML_CHALLENGE"
+          : "HTML";
+    return "UNKNOWN";
+  }
+
+  private Document nativeDocument(String url, Document previous) throws Exception {
     HttpURLConnection connection = request(url, 0, -1, null, false, previous);
     try {
       String effective = connection.getURL().toString();

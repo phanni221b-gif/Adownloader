@@ -110,6 +110,7 @@ public final class DownloadEngine {
         source.resourceContexts(checkpoint.requestContexts());
         source.restoreCookies(checkpoint.cookieState());
         source.onCookies(checkpoint::cookieState);
+        source.onContext(checkpoint::requestContext);
       }
       if (type == MediaCandidate.MediaType.HLS || type == MediaCandidate.MediaType.DASH) {
         List<ManifestParser.Track> tracks = checkpoint == null ? null : checkpoint.loadPlan();
@@ -128,6 +129,7 @@ public final class DownloadEngine {
           if (checkpoint != null) checkpoint.sourceMetadata(probe.disposition);
           if (checkpoint != null) checkpoint.savePlan(tracks);
         }
+        source.registerTracks(tracks);
         StorageBudget.Estimate budget =
             StorageBudget.estimate(
                 tracks, checkpoint == null ? 0 : checkpoint.committedSegmentBytes());

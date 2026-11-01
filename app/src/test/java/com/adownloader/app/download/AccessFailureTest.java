@@ -6,11 +6,11 @@ import org.junit.Test;
 
 public class AccessFailureTest {
   @Test
-  public void unknownForbiddenAndUnauthorizedAreAuth() {
+  public void forbiddenWithoutChallengeIsBlocked() {
     assertEquals(DownloadError.Category.AUTH, DownloadError.http(401).category);
     assertEquals(DownloadError.Category.AUTH, DownloadError.http(403).category);
     assertEquals(
-        DownloadError.Category.AUTH,
+        DownloadError.Category.ACCESS_BLOCKED,
         error("https://cdn.test/movie.mp4?token=a", false, false).category);
   }
 
@@ -25,10 +25,11 @@ public class AccessFailureTest {
         DownloadError.Category.EXPIRED_URL,
         error("https://cdn.test/movie.mp4?sig=a&exp=1600000000", false, false).category);
     assertEquals(
-        DownloadError.Category.EXPIRED_URL,
+        DownloadError.Category.ACCESS_BLOCKED,
         error("https://cdn.test/movie.mp4?token=a", true, false).category);
     assertEquals(
-        DownloadError.Category.AUTH, error("https://cdn.test/movie.mp4", true, false).category);
+        DownloadError.Category.ACCESS_BLOCKED,
+        error("https://cdn.test/movie.mp4", true, false).category);
     assertEquals(
         DownloadError.Category.AUTH,
         error("https://cdn.test/movie.mp4?token=a", true, true).category);

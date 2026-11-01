@@ -28,6 +28,7 @@ public final class MediaExtensionManager implements AutoCloseable {
     void onExtensionError(String message);
   }
 
+  private final GeckoManifestBridge bridge;
   private final GeckoRuntime runtime;
   private final BrowserSessionManager browser;
   private final Map<Integer, org.mozilla.geckoview.GeckoSession> tabSessions =
@@ -37,6 +38,7 @@ public final class MediaExtensionManager implements AutoCloseable {
 
   public MediaExtensionManager(
       GeckoRuntime runtime, BrowserSessionManager browser, StatusListener statusListener) {
+    bridge = new GeckoManifestBridge(browser);
     this.runtime = runtime;
     this.browser = browser;
     this.statusListener = statusListener;
@@ -93,6 +95,11 @@ public final class MediaExtensionManager implements AutoCloseable {
             installed,
             new WebExtension.MessageDelegate() {
               @Override
+              public void onConnect(WebExtension.Port port) {
+                bridge.connect(session, port);
+              }
+
+              @Override
               public GeckoResult<Object> onMessage(
                   String app, Object message, WebExtension.MessageSender sender) {
                 if (closed
@@ -134,6 +141,7 @@ public final class MediaExtensionManager implements AutoCloseable {
   }
 
   private void handleMessage(JSONObject json, MediaDetector detector) {
+    bridge.observe(json);
     if ("detection".equals(json.optString("kind"))) {
       detector.detectionDiagnostics = json.optJSONObject("metrics");
       return;
@@ -159,8 +167,10 @@ public final class MediaExtensionManager implements AutoCloseable {
       while (keys.hasNext()) {
         String key = keys.next();
         String value = headerJson.optString(key, "");
-        if (java.util.Set.of("cookie", "referer", "origin", "user-agent")
-                .contains(key.toLowerCase(java.util.Locale.ROOT))
+        if ((com.adownloader.app.download.MediaHeaders.allowed(key)
+                && (json.optBoolean("mediaSuccess")
+                    || !com.adownloader.app.download.MediaHeaders.sensitive(key)
+                    || key.equalsIgnoreCase("cookie")))
             && !value.isBlank()
             && value.length() <= 32768
             && !value.contains("\r")
@@ -186,12 +196,14 @@ public final class MediaExtensionManager implements AutoCloseable {
         String value = meta.optString(key);
         if (!value.isBlank() && value.length() <= 4096) metadata.put(key, value);
       }
+    if (json.optBoolean("mediaSuccess")) metadata.put("requestContextVerified", "true");
     detector.capture(url, contentType, source, pageUrl, headers, metadata);
   }
 
   @Override
   public void close() {
     closed = true;
+    bridge.close();
     browser.setSessionObserver(null);
     for (var tab : browser.tabs())
       if (installed != null)

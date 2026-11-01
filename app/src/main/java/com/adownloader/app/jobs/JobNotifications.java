@@ -88,7 +88,9 @@ public final class JobNotifications {
           .addAction(
               new Notification.Action.Builder(
                       null,
-                      job.state == DownloadJobStore.State.NEEDS_REFRESH ? "원래 페이지" : "재개",
+                      job.state == DownloadJobStore.State.NEEDS_REFRESH
+                          ? com.adownloader.app.download.AccessPresentation.action(job.error)
+                          : "재개",
                       resume(context, job.id, job.state == DownloadJobStore.State.NEEDS_REFRESH))
                   .build())
           .addAction(

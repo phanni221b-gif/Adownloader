@@ -40,7 +40,10 @@ public final class MediaDetector {
 
   public synchronized void rememberContext(String url, String page, Map<String, String> headers) {
     if (headers.isEmpty() || boundPage != null && !pageKey(boundPage).equals(pageKey(page))) return;
-    resourceHeaders.put(url, new LinkedHashMap<>(headers));
+    Map<String, String> merged =
+        new LinkedHashMap<>(resourceHeaders.getOrDefault(url, Collections.emptyMap()));
+    merged.putAll(headers);
+    resourceHeaders.put(url, merged);
     resourcePages.put(url, page);
     while (resourceHeaders.size() > 128) {
       String first = resourceHeaders.keySet().iterator().next();
@@ -60,7 +63,13 @@ public final class MediaDetector {
         (url, h) -> {
           if (Objects.equals(resourcePages.get(url), current.getPageUrl())) scoped.put(url, h);
         });
+    meta.put("requestContextVersion", "2");
     meta.put("requestContexts", new org.json.JSONObject(scoped).toString());
+    Map<String, String> origins = new LinkedHashMap<>();
+    scoped
+        .keySet()
+        .forEach(u -> origins.put(u, com.adownloader.app.download.MediaHeaders.origin(u)));
+    meta.put("requestContextOrigins", new org.json.JSONObject(origins).toString());
     return new MediaCandidate(
         current.getUrl(),
         current.getType(),
@@ -130,17 +139,15 @@ public final class MediaDetector {
         }
       }
     }
-    Map<String, String> safe = new LinkedHashMap<>();
-    if (headers != null)
-      headers.forEach(
-          (k, v) -> {
-            if (k != null
-                && v != null
-                && Set.of("cookie", "referer", "origin", "user-agent")
-                    .contains(k.toLowerCase(Locale.ROOT))
-                && !v.contains("\r")
-                && !v.contains("\n")) safe.put(k, v);
-          });
+    Map<String, String> safe =
+        com.adownloader.app.download.MediaHeaders.select(
+            headers == null ? Collections.emptyMap() : headers);
+    if (!"true".equals(metadata.get("requestContextVerified")))
+      safe.keySet()
+          .removeIf(
+              n ->
+                  com.adownloader.app.download.MediaHeaders.sensitive(n)
+                      && !n.equalsIgnoreCase("cookie"));
     Map<String, String> meta = new LinkedHashMap<>(metadata);
     if (mime != null && !mime.isBlank()) meta.put("mime", mime);
     MediaCandidate next =

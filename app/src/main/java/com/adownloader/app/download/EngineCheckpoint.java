@@ -19,6 +19,8 @@ public interface EngineCheckpoint {
     return Collections.emptyMap();
   }
 
+  default void requestContext(String url, Map<String, String> headers) throws Exception {}
+
   default String cookieState() throws Exception {
     return "";
   }

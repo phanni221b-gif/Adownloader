@@ -47,8 +47,7 @@ public final class DownloadHistory {
                 .put(
                     "state",
                     job.state == com.adownloader.app.jobs.DownloadJobStore.State.NEEDS_REFRESH
-                            && "AUTH".equals(job.error)
-                        ? "접근 확인 필요"
+                        ? com.adownloader.app.download.AccessPresentation.label(job.error)
                         : label(job.state.name()))
                 .put("name", job.name)
                 .put("host", job.host)
@@ -90,7 +89,7 @@ public final class DownloadHistory {
       case "COMPLETED":
         return "완료";
       case "NEEDS_REFRESH":
-        return "새 주소 필요";
+        return "접근 확인 필요";
       case "CANCELED":
         return "취소됨";
       default:

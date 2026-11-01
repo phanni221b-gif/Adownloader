@@ -45,6 +45,19 @@ public final class JobCookieJar implements AutoCloseable {
     pageSite = CookieSites.site(page);
   }
 
+  /** Refresh only this job's exact successful media seed, never a browser jar export. */
+  public synchronized boolean refreshSeed(String url, Map<String, String> headers) {
+    if (!sourceUri.toString().equals(url)) return false;
+    String fresh = header(headers, "cookie");
+    if (fresh.equals(initial)) return false;
+    initial = fresh;
+    String host = CookieSites.normal(sourceUri.getHost()), target = sourceUri.getPath();
+    entries
+        .entrySet()
+        .removeIf(e -> domain(host, e.getValue().domain) && path(target, e.getValue().path));
+    return true;
+  }
+
   private static String header(Map<String, String> headers, String key) {
     return headers.entrySet().stream()
         .filter(

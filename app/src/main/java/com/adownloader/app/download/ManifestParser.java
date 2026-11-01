@@ -11,6 +11,13 @@ import org.xml.sax.InputSource;
 /** Pure-Java VOD playlist planning. Unsupported constructs fail before publication. */
 public final class ManifestParser {
   public static final class Part {
+    public boolean initialization;
+
+    public Part asInitialization() {
+      initialization = true;
+      return this;
+    }
+
     public final String url;
     public final long offset, length, sequence;
     public final String keyUrl, iv;
@@ -242,7 +249,7 @@ public final class ManifestParser {
               DownloadError.Category.HLS_UNSUPPORTED,
               "HLS_INIT_CHANGE");
         else {
-          init = nextInit;
+          init = nextInit.asInitialization();
           track.parts.add(init);
         }
       } else if (line.startsWith("#EXT-X-BYTERANGE:")) {
@@ -388,7 +395,8 @@ public final class ManifestParser {
       require(media != null, "DASH 세그먼트 주소 누락");
       if (attrs.containsKey("initialization"))
         track.parts.add(
-            new Part(resolve(base, substitute(attrs.get("initialization"), rep, start, 0))));
+            new Part(resolve(base, substitute(attrs.get("initialization"), rep, start, 0)))
+                .asInitialization());
       if (timeline != null) {
         List<Element> entries = children(timeline, "S");
         long time = 0, number = start;
@@ -428,7 +436,8 @@ public final class ManifestParser {
       Element init = child(list, "Initialization");
       if (init != null)
         track.parts.add(
-            rangePart(resolve(base, init.getAttribute("sourceURL")), init.getAttribute("range")));
+            rangePart(resolve(base, init.getAttribute("sourceURL")), init.getAttribute("range"))
+                .asInitialization());
       for (Element segment : children(list, "SegmentURL"))
         track.parts.add(
             rangePart(

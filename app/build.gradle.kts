@@ -17,8 +17,8 @@ android {
         applicationId = "com.adownloader.app"
         minSdk = 30
         targetSdk = 36
-        versionCode = 12
-        versionName = "0.6.2"
+        versionCode = 13
+        versionName = "0.6.3"
         buildConfigField("String", "GECKO_VERSION", "\"$geckoVersion\"")
 
         ndk {
