@@ -97,6 +97,9 @@ public class ExtensionPerformanceIntegrationTest {
       Files.write(
           new File(context.getExternalFilesDir(null), "extension-performance.json").toPath(),
           metrics.toString(2).getBytes(StandardCharsets.UTF_8));
+      android.util.Log.i("Adownloader","EXTENSION_PERFORMANCE "+metrics.toString());
+      androidx.test.uiautomator.UiDevice.getInstance(ins).executeShellCommand("mkdir -p /sdcard/Download/Adownloader-ui-proof");
+      androidx.test.uiautomator.UiDevice.getInstance(ins).executeShellCommand("cp "+new File(context.getExternalFilesDir(null),"extension-performance.json").getAbsolutePath()+" /sdcard/Download/Adownloader-ui-proof/extension-performance.json");
     } finally {
       ins.runOnMainSync(activity::finish);
       server.close();
