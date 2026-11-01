@@ -131,18 +131,19 @@ public final class CdnQueryPolicy {
       String[] kv = part.split("=", 2);
       String key = decode(kv[0]).toLowerCase(Locale.ROOT),
           value = kv.length == 2 ? decode(kv[1]) : "";
-      if (ORIGINAL.contains(key)
-          || aws && AWS.contains(key)
-          || cf && key.equals("key-pair-id")
-          || cf && key.equals("policy") && policyMatches(value, uri)
-          || pair && Set.of("sig", "hmac", "e", "exp").contains(key)) continue;
-      if (Set.of("hdntl", "auth", "jwt").contains(key)) {
+      if (Set.of("token", "hdntl", "hdnts", "auth", "jwt", "auth_token", "access_token")
+          .contains(key)) {
         String stable = structuredToken(value);
         if (stable != null) {
           keep.add(key + "=" + encode(stable));
           continue;
         }
       }
+      if (ORIGINAL.contains(key)
+          || aws && AWS.contains(key)
+          || cf && key.equals("key-pair-id")
+          || cf && key.equals("policy") && policyMatches(value, uri)
+          || pair && Set.of("sig", "hmac", "e", "exp").contains(key)) continue;
       keep.add(part);
     }
     return String.join("&", keep);
@@ -156,7 +157,7 @@ public final class CdnQueryPolicy {
           || paired(v)
           || v.containsKey("token")
           || v.containsKey("signature")
-          || List.of("hdntl", "auth", "jwt").stream()
+          || List.of("hdntl", "hdnts", "auth", "jwt", "auth_token", "access_token").stream()
               .anyMatch(k -> structuredToken(v.get(k)) != null);
     } catch (Exception invalid) {
       return false;
@@ -178,7 +179,7 @@ public final class CdnQueryPolicy {
       }
       if (signed(url))
         for (String key : List.of("expires", "exp", "e")) end = Math.min(end, epoch(v.get(key)));
-      for (String key : List.of("hdntl", "auth")) {
+      for (String key : List.of("hdntl", "hdnts", "auth")) {
         String value = v.get(key);
         if (structuredToken(value) != null && value.contains("~hmac=")) {
           Matcher exp = Pattern.compile("(?:^|~)exp=([0-9]+)(?:~|$)").matcher(value);

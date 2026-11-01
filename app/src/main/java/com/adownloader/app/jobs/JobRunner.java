@@ -81,7 +81,7 @@ public final class JobRunner {
           destination.close();
           destination = null;
         } catch (IOException storage) {
-          throw new DownloadError(DownloadError.Category.STORAGE);
+          throw DownloadError.storage(storage);
         }
       }
       control.check();

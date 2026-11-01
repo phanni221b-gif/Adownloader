@@ -150,6 +150,8 @@ public final class HttpSource {
         return data;
       } catch (Exception error) {
         control.check();
+        DownloadError storageFailure = DownloadError.storage(error);
+        if (storageFailure.category == DownloadError.Category.STORAGE_FULL) throw storageFailure;
         if (error instanceof DownloadError) throw error;
         last = error;
         if (attempt < 2) Thread.sleep(300L * (attempt + 1));
@@ -186,7 +188,7 @@ public final class HttpSource {
             try {
               output.write(buffer, 0, n);
             } catch (IOException storage) {
-              throw new DownloadError(DownloadError.Category.STORAGE);
+              throw DownloadError.storage(storage);
             }
             written += n;
           }
@@ -198,12 +200,14 @@ public final class HttpSource {
           try {
             output.getFD().sync();
           } catch (IOException storage) {
-            throw new DownloadError(DownloadError.Category.STORAGE);
+            throw DownloadError.storage(storage);
           }
         }
         return;
       } catch (Exception error) {
         control.check();
+        DownloadError storageFailure = DownloadError.storage(error);
+        if (storageFailure.category == DownloadError.Category.STORAGE_FULL) throw storageFailure;
         if (error instanceof DownloadError
             && ((DownloadError) error).category != DownloadError.Category.NETWORK
             && ((DownloadError) error).category != DownloadError.Category.SERVER) throw error;

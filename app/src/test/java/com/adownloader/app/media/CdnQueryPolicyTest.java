@@ -82,4 +82,38 @@ public class CdnQueryPolicyTest {
             "https://site.test"));
     assertNotEquals(id("sig=a&sig=b&exp=1800000000"), id("sig=a&sig=c&exp=1800000000"));
   }
+
+  @Test
+  public void cloudFrontCustomPolicyAndJwtTokensDoNotEraseResourceClaims() {
+    String first = policy(1800000000L, "https://cdn.test/movie-123.mp4"),
+        second = policy(1900000000L, "https://cdn.test/movie-123.mp4");
+    assertEquals(
+        id("Policy=" + first + "&Signature=one&Key-Pair-Id=K1"),
+        id("Policy=" + second + "&Signature=two&Key-Pair-Id=K2"));
+    assertNotEquals(
+        id("Policy=" + first + "&Signature=one&Key-Pair-Id=K1"),
+        id(
+            "Policy="
+                + policy(1800000000L, "https://cdn.test/other.mp4")
+                + "&Signature=two&Key-Pair-Id=K2"));
+    assertEquals(id("token=a.payload.one"), id("token=a.payload.two"));
+    assertNotEquals(id("token=a.video1.one"), id("token=a.video2.two"));
+    assertEquals(
+        id("hdnts=exp=1800000000~acl=/id1/*~hmac=one"),
+        id("hdnts=exp=1900000000~acl=/id1/*~hmac=two"));
+  }
+
+  private static String policy(long expiry, String resource) {
+    return Base64.getEncoder()
+        .encodeToString(
+            ("{\"Statement\":[{\"Resource\":\""
+                    + resource
+                    + "\",\"Condition\":{\"DateLessThan\":{\"AWS:EpochTime\":"
+                    + expiry
+                    + "}}}]}")
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8))
+        .replace('+', '-')
+        .replace('=', '_')
+        .replace('/', '~');
+  }
 }

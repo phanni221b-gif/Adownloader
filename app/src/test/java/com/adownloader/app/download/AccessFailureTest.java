@@ -17,6 +17,11 @@ public class AccessFailureTest {
   @Test
   public void expiryRequiresSpecificSignedEvidence() {
     assertEquals(
+        DownloadError.Category.AUTH,
+        DownloadError.http(
+                401, "https://cdn.test/movie.mp4?sig=a&exp=1600000000", true, false, 1800000000000L)
+            .category);
+    assertEquals(
         DownloadError.Category.EXPIRED_URL,
         error("https://cdn.test/movie.mp4?sig=a&exp=1600000000", false, false).category);
     assertEquals(

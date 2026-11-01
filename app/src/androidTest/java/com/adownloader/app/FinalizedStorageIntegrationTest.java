@@ -163,4 +163,19 @@ public class FinalizedStorageIntegrationTest {
       context.deleteDatabase(name);
     }
   }
+
+  @org.junit.Test
+  public void typedStorageFailureRetainsFullCategoryWithoutLeakingMessage() {
+    Exception error =
+        new java.io.IOException(
+            "private-url-and-cookie",
+            new android.system.ErrnoException("write", android.system.OsConstants.ENOSPC));
+    assertEquals(DownloadError.Category.STORAGE_FULL, DownloadError.storage(error).category);
+    assertEquals("STORAGE_FULL", DownloadError.storage(error).getMessage());
+    assertEquals(
+        DownloadError.Category.STORAGE,
+        DownloadError.storage(
+                new android.system.ErrnoException("write", android.system.OsConstants.EIO))
+            .category);
+  }
 }

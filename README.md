@@ -2,6 +2,12 @@
 
 An Android 11+ video download browser with bundled Gecko, a Java application codebase and an ARM64 release for modern Galaxy Fold devices. Android System WebView is not used. The engine version has one source: [`geckoVersion` in gradle.properties](gradle.properties); Gradle also generates the version shown in App info and Device Diagnostics.
 
+## v0.6.1 stabilization
+
+SQLite schema 2 preserves existing jobs and encrypted contexts. Download state now lives only in SQLite; successful v0.5 history import removes the legacy payload. Access failures distinguish AUTH from evidence-based EXPIRED_URL. Conservative CDN identity handling never changes the real request URL or removes resource/quality/JWT payload information.
+
+HLS/DASH perform an early capacity estimate. After validated pending output is synchronized, a durable length/SHA-256 checkpoint permits immediate source cleanup and recovery without another download or mux. **Peak usage can still approach source plus output during mux**; unknown-length manifests provide a lower bound/bitrate estimate, not a space guarantee. See [stabilization details](docs/V0.6.1-STABILIZATION.md).
+
 ## v0.6 reliability
 
 - SQLite job queue survives process termination. Real pause, resume, cancel and retry controls are available in the download list and notifications; one worker runs at a time.

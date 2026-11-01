@@ -68,7 +68,11 @@ public final class JobJournal implements EngineCheckpoint {
   @Override
   public void saveDestinationFinal(
       FileDescriptor fd, String mime, String extension, TransferControl control) throws Exception {
-    fd.sync();
+    try {
+      fd.sync();
+    } catch (IOException storage) {
+      throw DownloadError.storage(storage);
+    }
     try (DescriptorChannel input = new DescriptorChannel(fd)) {
       String hash = controlledHash(input, input.size(), control);
       control.check();

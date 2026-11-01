@@ -44,7 +44,12 @@ public final class DownloadHistory {
                 .put("job", job.id)
                 .put("recovering", recovering)
                 .put("jobState", job.state.name())
-                .put("state", label(job.state.name()))
+                .put(
+                    "state",
+                    job.state == com.adownloader.app.jobs.DownloadJobStore.State.NEEDS_REFRESH
+                            && "AUTH".equals(job.error)
+                        ? "접근 확인 필요"
+                        : label(job.state.name()))
                 .put("name", job.name)
                 .put("host", job.host)
                 .put("type", job.type)

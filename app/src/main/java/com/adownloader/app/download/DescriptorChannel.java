@@ -63,7 +63,7 @@ public final class DescriptorChannel implements DurableChannel {
       position += written;
       return written;
     } catch (ErrnoException error) {
-      throw storage();
+      throw DownloadError.storage(error);
     }
   }
 
@@ -73,7 +73,7 @@ public final class DescriptorChannel implements DurableChannel {
     try {
       return Os.fstat(owned.getFileDescriptor()).st_size;
     } catch (ErrnoException error) {
-      throw storage();
+      throw DownloadError.storage(error);
     }
   }
 
@@ -100,7 +100,7 @@ public final class DescriptorChannel implements DurableChannel {
       position = Math.min(position, value);
       return this;
     } catch (ErrnoException error) {
-      throw storage();
+      throw DownloadError.storage(error);
     }
   }
 
@@ -110,7 +110,7 @@ public final class DescriptorChannel implements DurableChannel {
     try {
       Os.fsync(owned.getFileDescriptor());
     } catch (ErrnoException error) {
-      throw storage();
+      throw DownloadError.storage(error);
     }
   }
 
@@ -134,7 +134,7 @@ public final class DescriptorChannel implements DurableChannel {
       if (remaining > available - 8L * 1024 * 1024)
         throw new DownloadError(DownloadError.Category.STORAGE_FULL);
     } catch (ErrnoException error) {
-      throw storage();
+      throw DownloadError.storage(error);
     }
   }
 
