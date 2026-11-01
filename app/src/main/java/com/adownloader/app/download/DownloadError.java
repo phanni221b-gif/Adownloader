@@ -39,10 +39,32 @@ public final class DownloadError extends IOException {
     this.category = category;
   }
 
+  public static DownloadError storage(Throwable error) {
+    for (int depth = 0; error != null && depth < 8; depth++, error = error.getCause()) {
+      if (error instanceof DownloadError
+          && ((DownloadError) error).category == Category.STORAGE_FULL)
+        return new DownloadError(Category.STORAGE_FULL);
+      if (error instanceof android.system.ErrnoException
+          && ((android.system.ErrnoException) error).errno == android.system.OsConstants.ENOSPC)
+        return new DownloadError(Category.STORAGE_FULL);
+    }
+    return new DownloadError(Category.STORAGE);
+  }
+
   public static DownloadError http(int code) {
     return new DownloadError(
         code == 401 || code == 403
-            ? Category.EXPIRED_URL
+            ? Category.AUTH
             : code >= 500 ? Category.SERVER : Category.NETWORK);
+  }
+
+  public static DownloadError http(
+      int code, String url, boolean previouslyAccepted, boolean authenticationChallenge, long now) {
+    if (code == 403
+        && !authenticationChallenge
+        && com.adownloader.app.media.CdnQueryPolicy.signed(url)
+        && (previouslyAccepted || com.adownloader.app.media.CdnQueryPolicy.expiresAt(url) <= now))
+      return new DownloadError(Category.EXPIRED_URL);
+    return http(code);
   }
 }

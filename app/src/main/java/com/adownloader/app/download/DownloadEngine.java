@@ -98,7 +98,13 @@ public final class DownloadEngine {
       Result finalized = checkpoint.loadFinal();
       if (finalized != null) return finalized;
     }
-    HttpSource source = new HttpSource(url, headers, control);
+    if (checkpoint != null && destination != null) {
+      Result finalized = checkpoint.loadDestinationFinal(destination, control);
+      if (finalized != null) return finalized;
+    }
+    HttpSource source =
+        new HttpSource(url, headers, control)
+            .previouslyAccepted(checkpoint != null && checkpoint.previouslyAccepted());
     if (type == MediaCandidate.MediaType.HLS || type == MediaCandidate.MediaType.DASH) {
       List<ManifestParser.Track> tracks = checkpoint == null ? null : checkpoint.loadPlan();
       if (tracks == null) {
@@ -107,6 +113,15 @@ public final class DownloadEngine {
         if (checkpoint != null) checkpoint.sourceMetadata(probe.disposition);
         if (checkpoint != null) checkpoint.savePlan(tracks);
       }
+      StorageBudget.Estimate budget =
+          StorageBudget.estimate(
+              tracks, checkpoint == null ? 0 : checkpoint.committedSegmentBytes());
+      progress.update(budget.exact ? "저장 공간 확인 중" : "저장 공간 확인 중 · 실제 용량은 서버 응답에 따라 달라집니다", 0);
+      StorageBudget.require(budget, directory.getUsableSpace());
+      if (destination != null)
+        try (DescriptorChannel target = new DescriptorChannel(destination)) {
+          target.reserve(Math.max(0, budget.additional - StorageBudget.SAFETY));
+        }
       List<android.media.MediaDataSource> inputs = new ArrayList<>();
       double duration = 0;
       boolean video = false, audio = false;
@@ -200,6 +215,10 @@ public final class DownloadEngine {
         control.check();
         if (destination == null) PostProcessor.inspect(output, duration, video, audio);
         else PostProcessor.inspect(destination, duration, video, audio);
+        if (checkpoint != null && destination != null) {
+          for (var input : inputs) input.close();
+          checkpoint.saveDestinationFinal(destination, "video/mp4", ".mp4", control);
+        }
         return new Result(output, "video/mp4", ".mp4");
       } finally {
         for (var input : inputs)

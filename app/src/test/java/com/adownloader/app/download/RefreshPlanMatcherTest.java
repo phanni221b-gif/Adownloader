@@ -55,4 +55,35 @@ public class RefreshPlanMatcherTest {
     fresh.frameRate = 30;
     assertFalse(RefreshPlanMatcher.qualityNotLower(List.of(old), List.of(fresh)));
   }
+
+  @Test
+  public void cdnSignatureRotationRetainsPartsButResourceAndJwtClaimsDoNot() {
+    ManifestParser.Track old = track("old", 2160, 1), fresh = track("new", 2160, 1);
+    old.representation = "https://cdn.test/asset-123.m3u8?sig=one&exp=1800000000";
+    fresh.representation = "https://cdn.test/asset-123.m3u8?sig=two&exp=1900000000";
+    old.parts.clear();
+    fresh.parts.clear();
+    old.parts.add(
+        new ManifestParser.Part(
+            "https://cdn.test/part.ts?id=1&Signature=one&Key-Pair-Id=K1&Expires=1800000000",
+            0,
+            -1,
+            1,
+            null,
+            null));
+    fresh.parts.add(
+        new ManifestParser.Part(
+            "https://cdn.test/part.ts?id=1&Signature=two&Key-Pair-Id=K2&Expires=1900000000",
+            0,
+            -1,
+            1,
+            null,
+            null));
+    assertTrue(RefreshPlanMatcher.compatible(List.of(old), List.of(fresh)));
+    fresh.representation = "https://cdn.test/asset-123.m3u8?id=2&sig=two&exp=1900000000";
+    assertFalse(RefreshPlanMatcher.compatible(List.of(old), List.of(fresh)));
+    old.representation = "https://cdn.test/asset-123.m3u8?token=a.video1.one";
+    fresh.representation = "https://cdn.test/asset-123.m3u8?token=a.video2.two";
+    assertFalse(RefreshPlanMatcher.compatible(List.of(old), List.of(fresh)));
+  }
 }

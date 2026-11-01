@@ -6,7 +6,6 @@ import android.os.*;
 import android.provider.MediaStore;
 import com.adownloader.app.*;
 import com.adownloader.app.download.*;
-import com.adownloader.app.ui.DownloadHistory;
 import java.io.*;
 import java.util.*;
 import org.json.*;
@@ -24,7 +23,6 @@ public final class JobRunner {
   public void run(DownloadJobStore.Job job, TransferControl control) {
     DownloadEngine engine = null;
     ParcelFileDescriptor destination = null;
-    int legacy = (int) job.id;
     try {
       JSONObject request = store.request(job.id);
       Map<String, String> headers = new LinkedHashMap<>();
@@ -40,12 +38,15 @@ public final class JobRunner {
       control.check();
       if (!store.transition(
           job.id, DownloadJobStore.State.PREPARING, DownloadJobStore.State.DOWNLOADING)) return;
-      DownloadHistory.begin(context, legacy, job.host, job.type);
+
       boolean segmented = "HLS".equals(job.type) || "DASH".equals(job.type);
       Uri pending =
           ensurePending(job.id, job.name, "AUDIO".equals(job.type) ? "audio/mp4" : "video/mp4");
       destination =
-          context.getContentResolver().openFileDescriptor(pending, segmented ? "rwt" : "rw");
+          context
+              .getContentResolver()
+              .openFileDescriptor(
+                  pending, segmented && store.finalizedMedia(job.id) == null ? "rwt" : "rw");
       if (destination == null) throw new DownloadError(DownloadError.Category.STORAGE);
       engine =
           new DownloadEngine(
@@ -61,7 +62,7 @@ public final class JobRunner {
                     current.total,
                     current.segment,
                     current.segments);
-                DownloadHistory.progress(context, legacy, phase, percent);
+
                 context
                     .getSystemService(android.app.NotificationManager.class)
                     .notify(
@@ -80,7 +81,7 @@ public final class JobRunner {
           destination.close();
           destination = null;
         } catch (IOException storage) {
-          throw new DownloadError(DownloadError.Category.STORAGE);
+          throw DownloadError.storage(storage);
         }
       }
       control.check();
@@ -106,7 +107,7 @@ public final class JobRunner {
         store.cleanup(job.id);
         return;
       }
-      DownloadHistory.state(context, legacy, "완료", uri.toString());
+
       store.cleanup(job.id);
       JobNotifications.status(context, completed);
     } catch (Exception error) {
@@ -130,7 +131,7 @@ public final class JobRunner {
         if (current.state != DownloadJobStore.State.PAUSED)
           store.state(
               job.id, DownloadJobStore.State.PAUSED, control.userRequested() ? "" : "OS_STOP");
-        DownloadHistory.state(context, legacy, "일시정지", null);
+
       } else if (current.state != DownloadJobStore.State.PAUSED) {
         DownloadError.Category category =
             error instanceof DownloadError
@@ -155,11 +156,6 @@ public final class JobRunner {
                 ? DownloadJobStore.State.NEEDS_REFRESH
                 : DownloadJobStore.State.FAILED,
             category.name());
-        DownloadHistory.state(
-            context,
-            legacy,
-            "실패 · " + JobNotifications.message(category.name(), DownloadJobStore.State.FAILED),
-            null);
       }
       JobNotifications.status(context, store.get(job.id));
     } finally {

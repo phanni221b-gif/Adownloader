@@ -109,7 +109,7 @@ public final class JobNotifications {
 
   public static String message(String error, DownloadJobStore.State state) {
     if (state == DownloadJobStore.State.PAUSED) return "일시정지됨 · 이어받을 수 있습니다.";
-    if (state == DownloadJobStore.State.NEEDS_REFRESH) return "영상 주소가 만료되었습니다. 원래 페이지를 다시 열어 주세요.";
+
     switch (error) {
       case "CLEANUP_PENDING":
         return "임시 파일 정리를 다음 실행에서 다시 시도합니다.";
@@ -134,8 +134,9 @@ public final class JobNotifications {
       case "DRM":
         return "보호된 영상은 다운로드할 수 없습니다.";
       case "AUTH":
+        return "영상에 접근할 수 없습니다. 로그인 상태 또는 사이트 재생 여부를 확인해 주세요.";
       case "EXPIRED_URL":
-        return "영상에 접근할 수 없습니다. 원래 페이지를 다시 열어 주세요.";
+        return "영상 주소가 만료되었습니다. 원래 페이지를 다시 열어 주세요.";
       case "NETWORK":
         return "네트워크 연결을 확인한 뒤 다시 시도해 주세요.";
       case "SERVER":

@@ -201,6 +201,12 @@ public class DownloadIntegrationTest {
         .close();
     android.content.SharedPreferences prefs = context.getSharedPreferences("downloads", 0);
     prefs.edit().clear().commit();
+    com.adownloader.app.jobs.DownloadJobs jobs = com.adownloader.app.jobs.DownloadJobs.get(context);
+    java.util.concurrent.CountDownLatch ready = new java.util.concurrent.CountDownLatch(1);
+    jobs.whenReady(ready::countDown);
+    assertTrue(ready.await(15, java.util.concurrent.TimeUnit.SECONDS));
+    Set<Long> existing = new HashSet<>();
+    for (var job : jobs.store.list()) existing.add(job.id);
     Activity activity =
         instrumentation.startActivitySync(
             new Intent(context, MainActivity.class)
@@ -217,21 +223,24 @@ public class DownloadIntegrationTest {
     long deadline = System.currentTimeMillis() + 60_000;
     int complete = 0;
     while (System.currentTimeMillis() < deadline) {
-      org.json.JSONObject items = new org.json.JSONObject(prefs.getString("items", "{}"));
       complete = 0;
-      Iterator<String> keys = items.keys();
-      while (keys.hasNext())
-        if ("완료".equals(items.getJSONObject(keys.next()).optString("state"))) complete++;
+      for (var job : jobs.store.list())
+        if (!existing.contains(job.id)
+            && job.state == com.adownloader.app.jobs.DownloadJobStore.State.COMPLETED) complete++;
       if (complete == 2) break;
       Thread.sleep(250);
     }
     assertEquals("Both queued foreground jobs must finish after Activity closure", 2, complete);
-    org.json.JSONObject items = new org.json.JSONObject(prefs.getString("items", "{}"));
-    Iterator<String> keys = items.keys();
-    while (keys.hasNext()) {
-      String uri = items.getJSONObject(keys.next()).optString("uri");
-      if (!uri.isEmpty()) context.getContentResolver().delete(Uri.parse(uri), null, null);
-    }
+    assertFalse("SQLite must be the only download-state authority", prefs.contains("items"));
+    int created = 0;
+    for (var job : jobs.store.list())
+      if (!existing.contains(job.id)) {
+        created++;
+        assertEquals(com.adownloader.app.jobs.DownloadJobStore.State.COMPLETED, job.state);
+        assertNotNull(job.uri);
+        context.getContentResolver().delete(Uri.parse(job.uri), null, null);
+      }
+    assertEquals(2, created);
   }
 
   @Test

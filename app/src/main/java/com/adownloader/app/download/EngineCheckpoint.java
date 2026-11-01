@@ -7,6 +7,22 @@ import java.util.*;
 public interface EngineCheckpoint {
   List<ManifestParser.Track> loadPlan() throws Exception;
 
+  default boolean previouslyAccepted() {
+    return false;
+  }
+
+  default long committedSegmentBytes() {
+    return 0;
+  }
+
+  default DownloadEngine.Result loadDestinationFinal(FileDescriptor fd, TransferControl control)
+      throws Exception {
+    return null;
+  }
+
+  default void saveDestinationFinal(
+      FileDescriptor fd, String mime, String extension, TransferControl control) throws Exception {}
+
   default void sourceMetadata(String disposition) throws Exception {}
 
   default DownloadEngine.Result loadFinal() throws Exception {

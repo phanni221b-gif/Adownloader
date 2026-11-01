@@ -80,19 +80,10 @@ public final class RefreshPlanMatcher {
     if (!value.startsWith("http://") && !value.startsWith("https://")) return value;
     try {
       URI uri = URI.create(value);
-      String query = uri.getRawQuery();
-      List<String> keep = new ArrayList<>();
-      if (query != null)
-        for (String part : query.split("&")) {
-          String key =
-              java.net.URLDecoder.decode(part.split("=", 2)[0], "UTF-8").toLowerCase(Locale.ROOT);
-          if (!Set.of("token", "signature", "expires", "timestamp", "_").contains(key))
-            keep.add(part);
-        }
       return com.adownloader.app.media.MediaIdentity.origin(value)
           + uri.getRawPath()
           + "?"
-          + String.join("&", keep);
+          + com.adownloader.app.media.CdnQueryPolicy.identityQuery(uri, true);
     } catch (Exception bad) {
       return value;
     }

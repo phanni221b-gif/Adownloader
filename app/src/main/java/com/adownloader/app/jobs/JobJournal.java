@@ -18,6 +18,82 @@ public final class JobJournal implements EngineCheckpoint {
   }
 
   @Override
+  public boolean previouslyAccepted() {
+    var job = store.get(id);
+    return job != null && job.bytes > 0;
+  }
+
+  @Override
+  public long committedSegmentBytes() {
+    return store.committedSegmentBytes(id);
+  }
+
+  @Override
+  public DownloadEngine.Result loadDestinationFinal(FileDescriptor fd, TransferControl control)
+      throws Exception {
+    JSONObject finalMedia = store.finalizedMedia(id);
+    if (finalMedia == null) return null;
+    try (DescriptorChannel input = new DescriptorChannel(fd)) {
+      if (input.size() != finalMedia.getLong("bytes")
+          || !controlledHash(input, input.size(), control).equals(finalMedia.getString("hash")))
+        throw new DownloadError(DownloadError.Category.STORAGE);
+    }
+    PostProcessor.inspect(
+        fd,
+        0,
+        finalMedia.getString("mime").startsWith("video/"),
+        finalMedia.getString("mime").startsWith("audio/"));
+    purgeFinalizedInputs();
+    return new DownloadEngine.Result(
+        null, finalMedia.getString("mime"), finalMedia.getString("extension"));
+  }
+
+  private static String controlledHash(
+      DescriptorChannel input, long length, TransferControl control) throws Exception {
+    MessageDigest digest = MessageDigest.getInstance("SHA-256");
+    java.nio.ByteBuffer buffer = java.nio.ByteBuffer.allocate(128 * 1024);
+    input.position(0);
+    while (length > 0) {
+      control.check();
+      buffer.clear();
+      buffer.limit((int) Math.min(length, buffer.capacity()));
+      int count = input.read(buffer);
+      if (count <= 0) throw new DownloadError(DownloadError.Category.STORAGE);
+      digest.update(buffer.array(), 0, count);
+      length -= count;
+    }
+    return DirectTransfer.hex(digest.digest());
+  }
+
+  @Override
+  public void saveDestinationFinal(
+      FileDescriptor fd, String mime, String extension, TransferControl control) throws Exception {
+    try {
+      fd.sync();
+    } catch (IOException storage) {
+      throw DownloadError.storage(storage);
+    }
+    try (DescriptorChannel input = new DescriptorChannel(fd)) {
+      String hash = controlledHash(input, input.size(), control);
+      control.check();
+      store.finalizedMedia(id, input.size(), hash, mime, extension);
+    }
+    // SQLite FULL commit is durable BEFORE any original source file is removed.
+    purgeFinalizedInputs();
+  }
+
+  private void purgeFinalizedInputs() throws Exception {
+    if (store.finalizedMedia(id) == null) return;
+    File[] files = store.directory(id).listFiles();
+    if (files != null)
+      for (File file : files)
+        if (file.getName().matches("part-[0-9]+-[0-9]+(?:[.]partial)?|output-[0-9]+[.]media")) {
+          if (file.exists() && !file.delete())
+            throw new DownloadError(DownloadError.Category.STORAGE);
+        }
+  }
+
+  @Override
   public void sourceMetadata(String disposition) throws Exception {
     if (disposition == null || disposition.isBlank()) return;
     JSONObject request = store.request(id);
@@ -47,6 +123,12 @@ public final class JobJournal implements EngineCheckpoint {
   public void verifyAll() throws Exception {
     JSONObject request = store.request(id), files = request.optJSONObject("directFiles");
     if (loadFinal() != null) return;
+    if (store.finalizedMedia(id) != null) {
+      try (var fd = store.openPending(id, "r")) {
+        loadDestinationFinal(fd.getFileDescriptor(), new TransferControl());
+        return;
+      }
+    }
     JSONObject direct = request.optJSONObject("directMedia");
     if (direct != null && direct.optLong("bytes") > 0) {
       try (var fd = store.openPending(id, "r");

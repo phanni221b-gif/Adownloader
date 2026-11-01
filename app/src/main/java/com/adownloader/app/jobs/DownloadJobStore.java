@@ -64,8 +64,10 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
     this(context, "download-jobs.db");
   }
 
+  public static final int SCHEMA_VERSION = 2;
+
   public DownloadJobStore(Context context, String database) {
-    super(context.getApplicationContext(), database, null, 1);
+    super(context.getApplicationContext(), database, null, SCHEMA_VERSION);
     this.context = context.getApplicationContext();
     setWriteAheadLoggingEnabled(true);
   }
@@ -97,11 +99,83 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
         "CREATE TABLE contexts(job INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,part"
             + " INTEGER NOT NULL,data BLOB NOT NULL,PRIMARY KEY(job,part))");
     db.execSQL("CREATE TABLE flags(name TEXT PRIMARY KEY)");
+    migrateOneToTwo(db);
   }
 
   @Override
   public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-    throw new IllegalStateException("Unknown job schema migration");
+    if (oldVersion < 1 || newVersion > SCHEMA_VERSION || oldVersion >= newVersion)
+      throw new android.database.sqlite.SQLiteException("UNSUPPORTED_JOB_SCHEMA_UPGRADE");
+    for (int version = oldVersion; version < newVersion; version++) {
+      try {
+        switch (version) {
+          case 1:
+            migrateOneToTwo(db);
+            break;
+          default:
+            throw new android.database.sqlite.SQLiteException("MISSING_JOB_SCHEMA_STEP");
+        }
+      } catch (RuntimeException failure) {
+        android.util.Log.e(
+            "Adownloader", "JOB_SCHEMA_UPGRADE_FAILED_" + version + "_" + (version + 1));
+        throw new android.database.sqlite.SQLiteException(
+            "JOB_SCHEMA_UPGRADE_FAILED_" + version + "_" + (version + 1), failure);
+      }
+    }
+  }
+
+  private static void migrateOneToTwo(SQLiteDatabase db) {
+    db.execSQL(
+        "CREATE TABLE finalized_media(job INTEGER PRIMARY KEY REFERENCES jobs(id) ON DELETE"
+            + " CASCADE,bytes INTEGER NOT NULL,hash TEXT NOT NULL,mime TEXT NOT NULL,extension TEXT"
+            + " NOT NULL)");
+    db.execSQL("CREATE INDEX parts_by_job ON parts(job)");
+  }
+
+  @Override
+  public void onDowngrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+    throw new android.database.sqlite.SQLiteException(
+        "JOB_SCHEMA_DOWNGRADE_UNSUPPORTED_" + oldVersion + "_" + newVersion);
+  }
+
+  public synchronized JSONObject finalizedMedia(long id) throws Exception {
+    try (Cursor cursor =
+        getReadableDatabase()
+            .rawQuery(
+                "SELECT bytes,hash,mime,extension FROM finalized_media WHERE job=?",
+                new String[] {"" + id})) {
+      if (!cursor.moveToFirst()) return null;
+      return new JSONObject()
+          .put("bytes", cursor.getLong(0))
+          .put("hash", cursor.getString(1))
+          .put("mime", cursor.getString(2))
+          .put("extension", cursor.getString(3));
+    }
+  }
+
+  public synchronized void finalizedMedia(
+      long id, long bytes, String hash, String mime, String extension) {
+    ContentValues value = new ContentValues();
+    value.put("job", id);
+    value.put("bytes", bytes);
+    value.put("hash", hash);
+    value.put("mime", mime);
+    value.put("extension", extension);
+    getWritableDatabase()
+        .insertWithOnConflict("finalized_media", null, value, SQLiteDatabase.CONFLICT_REPLACE);
+  }
+
+  public synchronized long committedSegmentBytes(long id) {
+    try (Cursor c =
+        getReadableDatabase()
+            .rawQuery(
+                "SELECT COALESCE(SUM(bytes),0) FROM parts WHERE job=?", new String[] {"" + id})) {
+      return c.moveToFirst() ? c.getLong(0) : 0;
+    }
+  }
+
+  public synchronized void resetFinalizedMedia(long id) {
+    getWritableDatabase().delete("finalized_media", "job=?", new String[] {"" + id});
   }
 
   public synchronized long enqueue(
@@ -655,7 +729,10 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
   public synchronized void migrate() {
     SQLiteDatabase db = getWritableDatabase();
     try (Cursor c = db.rawQuery("SELECT name FROM flags WHERE name='v050'", null)) {
-      if (c.moveToFirst()) return;
+      if (c.moveToFirst()) {
+        context.getSharedPreferences("downloads", 0).edit().remove("items").apply();
+        return;
+      }
     }
     db.beginTransaction();
     try {
@@ -686,5 +763,6 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
     } finally {
       db.endTransaction();
     }
+    context.getSharedPreferences("downloads", 0).edit().remove("items").apply();
   }
 }

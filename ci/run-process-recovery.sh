@@ -47,3 +47,7 @@ run_case pauseCancelRetry
 run_case uiPauseResumeCancel
 
 run_case refreshSources
+
+run_case prepareFinalized
+adb shell am force-stop com.adownloader.app
+run_case recoverFinalized
