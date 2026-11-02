@@ -60,7 +60,11 @@ public final class MediaExtensionManager implements AutoCloseable {
                       if (closed
                           || !NATIVE_APP.equals(nativeApp)
                           || !(message instanceof JSONObject)) return null;
-                      route((JSONObject) message);
+                      JSONObject json = (JSONObject) message;
+                      if (json.optString("kind").startsWith("manifest-capture-"))
+                        return GeckoResult.fromValue(
+                            new JSONObject(java.util.Map.of("ok", bridge.capture(json))));
+                      route(json);
                       return null;
                     }
                   },
@@ -84,6 +88,7 @@ public final class MediaExtensionManager implements AutoCloseable {
           .removeIf(
               entry -> {
                 if (entry.getValue() != session) return false;
+                bridge.discardTab(entry.getKey());
                 pending.remove(entry.getKey());
                 return true;
               });
@@ -190,6 +195,7 @@ public final class MediaExtensionManager implements AutoCloseable {
               "etag",
               "modified",
               "length",
+              "mediaObservedAt",
               "frameScore",
               "frameHost",
               "frameId")) {

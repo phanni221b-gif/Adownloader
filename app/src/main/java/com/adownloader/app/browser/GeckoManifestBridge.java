@@ -32,6 +32,7 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
   }
 
   private final Map<String, Pending> pending = new LinkedHashMap<>();
+  private final ManifestResponseCache captures = new ManifestResponseCache();
   private boolean closed;
 
   public GeckoManifestBridge(BrowserSessionManager browser) {
@@ -46,7 +47,12 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
   public synchronized void observe(JSONObject j) {
     if (closed) return;
     int tab = j.optInt("tabId", -1);
+    if (j.optString("kind").equals("manifest-invalidate")) {
+      discardTab(tab);
+      return;
+    }
     if (j.optString("kind").equals("page-meta")) {
+      captures.page(tab, j.optString("pageUrl"));
       String page = j.optString("pageUrl");
       observations
           .entrySet()
@@ -91,6 +97,76 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
       Bound old = observations.remove(observations.keySet().iterator().next());
       for (String v : old.observation.headers().values()) bytes -= v.length();
     }
+  }
+
+  public synchronized void discardTab(int tab) {
+    captures.discard(tab);
+    observations.values().removeIf(b -> b.tabId == tab);
+  }
+
+  /** Called only for built-in background messages, never page-world content. */
+  public synchronized boolean capture(JSONObject j) {
+    if (closed) return false;
+    String id = j.optString("captureId"), kind = j.optString("kind");
+    int tab = j.optInt("tabId", -1);
+    try {
+      if (kind.equals("manifest-capture-start")) {
+        if (!Set.of("media", "xmlhttprequest", "fetch", "other")
+            .contains(j.optString("requestType"))) return false;
+        Map<String, String> headers =
+            bootstrapHeaders(
+                j.has("headers")
+                    ? new JSONObject().put("requestHeaders", j.getJSONObject("headers"))
+                    : j);
+        Map<String, String> metadata = new LinkedHashMap<>();
+        JSONObject raw = j.optJSONObject("metadata");
+        if (raw != null)
+          for (String name : List.of("content-type", "etag", "last-modified")) {
+            String value = raw.optString(name);
+            if (value.length() <= 4096 && !value.contains("\r") && !value.contains("\n"))
+              metadata.put(name, value);
+          }
+        metadata.put("request-type", j.optString("requestType"));
+        List<String> cookies = new ArrayList<>();
+        JSONArray list = j.optJSONArray("cookies");
+        if (list != null)
+          for (int i = 0; i < Math.min(32, list.length()); i++) {
+            String c = list.optString(i);
+            if (c.length() <= 4096 && !c.contains("\r") && !c.contains("\n")) cookies.add(c);
+          }
+        var o =
+            new MediaNetworkSession.Observation(
+                j.optString("url"),
+                j.optString("pageUrl"),
+                j.optInt("frameId", -1),
+                j.optInt("geckoStatus"),
+                j.optLong("observedAt"),
+                headers,
+                List.of(),
+                tab);
+        return captures.begin(id, o, metadata, cookies);
+      }
+      if (kind.equals("manifest-capture-chunk")) {
+        String data = j.optString("data");
+        return data.length() <= 65536
+            && captures.chunk(id, tab, j.optInt("index", -1), Base64.getDecoder().decode(data));
+      }
+      if (kind.equals("manifest-capture-end"))
+        return captures.end(id, tab, j.optInt("chunks", -1), j.optInt("bytes", -1));
+      if (kind.equals("manifest-capture-abort")) {
+        captures.abort(id, tab);
+        return true;
+      }
+    } catch (Exception rejected) {
+      captures.abort(id, tab);
+    }
+    return false;
+  }
+
+  @Override
+  public MediaNetworkSession.Bootstrap captured(
+      String url, String page, int tab, int frame, TransferControl control) throws Exception {
+    return captures.get(url, page, tab, frame, control);
   }
 
   public void connect(GeckoSession session, WebExtension.Port port) {
@@ -322,5 +398,6 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
       }
     ports.clear();
     observations.clear();
+    captures.close();
   }
 }

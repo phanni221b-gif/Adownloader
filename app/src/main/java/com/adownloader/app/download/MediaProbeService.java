@@ -46,7 +46,7 @@ public final class MediaProbeService implements AutoCloseable {
   public MediaProbeResult preview(
       String url, MediaCandidate.MediaType type, Map<String, String> headers) throws Exception {
     return get(
-        url, type, headers, new TransferControl(), true, null, Collections.emptyMap(), -1, -1);
+        url, type, headers, new TransferControl(), true, null, Collections.emptyMap(), -1, -1, "");
   }
 
   public MediaProbeResult probe(
@@ -55,7 +55,7 @@ public final class MediaProbeService implements AutoCloseable {
       Map<String, String> headers,
       TransferControl control)
       throws Exception {
-    return get(url, type, headers, control, false, null, Collections.emptyMap(), -1, -1);
+    return get(url, type, headers, control, false, null, Collections.emptyMap(), -1, -1, "");
   }
 
   public MediaProbeResult preview(MediaCandidate item) throws Exception {
@@ -68,7 +68,8 @@ public final class MediaProbeService implements AutoCloseable {
         item.getPageUrl(),
         contexts(item),
         scope(item, "browserTabId"),
-        scope(item, "frameId"));
+        scope(item, "frameId"),
+        item.getMetadata().getOrDefault("mediaObservedAt", ""));
   }
 
   public MediaProbeResult probe(MediaCandidate item, TransferControl control) throws Exception {
@@ -81,7 +82,8 @@ public final class MediaProbeService implements AutoCloseable {
         item.getPageUrl(),
         contexts(item),
         scope(item, "browserTabId"),
-        scope(item, "frameId"));
+        scope(item, "frameId"),
+        item.getMetadata().getOrDefault("mediaObservedAt", ""));
   }
 
   private static Map<String, Map<String, String>> contexts(MediaCandidate item) {
@@ -147,9 +149,10 @@ public final class MediaProbeService implements AutoCloseable {
                       + "|"
                       + canonical
                       + "|"
-                      + source.pageSiteKey()
+                      + source.pageScopeKey()
                       + "|"
-                      + source.browserScopeKey()));
+                      + source.browserScopeKey()
+                      + "|"));
     }
     if (found != null) {
       while (!found.future.isDone()) {
@@ -178,13 +181,26 @@ public final class MediaProbeService implements AutoCloseable {
       String page,
       Map<String, Map<String, String>> contexts,
       int tab,
-      int frame)
+      int frame,
+      String evidence)
       throws Exception {
     TreeMap<String, String> canonical = new TreeMap<>();
     headers.forEach((k, v) -> canonical.put(k.toLowerCase(Locale.ROOT), v));
     String key =
         MediaIdentity.hash(
-            type + "|" + url + "|" + canonical + "|" + pageKey(page) + "|" + tab + ":" + frame);
+            type
+                + "|"
+                + url
+                + "|"
+                + canonical
+                + "|"
+                + (page == null ? "" : page)
+                + "|"
+                + tab
+                + ":"
+                + frame
+                + "|"
+                + evidence);
     Entry entry;
     boolean created = false;
     MediaProbeResult previous = null;
@@ -357,7 +373,9 @@ public final class MediaProbeService implements AutoCloseable {
         root,
         documents,
         tracks,
-        Math.min(System.currentTimeMillis() + ttl, expiry(url)),
+        Math.min(
+            source.manifestEvidenceExpiresAt(),
+            Math.min(System.currentTimeMillis() + ttl, expiry(url))),
         source.hasResponseCookies());
   }
 

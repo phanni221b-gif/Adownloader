@@ -13,6 +13,42 @@ import org.json.JSONObject;
 public final class DeviceDiagnostics {
   private DeviceDiagnostics() {}
 
+  private static org.json.JSONArray transportSummary(JSONObject rows) {
+    org.json.JSONArray result = new org.json.JSONArray();
+    for (var keys = rows.keys(); keys.hasNext() && result.length() < 40; ) {
+      JSONObject r = rows.optJSONObject(keys.next());
+      if (r == null) continue;
+      String stage = r.optString("stage"), action = r.optString("action");
+      int status = r.optInt("status");
+      String label =
+          switch (stage) {
+            case "ROOT_MANIFEST", "MASTER_MANIFEST" ->
+                r.optString("body").equals("DASH") ? "DASH manifest" : "HLS manifest";
+            case "VARIANT_PLAYLIST" -> "Variant manifest";
+            case "AUDIO_PLAYLIST" -> "오디오 manifest";
+            case "INIT_SEGMENT" -> "초기화 세그먼트";
+            case "VIDEO_SEGMENT" -> "영상 세그먼트";
+            case "AUDIO_SEGMENT" -> "오디오 세그먼트";
+            case "AES_KEY" -> "암호화 키 요청";
+            default -> "미디어 요청";
+          };
+      String detail =
+          action.equals("GECKO_RESPONSE_CACHE")
+              ? "Gecko 재생 응답 사용 · Native 재요청 생략"
+              : action.equals("GECKO_CACHE_MISS")
+                  ? "최근 재생 응답 없음/만료 · 현재 요청으로 확인"
+                  : action.equals("NATIVE_CONTEXT_RETRY")
+                      ? "최근 성공 요청 문맥으로 Native 재시도"
+                      : r.optString("transport").equals("gecko")
+                          ? "Gecko 재요청 " + (status == 0 ? "시도" : status)
+                          : "Native " + status;
+      if (action.equals("SEGMENT_NATIVE_BLOCKED") || action.equals("MANIFEST_NATIVE_BLOCKED"))
+        detail += " · 요청 차단";
+      result.put(label + ": " + detail);
+    }
+    return result;
+  }
+
   public static void configureNetwork(Context raw) {
     Context context = raw.getApplicationContext();
     com.adownloader.app.download.MediaNetworkSession.diagnostics(
@@ -99,7 +135,9 @@ public final class DeviceDiagnostics {
       }
       out.put("downloadFailure", failure);
       try {
-        out.put("mediaNetwork", new JSONObject(preferences.getString("network", "{}")));
+        JSONObject network = new JSONObject(preferences.getString("network", "{}"));
+        out.put("mediaNetwork", network);
+        out.put("mediaTransportSummary", transportSummary(network));
       } catch (Exception ignored) {
       }
       if (activity instanceof com.adownloader.app.MainActivity)

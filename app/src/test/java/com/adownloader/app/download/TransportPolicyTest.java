@@ -165,4 +165,54 @@ public class TransportPolicyTest {
       assertFalse(sentCookie.get().contains("PRIVATE_OLD"));
     }
   }
+
+  @Test
+  public void successfulPlaybackEvidenceIsUsedBeforeAnyNativeOrFetchReplay() throws Exception {
+    install(0);
+    var fallback = provider;
+    provider =
+        new MediaNetworkSession.Provider() {
+          public MediaNetworkSession.Observation latest(String u, String p) {
+            return fallback.latest(u, p);
+          }
+
+          public MediaNetworkSession.Bootstrap captured(
+              String u, String p, int tab, int frame, TransferControl c) {
+            if (!u.equals(root) || !p.equals(page) || tab != 9 || frame != 2) return null;
+            return new MediaNetworkSession.Bootstrap(
+                root,
+                200,
+                0,
+                Map.of(
+                    "content-type",
+                    "application/vnd.apple.mpegurl",
+                    "evidence-expires-at",
+                    Long.toString(System.currentTimeMillis() + 60000)),
+                "#EXTM3U\n#EXTINF:1,\npart.ts\n#EXT-X-ENDLIST\n".getBytes(StandardCharsets.UTF_8),
+                Map.of(),
+                Map.of("Authorization", "Bearer PRIVATE"));
+          }
+
+          public MediaNetworkSession.Bootstrap manifest(
+              String u, String p, Map<String, String> h, TransferControl c) {
+            bridges.incrementAndGet();
+            throw new AssertionError("Cache hit must never fetch");
+          }
+        };
+    MediaNetworkSession.install(provider);
+    try (HttpSource source = new HttpSource(root, Map.of()).pageContext(page).browserScope(9, 2)) {
+      assertTrue(source.document(root, null, "root").text.startsWith("#EXTM3U"));
+      assertEquals(0, nativeRoots.get());
+      assertEquals(0, bridges.get());
+      assertTrue(source.hasResponseCookies());
+      assertTrue(
+          trace.stream()
+              .anyMatch(
+                  e ->
+                      Boolean.TRUE.equals(e.get("manifestCacheUsed"))
+                          && Boolean.TRUE.equals(e.get("nativeRequestSkipped"))));
+      assertFalse(trace.toString().contains("Bearer PRIVATE"));
+      assertFalse(trace.toString().contains("/v/master"));
+    }
+  }
 }
