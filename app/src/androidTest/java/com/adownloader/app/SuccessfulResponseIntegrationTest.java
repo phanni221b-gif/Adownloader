@@ -289,7 +289,21 @@ ms.addEventListener('sourceopen',async()=>{try{
     }
     assertTrue(nativeManifests.get() > 0);
     assertTrue(fetchDenied.get() > 0);
-    var probe = MediaProbeService.shared().preview(item);
+    com.adownloader.app.download.MediaProbeResult probe;
+    try {
+      probe = MediaProbeService.shared().preview(item);
+    } catch (Exception failure) {
+      throw new AssertionError(
+          "Probe category="
+              + (failure instanceof DownloadError e ? e.category : "OTHER")
+              + " capture="
+              + provider.captureDiagnostics()
+              + " detection="
+              + browser().getDetector().detectionDiagnostics
+              + " performance="
+              + browser().getDetector().performanceMetrics,
+          failure);
+    }
     assertFalse(probe.tracks().isEmpty());
     if (kind.equals("master")) {
       assertEquals(90, probe.tracks().get(0).height);
@@ -396,5 +410,89 @@ ms.addEventListener('sourceopen',async()=>{try{
   @Test
   public void actualDashPlaybackResponseUsesNativeSplitTrackTransfer() throws Exception {
     run("dash", false, false, false);
+  }
+
+  @Test
+  public void verifiedResourceContextReplacesInsteadOfMergingStaleSecrets() throws Exception {
+    var d = new com.adownloader.app.media.MediaDetector(null);
+    String url = "https://cdn.test/m/part.ts",
+        page = "https://page.test/post",
+        root = "https://cdn.test/m/master.m3u8";
+    d.capture(root, "application/vnd.apple.mpegurl", "network-response", page, Map.of());
+    d.rememberContext(url, page, Map.of("Authorization", "Bearer OLD", "Cookie", "sid=OLD"), true);
+    d.rememberContext(url, page, Map.of("Referer", page), true);
+    var item = d.forDownload(d.snapshot().get(0));
+    var all = new org.json.JSONObject(item.getMetadata().get("requestContexts"));
+    assertFalse(all.getJSONObject(url).has("Authorization"));
+    assertFalse(all.getJSONObject(url).has("Cookie"));
+    assertEquals(page, all.getJSONObject(url).getString("Referer"));
+  }
+
+  @Test
+  public void acknowledgedQueuedPlaybackPlanSurvivesBrowserClosureBeforeAnyTransfer()
+      throws Exception {
+    mode = "closeBrowser";
+    var item = discover();
+    DownloadJobs jobs = DownloadJobs.get(context);
+    CountDownLatch ready = new CountDownLatch(1);
+    jobs.whenReady(ready::countDown);
+    assertTrue(ready.await(15, TimeUnit.SECONDS));
+    CountDownLatch idle = new CountDownLatch(1);
+    jobs.drain(idle::countDown);
+    assertTrue(idle.await(15, TimeUnit.SECONDS));
+    DownloadJobs.Host held = () -> {};
+    ins.runOnMainSync(() -> jobs.attach(held));
+    AtomicLong id = new AtomicLong();
+    try {
+      CountDownLatch saved = new CountDownLatch(1);
+      jobs.enqueue(
+          item,
+          v -> {
+            id.set(v);
+            saved.countDown();
+          });
+      assertTrue(saved.await(15, TimeUnit.SECONDS));
+      assertTrue(id.get() > 0);
+      var request = jobs.store.request(id.get());
+      assertTrue(
+          "Captured plan must be durable before enqueue acknowledgement", request.has("plan"));
+      assertFalse(request.optString("cookieState").isBlank());
+      assertFalse(request.toString().contains("#EXTM3U"));
+      assertEquals(0, nativeSegments.get());
+      for (File db : context.getDatabasePath("download-jobs.db").getParentFile().listFiles())
+        if (db.isFile()) {
+          String raw =
+              new String(
+                  java.nio.file.Files.readAllBytes(db.toPath()), StandardCharsets.ISO_8859_1);
+          assertFalse(raw.contains(rootAuth));
+          assertFalse(raw.contains(segmentAuth));
+        }
+      ins.runOnMainSync(activity::finish);
+      activity = null;
+      long until = System.currentTimeMillis() + 5000;
+      while (MediaNetworkSession.provider() != null && System.currentTimeMillis() < until)
+        Thread.sleep(50);
+      assertNull(MediaNetworkSession.provider());
+      var claimed = jobs.store.claim();
+      assertNotNull(claimed);
+      assertEquals(id.get(), claimed.id);
+      new JobRunner(context, jobs.store).run(claimed, new TransferControl());
+      var result = jobs.store.get(id.get());
+      assertEquals("category=" + result.error, DownloadJobStore.State.COMPLETED, result.state);
+      assertEquals(0, nativeManifests.get());
+      assertTrue(nativeSegments.get() > 0);
+      try (var fd = context.getContentResolver().openFileDescriptor(Uri.parse(result.uri), "r")) {
+        var tracks = PostProcessor.inspect(fd.getFileDescriptor(), 3, true, true);
+        assertTrue(tracks.video && tracks.audio);
+      }
+      context.getContentResolver().delete(Uri.parse(result.uri), null, null);
+    } finally {
+      ins.runOnMainSync(() -> jobs.detach(held));
+      if (id.get() > 0) {
+        var job = jobs.store.get(id.get());
+        if (job != null && job.state != DownloadJobStore.State.COMPLETED)
+          jobs.action(id.get(), "CANCEL", null);
+      }
+    }
   }
 }

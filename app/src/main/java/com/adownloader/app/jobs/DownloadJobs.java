@@ -72,6 +72,24 @@ public final class DownloadJobs {
                         } catch (JSONException ignored) {
                         }
                     });
+            JSONObject metadata = new JSONObject(candidate.getMetadata());
+            JSONObject request =
+                new JSONObject()
+                    .put("url", candidate.getUrl())
+                    .put("page", candidate.getPageUrl())
+                    .put("headers", headers)
+                    .put("metadata", metadata);
+            var playback = MediaProbeService.shared().prepareCaptured(candidate);
+            if (playback != null) {
+              request
+                  .put("plan", PlanCodec.encode(playback.tracks()))
+                  .put("cookieState", playback.cookieState())
+                  .put("headers", new JSONObject(playback.headers()))
+                  .put("disposition", playback.disposition());
+              metadata
+                  .put("requestContexts", new JSONObject(playback.contexts()).toString())
+                  .put("requestContextVersion", "2");
+            }
             String identity = candidate.getIdentityKey();
             id =
                 store.enqueue(
@@ -79,11 +97,7 @@ public final class DownloadJobs {
                     candidate.getType().name(),
                     DownloadFileName.label(candidate.getMetadata(), candidate.getUrl()),
                     android.net.Uri.parse(candidate.getUrl()).getHost(),
-                    new JSONObject()
-                        .put("url", candidate.getUrl())
-                        .put("page", candidate.getPageUrl())
-                        .put("headers", headers)
-                        .put("metadata", new JSONObject(candidate.getMetadata())));
+                    request);
           } catch (Exception failed) {
           }
           long result = id;

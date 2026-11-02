@@ -138,6 +138,9 @@ public final class DeviceDiagnostics {
         JSONObject network = new JSONObject(preferences.getString("network", "{}"));
         out.put("mediaNetwork", network);
         out.put("mediaTransportSummary", transportSummary(network));
+        var provider = com.adownloader.app.download.MediaNetworkSession.provider();
+        if (provider != null)
+          out.put("manifestEvidence", new JSONObject(provider.captureDiagnostics()));
       } catch (Exception ignored) {
       }
       if (activity instanceof com.adownloader.app.MainActivity)

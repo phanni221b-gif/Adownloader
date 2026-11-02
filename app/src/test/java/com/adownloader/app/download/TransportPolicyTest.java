@@ -214,5 +214,22 @@ public class TransportPolicyTest {
       assertFalse(trace.toString().contains("Bearer PRIVATE"));
       assertFalse(trace.toString().contains("/v/master"));
     }
+    var candidate =
+        new com.adownloader.app.MediaCandidate(
+            root,
+            com.adownloader.app.MediaCandidate.MediaType.HLS,
+            "network-response",
+            page,
+            Map.of(),
+            System.currentTimeMillis(),
+            Map.of("browserTabId", "9", "frameId", "2"));
+    var handoff = MediaProbeService.shared().prepareCaptured(candidate);
+    assertNotNull(handoff);
+    assertEquals(1, handoff.tracks().size());
+    assertTrue(handoff.tracks().get(0).parts.get(0).url.endsWith("part.ts"));
+    assertEquals("Bearer PRIVATE", handoff.headers().get("Authorization"));
+    assertFalse(handoff.cookieState().isBlank());
+    assertEquals(0, nativeRoots.get());
+    assertEquals(0, bridges.get());
   }
 }

@@ -86,6 +86,38 @@ public final class MediaProbeService implements AutoCloseable {
         item.getMetadata().getOrDefault("mediaObservedAt", ""));
   }
 
+  public record PlaybackPlan(
+      List<ManifestParser.Track> tracks,
+      Map<String, String> headers,
+      Map<String, Map<String, String>> contexts,
+      String cookieState,
+      String disposition) {}
+
+  /** Resolve only already captured evidence before the queued job is acknowledged to the UI. */
+  public PlaybackPlan prepareCaptured(MediaCandidate item) {
+    if (item.getType() != MediaCandidate.MediaType.HLS
+        && item.getType() != MediaCandidate.MediaType.DASH) return null;
+    if (MediaNetworkSession.provider() == null) return null;
+    Map<String, Map<String, String>> contexts = contexts(item);
+    try (HttpSource source =
+        new HttpSource(item.getUrl(), item.getHeaders(), new TransferControl())
+            .pageContext(item.getPageUrl())
+            .browserScope(scope(item, "browserTabId"), scope(item, "frameId"))
+            .resourceContexts(contexts)
+            .capturedManifestsOnly()
+            .onContext((url, headers) -> contexts.put(url, new LinkedHashMap<>(headers)))) {
+      var result = fetchWithSource(source, item.getUrl(), item.getType(), null);
+      return new PlaybackPlan(
+          result.tracks(),
+          contexts.getOrDefault(item.getUrl(), item.getHeaders()),
+          contexts,
+          source.cookieState(),
+          result.disposition);
+    } catch (Exception unavailable) {
+      return null;
+    }
+  }
+
   private static Map<String, Map<String, String>> contexts(MediaCandidate item) {
     Map<String, Map<String, String>> out = new LinkedHashMap<>();
     try {

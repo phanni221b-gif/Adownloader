@@ -83,4 +83,26 @@ public class ManifestResponseCacheTest {
     assertEquals(0, cache.weight());
     assertNull(cache.get(url, page, 3, 24, new TransferControl()));
   }
+
+  @Test
+  public void anOlderRequestCannotReplaceNewerPlaybackEvidenceAfterCompletingLate()
+      throws Exception {
+    cache.page(3, page);
+    assertTrue(
+        cache.begin(
+            "response-1",
+            observation(3, 2, 200),
+            Map.of("request-started-at", "99999"),
+            List.of()));
+    assertTrue(cache.chunk("response-1", 3, 0, body));
+    assertTrue(cache.end("response-1", 3, 1, body.length));
+    now.incrementAndGet();
+    assertFalse(
+        cache.begin(
+            "response-2",
+            observation(3, 2, 200),
+            Map.of("request-started-at", "99998"),
+            List.of()));
+    assertArrayEquals(body, cache.get(url, page, 3, 2, new TransferControl()).body());
+  }
 }

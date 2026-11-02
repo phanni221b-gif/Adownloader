@@ -13,7 +13,7 @@ public final class ManifestResponseCache implements AutoCloseable {
 
   private record Key(int tab, int frame, String page, String url) {}
 
-  private record Entry(MediaNetworkSession.Bootstrap response, long at) {}
+  private record Entry(MediaNetworkSession.Bootstrap response, long at, long order) {}
 
   private static final class Pending {
     final Key key;
@@ -22,17 +22,50 @@ public final class ManifestResponseCache implements AutoCloseable {
     final List<String> cookies;
     final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     int index;
+    final long order;
 
     Pending(
         Key key,
         MediaNetworkSession.Observation o,
         Map<String, String> metadata,
-        List<String> cookies) {
+        List<String> cookies,
+        long order) {
+      this.order = order;
       this.key = key;
       observation = o;
       this.metadata = Map.copyOf(metadata);
       this.cookies = List.copyOf(cookies);
     }
+  }
+
+  private long starts, chunkCalls, ends, peak;
+  private String lastReject = "NONE";
+
+  public synchronized Map<String, Object> metrics() {
+    return Map.of(
+        "starts",
+        starts,
+        "chunkCalls",
+        chunkCalls,
+        "ends",
+        ends,
+        "ready",
+        ready.size(),
+        "pending",
+        pending.size(),
+        "boundPages",
+        pages.size(),
+        "logicalBytes",
+        weight(),
+        "peakBytes",
+        peak,
+        "lastReject",
+        lastReject);
+  }
+
+  private boolean reject(String reason) {
+    lastReject = reason;
+    return false;
   }
 
   private final LongSupplier clock;
@@ -99,7 +132,9 @@ public final class ManifestResponseCache implements AutoCloseable {
       MediaNetworkSession.Observation o,
       Map<String, String> metadata,
       List<String> cookies) {
+    starts++;
     expire();
+    if (!Objects.equals(pages.get(o.tab()), o.page())) return reject("PAGE_NOT_BOUND");
     if (id == null
         || !id.matches("response-[0-9]{1,18}")
         || pending.containsKey(id)
@@ -109,24 +144,31 @@ public final class ManifestResponseCache implements AutoCloseable {
         || o.status() != 200
         || !validUrl(o.url())
         || !Objects.equals(pages.get(o.tab()), o.page())
-        || Math.abs(clock.getAsLong() - o.at()) > 10000) return false;
+        || Math.abs(clock.getAsLong() - o.at()) > 10000) return reject("BEGIN_VALIDATION");
     Key key = new Key(o.tab(), o.frame(), o.page(), o.url());
-    Entry previous = ready.get(key);
-    if (previous != null && previous.at > o.at()) return false;
-    if (pending.values().stream().anyMatch(p -> p.key.equals(key) && p.observation.at() > o.at()))
+    long order;
+    try {
+      order = Long.parseLong(metadata.getOrDefault("request-started-at", Long.toString(o.at())));
+    } catch (NumberFormatException invalid) {
       return false;
+    }
+    if (order <= 0 || order > o.at()) return false;
+    Entry previous = ready.get(key);
+    if (previous != null && previous.order > order) return false;
+    if (pending.values().stream().anyMatch(p -> p.key.equals(key) && p.order > order)) return false;
     // A newer request replaces evidence for this exact candidate binding.
     pending.values().removeIf(p -> p.key.equals(key));
     ready.remove(key);
-    pending.put(id, new Pending(key, o, metadata, cookies));
+    pending.put(id, new Pending(key, o, metadata, cookies, order));
     notifyAll();
     return true;
   }
 
   public synchronized boolean chunk(String id, int tab, int index, byte[] bytes) {
     expire();
+    chunkCalls++;
     Pending p = pending.get(id);
-    if (p == null || p.key.tab != tab) return false;
+    if (p == null || p.key.tab != tab) return reject("MISSING_PENDING");
     if (index != p.index
         || bytes.length == 0
         || bytes.length > 49152
@@ -142,10 +184,12 @@ public final class ManifestResponseCache implements AutoCloseable {
     }
     p.bytes.write(bytes, 0, bytes.length);
     p.index++;
+    peak = Math.max(peak, weight());
     return true;
   }
 
   public synchronized boolean end(String id, int tab, int chunks, int bytes) {
+    ends++;
     expire();
     Pending p = pending.get(id);
     if (p == null || p.key.tab != tab) return false;
@@ -180,7 +224,7 @@ public final class ManifestResponseCache implements AutoCloseable {
     var response =
         new MediaNetworkSession.Bootstrap(
             p.key.url, p.observation.status(), 0, metadata, body, cookies, p.observation.headers());
-    ready.put(p.key, new Entry(response, p.observation.at()));
+    ready.put(p.key, new Entry(response, p.observation.at(), p.order));
     while (ready.size() > 16 || weight() > MAX_BYTES)
       ready.remove(ready.keySet().iterator().next());
     return true;

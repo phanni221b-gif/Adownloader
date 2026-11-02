@@ -182,7 +182,7 @@ public final class MediaExtensionManager implements AutoCloseable {
             && !value.contains("\n")) headers.put(key, value);
       }
     }
-    detector.rememberContext(url, pageUrl, headers);
+    detector.rememberContext(url, pageUrl, headers, json.optBoolean("mediaSuccess"));
     if ("resource-context".equals(json.optString("kind"))) return;
     Map<String, String> metadata = new LinkedHashMap<>();
     JSONObject meta = json.optJSONObject("metadata");

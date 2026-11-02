@@ -66,6 +66,10 @@ public final class MediaNetworkSession {
       return manifest(url, page, headers, control);
     }
 
+    default Map<String, Object> captureDiagnostics() {
+      return Map.of();
+    }
+
     default Bootstrap captured(String url, String page, int tab, int frame, TransferControl control)
         throws Exception {
       return null;

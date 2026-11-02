@@ -121,7 +121,8 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
         Map<String, String> metadata = new LinkedHashMap<>();
         JSONObject raw = j.optJSONObject("metadata");
         if (raw != null)
-          for (String name : List.of("content-type", "etag", "last-modified")) {
+          for (String name :
+              List.of("content-type", "etag", "last-modified", "request-started-at")) {
             String value = raw.optString(name);
             if (value.length() <= 4096 && !value.contains("\r") && !value.contains("\n"))
               metadata.put(name, value);
@@ -161,6 +162,11 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
       captures.abort(id, tab);
     }
     return false;
+  }
+
+  @Override
+  public Map<String, Object> captureDiagnostics() {
+    return captures.metrics();
   }
 
   @Override

@@ -55,6 +55,17 @@ public final class HttpSource implements AutoCloseable {
   }
 
   private boolean browserBootstrapped;
+  private boolean capturedOnly;
+
+  public HttpSource capturedManifestsOnly() {
+    capturedOnly = true;
+    return this;
+  }
+
+  public String cookieState() throws IOException {
+    return cookies.snapshot();
+  }
+
   private String playbackRequestType = "playback-response";
   private long manifestEvidenceExpiresAt = Long.MAX_VALUE;
 
@@ -663,6 +674,7 @@ public final class HttpSource implements AutoCloseable {
           "GECKO_CACHE_MISS",
           java.util.List.of());
     }
+    if (capturedOnly) throw new DownloadError(DownloadError.Category.ACCESS_BLOCKED);
     try {
       Document d = nativeDocument(url, previous);
       if (d.text
