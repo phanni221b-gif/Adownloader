@@ -127,7 +127,7 @@ public class SessionTransportIntegrationTest {
         return;
       }
       boolean page = path.startsWith("/watch"),
-          root = path.endsWith(".m3u8"),
+          root = path.endsWith(".m3u8") || path.equals("/media/api/playback"),
           browser = "cors".equals(h.get("sec-fetch-mode"));
       boolean allowed =
           page
@@ -139,13 +139,14 @@ public class SessionTransportIntegrationTest {
         allowed &= browser;
       if (root && browser) browserRoots.incrementAndGet();
       if (!allowed) nativeDenied.incrementAndGet();
+      String target = mode.equals("extensionless") ? "/media/api/playback" : "/media/playlist.m3u8";
       String html =
           "<!doctype html><title>Session"
               + " fixture</title><script>fetch('/media/playlist.m3u8',{headers:{Authorization:'"
               + auth
               + "','X-Playback-Token':'"
               + token
-              + "'}}).then(r=>r.text()).then(t=>window.ready=t.startsWith('#EXTM3U'));</script>";
+              + "'}}).then(r=>r.text()).then(t=>window.ready=t.startsWith('#EXTM3U')),250);</script>";
       byte[] body =
           page
               ? html.getBytes(StandardCharsets.UTF_8)
@@ -155,7 +156,13 @@ public class SessionTransportIntegrationTest {
       String mime =
           page
               ? "text/html"
-              : !allowed ? "text/html" : root ? "application/vnd.apple.mpegurl" : "video/mp2t";
+              : !allowed
+                  ? "text/html"
+                  : root
+                      ? (mode.equals("extensionless")
+                          ? "text/plain"
+                          : "application/vnd.apple.mpegurl")
+                      : "video/mp2t";
       String extra = page ? "Set-Cookie: " + cookie + "; Path=/; HttpOnly; SameSite=Lax\r\n" : "";
       c.getOutputStream()
           .write(
@@ -247,7 +254,12 @@ public class SessionTransportIntegrationTest {
     long end = System.currentTimeMillis() + 30000;
     while (System.currentTimeMillis() < end) {
       for (var item : browser.getDetector().snapshot())
-        if (item.getUrl().equals(base + "/media/playlist.m3u8")
+        if (item.getUrl()
+                .equals(
+                    base
+                        + (mode.equals("extensionless")
+                            ? "/media/api/playback"
+                            : "/media/playlist.m3u8"))
             && item.getHeaders().containsKey("Authorization")
             && MediaNetworkSession.latest(item.getUrl(), item.getPageUrl()) != null)
           return browser.getDetector().forDownload(item);
@@ -292,14 +304,20 @@ public class SessionTransportIntegrationTest {
       assertTrue(diag.contains("SEGMENT_NATIVE_BLOCKED"));
       assertTrue(browserRoots.get() <= 3);
     } else {
-      assertEquals("category=" + result.error, DownloadJobStore.State.COMPLETED, result.state);
+      assertEquals(
+          "category="
+              + result.error
+              + " "
+              + com.adownloader.app.ui.DeviceDiagnostics.collect(activity),
+          DownloadJobStore.State.COMPLETED,
+          result.state);
       try (var fd = context.getContentResolver().openFileDescriptor(Uri.parse(result.uri), "r")) {
         var tracks = PostProcessor.inspect(fd.getFileDescriptor(), 3, true, true);
         assertTrue(tracks.video && tracks.audio);
       }
       context.getContentResolver().delete(Uri.parse(result.uri), null, null);
     }
-    if (!kind.equals("native")) {
+    if (!kind.equals("native") && !kind.equals("extensionless")) {
       assertTrue("Native request must be blocked before browser bootstrap", nativeDenied.get() > 0);
       assertTrue("A bounded second Gecko manifest request must occur", browserRoots.get() >= 2);
     } else assertEquals(0, nativeDenied.get());
@@ -310,6 +328,11 @@ public class SessionTransportIntegrationTest {
         assertFalse(raw.contains(token));
         assertFalse(raw.contains(cookie));
       }
+  }
+
+  @Test
+  public void extensionlessMseResponseKeepsOnlyConfirmedMediaAuthentication() throws Exception {
+    run("extensionless", false);
   }
 
   @Test

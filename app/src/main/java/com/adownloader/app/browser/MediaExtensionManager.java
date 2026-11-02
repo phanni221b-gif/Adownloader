@@ -197,6 +197,7 @@ public final class MediaExtensionManager implements AutoCloseable {
         if (!value.isBlank() && value.length() <= 4096) metadata.put(key, value);
       }
     if (json.optBoolean("mediaSuccess")) metadata.put("requestContextVerified", "true");
+    metadata.put("browserTabId", String.valueOf(json.optInt("tabId", -1)));
     detector.capture(url, contentType, source, pageUrl, headers, metadata);
   }
 

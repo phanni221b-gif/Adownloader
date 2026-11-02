@@ -111,6 +111,7 @@ public final class DownloadEngine {
         source.restoreCookies(checkpoint.cookieState());
         source.onCookies(checkpoint::cookieState);
         source.onContext(checkpoint::requestContext);
+        source.browserScope(checkpoint.browserTabId(), checkpoint.browserFrameId());
       }
       if (type == MediaCandidate.MediaType.HLS || type == MediaCandidate.MediaType.DASH) {
         List<ManifestParser.Track> tracks = checkpoint == null ? null : checkpoint.loadPlan();

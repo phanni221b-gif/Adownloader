@@ -50,6 +50,8 @@ public class SessionPolicyTest {
             "https://player.test/frame");
     var c = new CapturedRequestContexts(Map.of("https://cdn.test/v/part.ts?sig=1", h), true);
     assertEquals("PRIVATE", c.forUrl("https://cdn.test/v/part.ts?sig=1").get("Authorization"));
+    assertEquals(
+        "PRIVATE", c.forUrl("https://CDN.test:443/v/part.ts?sig=1#fragment").get("Authorization"));
     assertFalse(c.forUrl("https://cdn.test/v/part.ts?sig=2").containsKey("Authorization"));
     assertFalse(c.forUrl("https://cdn.test/v/other.ts").containsKey("Cookie"));
     assertTrue(c.forUrl("https://other.test/v/part.ts?sig=1").isEmpty());
@@ -91,5 +93,36 @@ public class SessionPolicyTest {
     assertEquals("접근 확인 필요", AccessPresentation.label("AUTH"));
     assertEquals("사이트 요청 차단", AccessPresentation.label("ACCESS_BLOCKED"));
     assertEquals("페이지 열기", AccessPresentation.action("ACCESS_BLOCKED"));
+  }
+
+  @Test
+  public void browserContextCannotCrossTabsOrFrames() {
+    MediaNetworkSession.Provider p =
+        new MediaNetworkSession.Provider() {
+          public MediaNetworkSession.Observation latest(String url, String page) {
+            return new MediaNetworkSession.Observation(
+                url,
+                page,
+                2,
+                200,
+                System.currentTimeMillis(),
+                Map.of("Authorization", "PRIVATE"),
+                List.of("Authorization"),
+                7);
+          }
+
+          public MediaNetworkSession.Bootstrap manifest(
+              String url, String page, Map<String, String> h, TransferControl c) {
+            throw new AssertionError("No fetch expected");
+          }
+        };
+    MediaNetworkSession.install(p);
+    try {
+      assertNotNull(MediaNetworkSession.latest("https://cdn.test/a", "https://page.test", 7, 2));
+      assertNull(MediaNetworkSession.latest("https://cdn.test/a", "https://page.test", 8, 2));
+      assertNull(MediaNetworkSession.latest("https://cdn.test/a", "https://page.test", 7, 3));
+    } finally {
+      MediaNetworkSession.remove(p);
+    }
   }
 }

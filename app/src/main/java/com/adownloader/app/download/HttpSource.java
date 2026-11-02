@@ -13,6 +13,17 @@ public final class HttpSource implements AutoCloseable {
 
   private final JobCookieJar cookies;
   private String topPage;
+  private int topTab = -1, topFrame = -1;
+
+  public String browserScopeKey() {
+    return topTab + ":" + topFrame;
+  }
+
+  public HttpSource browserScope(int tab, int frame) {
+    topTab = tab;
+    topFrame = frame;
+    return this;
+  }
 
   public HttpSource pageContext(String page) {
     try {
@@ -112,7 +123,7 @@ public final class HttpSource implements AutoCloseable {
       String transport,
       String action,
       java.util.Collection<String> names) {
-    var observation = MediaNetworkSession.latest(url, topPage);
+    var observation = MediaNetworkSession.latest(url, topPage, topTab, topFrame);
     MediaNetworkSession.trace(
         stage(url),
         url,
@@ -131,22 +142,37 @@ public final class HttpSource implements AutoCloseable {
       new java.util.concurrent.ConcurrentHashMap<>();
 
   private boolean refreshContext(String url) throws Exception {
-    var latest = MediaNetworkSession.latest(url, topPage);
+    var latest = MediaNetworkSession.latest(url, topPage, topTab, topFrame);
     if (latest == null || contextRetried.size() >= 128 || !contextRetried.add(url)) return false;
     Map<String, String> values = MediaHeaders.select(latest.headers());
     if (values.equals(lastHeaders.get(url))) return false;
     adoptContext(url, values);
-    if (contextListener != null) contextListener.changed(url, values);
+    persistContext(url, values);
     record(url, 0, 0, "", "UNKNOWN", "native", "NATIVE_CONTEXT_RETRY", values.keySet());
     return true;
+  }
+
+  private void persistContext(String url, Map<String, String> values) throws DownloadError {
+    try {
+      if (contextListener != null) contextListener.changed(url, values);
+    } catch (Exception storage) {
+      throw DownloadError.storage(storage);
+    }
+  }
+
+  private void persistCookies() throws DownloadError {
+    try {
+      if (cookieListener != null) cookieListener.changed(cookies.snapshot());
+    } catch (Exception storage) {
+      throw DownloadError.storage(storage);
+    }
   }
 
   private void adoptContext(String url, Map<String, String> values) throws Exception {
     captured.update(url, values);
     if (url.equals(rootUrl)) {
       context = new RequestContext(rootUrl, values);
-      if (cookies.refreshSeed(url, values) && cookieListener != null)
-        cookieListener.changed(cookies.snapshot());
+      if (cookies.refreshSeed(url, values)) persistCookies();
     }
   }
 
@@ -597,7 +623,7 @@ public final class HttpSource implements AutoCloseable {
           "NATIVE_INITIAL",
           lastSentNames.getOrDefault(url, java.util.List.of()));
       if (d.text.contains("#EXT-X-STREAM-INF:")) {
-        var proof = MediaNetworkSession.latest(url, topPage);
+        var proof = MediaNetworkSession.latest(url, topPage, topTab, topFrame);
         MediaNetworkSession.trace(
             "MASTER_MANIFEST",
             d.url,
@@ -623,7 +649,7 @@ public final class HttpSource implements AutoCloseable {
           if (!access(retry)) throw retry;
           first = retry;
         }
-      var observed = MediaNetworkSession.latest(url, topPage);
+      var observed = MediaNetworkSession.latest(url, topPage, topTab, topFrame);
       var provider = MediaNetworkSession.provider();
       record(
           url,
@@ -642,7 +668,8 @@ public final class HttpSource implements AutoCloseable {
           || !bootstrapped.add(url)) throw first;
       try {
         record(url, 0, 0, "", "UNKNOWN", "gecko", "GECKO_BOOTSTRAP", observed.headerNames());
-        var response = provider.manifest(url, topPage, observed.headers(), control);
+        var response =
+            provider.manifest(url, topPage, topTab, topFrame, observed.headers(), control);
         if (response.status() < 200
             || response.status() >= 300
             || response.body().length > 8388608
@@ -651,19 +678,18 @@ public final class HttpSource implements AutoCloseable {
           throw new DownloadError(DownloadError.Category.ACCESS_BLOCKED);
         if (!response.requestHeaders().isEmpty()) {
           adoptContext(response.url(), response.requestHeaders());
-          if (contextListener != null)
-            contextListener.changed(response.url(), response.requestHeaders());
+          persistContext(response.url(), response.requestHeaders());
         }
-        var fresh = MediaNetworkSession.latest(response.url(), topPage);
-        if (fresh != null) {
+        var fresh = MediaNetworkSession.latest(response.url(), topPage, topTab, topFrame);
+        if (fresh != null && response.requestHeaders().isEmpty()) {
           adoptContext(response.url(), fresh.headers());
-          if (contextListener != null) contextListener.changed(response.url(), fresh.headers());
+          persistContext(response.url(), fresh.headers());
         }
         browserBootstrapped = true;
         for (var entry : response.responseCookies().entrySet())
           if (cookies.accept(
-                  java.net.URI.create(entry.getKey()), Map.of("Set-Cookie", entry.getValue()))
-              && cookieListener != null) cookieListener.changed(cookies.snapshot());
+              java.net.URI.create(entry.getKey()), Map.of("Set-Cookie", entry.getValue())))
+            persistCookies();
         Document d = new Document(response);
         record(
             url,
@@ -679,6 +705,9 @@ public final class HttpSource implements AutoCloseable {
       } catch (TransferControl.Stopped stopped) {
         throw stopped;
       } catch (Exception blocked) {
+        if (blocked instanceof DownloadError e
+            && (e.category == DownloadError.Category.STORAGE
+                || e.category == DownloadError.Category.STORAGE_FULL)) throw e;
         record(
             url,
             blocked instanceof DownloadError && ((DownloadError) blocked).diagnostic != null

@@ -13,7 +13,19 @@ public final class MediaNetworkSession {
       int status,
       long at,
       Map<String, String> headers,
-      List<String> headerNames) {
+      List<String> headerNames,
+      int tab) {
+    public Observation(
+        String url,
+        String page,
+        int frame,
+        int status,
+        long at,
+        Map<String, String> headers,
+        List<String> headerNames) {
+      this(url, page, frame, status, at, headers, headerNames, -1);
+    }
+
     public boolean fresh() {
       return status >= 200
           && status < 300
@@ -33,6 +45,26 @@ public final class MediaNetworkSession {
 
   public interface Provider {
     Observation latest(String url, String page);
+
+    default Observation latest(String url, String page, int tab, int frame) {
+      Observation o = latest(url, page);
+      return o != null && (tab < 0 || o.tab() == tab) && (frame < 0 || o.frame() == frame)
+          ? o
+          : null;
+    }
+
+    default Bootstrap manifest(
+        String url,
+        String page,
+        int tab,
+        int frame,
+        Map<String, String> headers,
+        TransferControl control)
+        throws Exception {
+      if (latest(url, page, tab, frame) == null)
+        throw new DownloadError(DownloadError.Category.ACCESS_BLOCKED);
+      return manifest(url, page, headers, control);
+    }
 
     Bootstrap manifest(
         String url, String page, Map<String, String> headers, TransferControl control)
@@ -56,9 +88,13 @@ public final class MediaNetworkSession {
   }
 
   public static Observation latest(String url, String page) {
+    return latest(url, page, -1, -1);
+  }
+
+  public static Observation latest(String url, String page, int tab, int frame) {
     Provider p = provider();
     if (p == null || page == null) return null;
-    Observation o = p.latest(url, page);
+    Observation o = p.latest(url, page, tab, frame);
     return o != null && o.fresh() && o.url().equals(url) && o.page().equals(page) ? o : null;
   }
 

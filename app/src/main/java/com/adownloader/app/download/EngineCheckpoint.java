@@ -11,6 +11,14 @@ public interface EngineCheckpoint {
     return null;
   }
 
+  default int browserTabId() throws Exception {
+    return -1;
+  }
+
+  default int browserFrameId() throws Exception {
+    return -1;
+  }
+
   default boolean cookieBootstrap() throws Exception {
     return false;
   }

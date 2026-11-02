@@ -80,9 +80,10 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
             status,
             System.currentTimeMillis(),
             Collections.unmodifiableMap(MediaHeaders.select(headers)),
-            MediaHeaders.names(names));
-    observations.remove(key(url, page));
-    observations.put(key(url, page), new Bound(o, tab));
+            MediaHeaders.names(names),
+            tab);
+    observations.remove(key(url, page) + "|" + tab + ":" + o.frame());
+    observations.put(key(url, page) + "|" + tab + ":" + o.frame(), new Bound(o, tab));
     int bytes = 0;
     for (var b : observations.values())
       for (var v : b.observation.headers().values()) bytes += v.length();
@@ -203,7 +204,29 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
 
   @Override
   public synchronized MediaNetworkSession.Observation latest(String url, String page) {
-    Bound b = observations.get(key(url, page));
+    Bound b = find(url, page, -1, -1);
+    return !closed
+            && b != null
+            && b.observation.fresh()
+            && ports.containsKey(b.tabId + ":" + b.observation.frame())
+        ? b.observation
+        : null;
+  }
+
+  private synchronized Bound find(String url, String page, int tab, int frame) {
+    Bound found = null;
+    for (var b : observations.values())
+      if (b.observation.url().equals(url)
+          && b.observation.page().equals(page)
+          && (tab < 0 || b.tabId == tab)
+          && (frame < 0 || b.observation.frame() == frame)) found = b;
+    return found;
+  }
+
+  @Override
+  public synchronized MediaNetworkSession.Observation latest(
+      String url, String page, int tab, int frame) {
+    Bound b = find(url, page, tab, frame);
     return !closed
             && b != null
             && b.observation.fresh()
@@ -227,11 +250,23 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
   public MediaNetworkSession.Bootstrap manifest(
       String url, String page, Map<String, String> headers, TransferControl control)
       throws Exception {
+    return manifest(url, page, -1, -1, headers, control);
+  }
+
+  @Override
+  public MediaNetworkSession.Bootstrap manifest(
+      String url,
+      String page,
+      int tab,
+      int frame,
+      Map<String, String> headers,
+      TransferControl control)
+      throws Exception {
     final Pending p;
     String id = UUID.randomUUID().toString();
     synchronized (this) {
-      Bound b = observations.get(key(url, page));
-      if (latest(url, page) == null || b == null || pending.size() >= 2)
+      Bound b = find(url, page, tab, frame);
+      if (latest(url, page, tab, frame) == null || b == null || pending.size() >= 2)
         throw new DownloadError(DownloadError.Category.ACCESS_BLOCKED);
       p = new Pending(ports.get(b.tabId + ":" + b.observation.frame()));
       pending.put(id, p);

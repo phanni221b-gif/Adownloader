@@ -45,7 +45,8 @@ public final class MediaProbeService implements AutoCloseable {
 
   public MediaProbeResult preview(
       String url, MediaCandidate.MediaType type, Map<String, String> headers) throws Exception {
-    return get(url, type, headers, new TransferControl(), true, null, Collections.emptyMap());
+    return get(
+        url, type, headers, new TransferControl(), true, null, Collections.emptyMap(), -1, -1);
   }
 
   public MediaProbeResult probe(
@@ -54,7 +55,7 @@ public final class MediaProbeService implements AutoCloseable {
       Map<String, String> headers,
       TransferControl control)
       throws Exception {
-    return get(url, type, headers, control, false, null, Collections.emptyMap());
+    return get(url, type, headers, control, false, null, Collections.emptyMap(), -1, -1);
   }
 
   public MediaProbeResult preview(MediaCandidate item) throws Exception {
@@ -65,7 +66,9 @@ public final class MediaProbeService implements AutoCloseable {
         new TransferControl(),
         true,
         item.getPageUrl(),
-        contexts(item));
+        contexts(item),
+        scope(item, "browserTabId"),
+        scope(item, "frameId"));
   }
 
   public MediaProbeResult probe(MediaCandidate item, TransferControl control) throws Exception {
@@ -76,7 +79,9 @@ public final class MediaProbeService implements AutoCloseable {
         control,
         false,
         item.getPageUrl(),
-        contexts(item));
+        contexts(item),
+        scope(item, "browserTabId"),
+        scope(item, "frameId"));
   }
 
   private static Map<String, Map<String, String>> contexts(MediaCandidate item) {
@@ -103,6 +108,14 @@ public final class MediaProbeService implements AutoCloseable {
     return out;
   }
 
+  private static int scope(MediaCandidate item, String key) {
+    try {
+      return Integer.parseInt(item.getMetadata().getOrDefault(key, "-1"));
+    } catch (Exception ignored) {
+      return -1;
+    }
+  }
+
   private static String pageKey(String page) {
     try {
       URI u = URI.create(page);
@@ -127,7 +140,16 @@ public final class MediaProbeService implements AutoCloseable {
     synchronized (this) {
       found =
           cache.get(
-              MediaIdentity.hash(type + "|" + url + "|" + canonical + "|" + source.pageSiteKey()));
+              MediaIdentity.hash(
+                  type
+                      + "|"
+                      + url
+                      + "|"
+                      + canonical
+                      + "|"
+                      + source.pageSiteKey()
+                      + "|"
+                      + source.browserScopeKey()));
     }
     if (found != null) {
       while (!found.future.isDone()) {
@@ -154,11 +176,15 @@ public final class MediaProbeService implements AutoCloseable {
       TransferControl control,
       boolean detached,
       String page,
-      Map<String, Map<String, String>> contexts)
+      Map<String, Map<String, String>> contexts,
+      int tab,
+      int frame)
       throws Exception {
     TreeMap<String, String> canonical = new TreeMap<>();
     headers.forEach((k, v) -> canonical.put(k.toLowerCase(Locale.ROOT), v));
-    String key = MediaIdentity.hash(type + "|" + url + "|" + canonical + "|" + pageKey(page));
+    String key =
+        MediaIdentity.hash(
+            type + "|" + url + "|" + canonical + "|" + pageKey(page) + "|" + tab + ":" + frame);
     Entry entry;
     boolean created = false;
     MediaProbeResult previous = null;
@@ -201,7 +227,9 @@ public final class MediaProbeService implements AutoCloseable {
                       old,
                       detached ? new TransferControl() : control,
                       page,
-                      contexts);
+                      contexts,
+                      tab,
+                      frame);
               if (result.weight() > 16L * 1024 * 1024)
                 throw new DownloadError(DownloadError.Category.MANIFEST_INVALID);
               owner.result = result;
@@ -248,10 +276,15 @@ public final class MediaProbeService implements AutoCloseable {
       MediaProbeResult previous,
       TransferControl control,
       String page,
-      Map<String, Map<String, String>> contexts)
+      Map<String, Map<String, String>> contexts,
+      int tab,
+      int frame)
       throws Exception {
     try (HttpSource source =
-        new HttpSource(url, headers, control).pageContext(page).resourceContexts(contexts)) {
+        new HttpSource(url, headers, control)
+            .pageContext(page)
+            .resourceContexts(contexts)
+            .browserScope(tab, frame)) {
       return fetchWithSource(
           source, url, type, previous != null && previous.requiresCookieSession ? null : previous);
     }

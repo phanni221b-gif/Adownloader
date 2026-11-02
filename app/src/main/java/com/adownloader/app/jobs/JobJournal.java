@@ -23,6 +23,18 @@ public final class JobJournal implements EngineCheckpoint {
   }
 
   @Override
+  public int browserTabId() throws Exception {
+    var m = store.request(id).optJSONObject("metadata");
+    return m == null ? -1 : m.optInt("browserTabId", -1);
+  }
+
+  @Override
+  public int browserFrameId() throws Exception {
+    var m = store.request(id).optJSONObject("metadata");
+    return m == null ? -1 : m.optInt("frameId", -1);
+  }
+
+  @Override
   public boolean cookieBootstrap() throws Exception {
     return store.request(id).optBoolean("cookieBootstrap");
   }

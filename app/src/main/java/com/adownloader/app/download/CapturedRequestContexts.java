@@ -28,6 +28,20 @@ public final class CapturedRequestContexts {
     }
   }
 
+  private static String normalized(String url) {
+    try {
+      URI u = URI.create(url);
+      String origin = MediaHeaders.origin(url);
+      if (origin.isEmpty()) return "";
+      String path = u.getRawPath();
+      return origin
+          + (path == null || path.isEmpty() ? "/" : path)
+          + (u.getRawQuery() == null ? "" : "?" + u.getRawQuery());
+    } catch (Exception ignored) {
+      return "";
+    }
+  }
+
   private static String directory(URI uri) {
     String p = uri.getRawPath();
     return p == null ? "/" : p.substring(0, p.lastIndexOf('/') + 1);
@@ -36,6 +50,10 @@ public final class CapturedRequestContexts {
   public synchronized Map<String, String> forUrl(String target) {
     Map<String, String> exact = values.get(target);
     if (exact != null) return new LinkedHashMap<>(exact);
+    String normalized = normalized(target);
+    if (!normalized.isEmpty())
+      for (var e : values.entrySet())
+        if (normalized.equals(normalized(e.getKey()))) return new LinkedHashMap<>(e.getValue());
     Map<String, String> result = new LinkedHashMap<>();
     int longest = -1;
     try {
