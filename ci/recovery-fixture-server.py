@@ -54,6 +54,9 @@ class Handler(BaseHTTPRequestHandler):
      length=min(64*1024,SIZE-offset);self.wfile.write(block(offset,length));self.wfile.flush();offset+=length;time.sleep(.015)
    except (BrokenPipeError,ConnectionResetError):pass
    return
+  if path.startswith('/cookie/') and (self.headers.get('Authorization')!='Bearer PRIVATE_RECOVERY_AUTH' or self.headers.get('X-Playback-Token')!='PRIVATE_RECOVERY_TOKEN'):
+   with LOCK:COUNTS['cookie-denied']=COUNTS.get('cookie-denied',0)+1
+   return self.send_error(403)
   if path=='/cookie/playlist.m3u8':
    if 'fixture=PRIVATE_REQUEST_CONTEXT' not in self.headers.get('Cookie',''):return self.send_error(403)
    return self.reply((ROOT/'playlist.m3u8').read_bytes(),'text/plain',{'Set-Cookie':'resume=PRIVATE_SERVER_COOKIE_JAR; Path=/cookie/; HttpOnly; SameSite=Lax'})

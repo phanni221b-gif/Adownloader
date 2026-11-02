@@ -141,8 +141,10 @@ public class SessionTransportIntegrationTest {
       if (!allowed) nativeDenied.incrementAndGet();
       String target = mode.equals("extensionless") ? "/media/api/playback" : "/media/playlist.m3u8";
       String html =
-          "<!doctype html><title>Session"
-              + " fixture</title><script>fetch('/media/playlist.m3u8',{headers:{Authorization:'"
+          "<!doctype html><title>Session fixture</title><video id='v'></video><script>"
+              + "v.src=URL.createObjectURL(new MediaSource());setTimeout(()=>fetch('"
+              + target
+              + "',{headers:{Authorization:'"
               + auth
               + "','X-Playback-Token':'"
               + token

@@ -67,7 +67,15 @@ public class ProcessRecoveryTest {
                     type,
                     "test",
                     BASE + "/page",
-                    Collections.singletonMap("Cookie", "fixture=PRIVATE_REQUEST_CONTEXT"),
+                    kind.equals("cookie-hls")
+                        ? Map.of(
+                            "Cookie",
+                            "fixture=PRIVATE_REQUEST_CONTEXT",
+                            "Authorization",
+                            "Bearer PRIVATE_RECOVERY_AUTH",
+                            "X-Playback-Token",
+                            "PRIVATE_RECOVERY_TOKEN")
+                        : Collections.singletonMap("Cookie", "fixture=PRIVATE_REQUEST_CONTEXT"),
                     System.currentTimeMillis()),
                 value -> {
                   id[0] = value;
@@ -431,7 +439,7 @@ public class ProcessRecoveryTest {
     get(changed ? "/change" : "/expire");
     action(jobs, id, "RESUME");
     DownloadJobStore.Job expired = await(jobs, id, DownloadJobStore.State.NEEDS_REFRESH);
-    assertEquals("EXPIRED_URL", expired.error);
+    assertEquals("ACCESS_BLOCKED", expired.error);
     MediaCandidate fresh =
         new MediaCandidate(
             BASE + path + "?token=new",
@@ -675,6 +683,10 @@ public class ProcessRecoveryTest {
         1,
         stats.getInt("/cookie/playlist.m3u8"));
     assertEquals(0, stats.optInt("cookie-denied"));
+    long savedId = context.getSharedPreferences("recovery-test", 0).getLong("cookie-hls", -1);
+    var savedHeaders = DownloadJobs.get(context).store.request(savedId).getJSONObject("headers");
+    assertEquals("Bearer PRIVATE_RECOVERY_AUTH", savedHeaders.getString("Authorization"));
+    assertEquals("PRIVATE_RECOVERY_TOKEN", savedHeaders.getString("X-Playback-Token"));
     for (File f :
         Objects.requireNonNull(context.getDatabasePath("downloads.db").getParentFile().listFiles()))
       if (f.isFile()) {
@@ -683,6 +695,8 @@ public class ProcessRecoveryTest {
         assertFalse(
             "Response cookies must not be plaintext in download databases",
             bytes.contains("PRIVATE_SERVER_COOKIE_JAR"));
+        assertFalse(bytes.contains("PRIVATE_RECOVERY_AUTH"));
+        assertFalse(bytes.contains("PRIVATE_RECOVERY_TOKEN"));
       }
   }
 }
