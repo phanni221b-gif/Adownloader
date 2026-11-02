@@ -9,7 +9,7 @@ public final class MediaNetworkSession {
   public record Observation(
       String url,
       String page,
-      int frame,
+      long frame,
       int status,
       long at,
       Map<String, String> headers,
@@ -18,7 +18,7 @@ public final class MediaNetworkSession {
     public Observation(
         String url,
         String page,
-        int frame,
+        long frame,
         int status,
         long at,
         Map<String, String> headers,
@@ -46,7 +46,7 @@ public final class MediaNetworkSession {
   public interface Provider {
     Observation latest(String url, String page);
 
-    default Observation latest(String url, String page, int tab, int frame) {
+    default Observation latest(String url, String page, int tab, long frame) {
       Observation o = latest(url, page);
       return o != null && (tab < 0 || o.tab() == tab) && (frame < 0 || o.frame() == frame)
           ? o
@@ -57,7 +57,7 @@ public final class MediaNetworkSession {
         String url,
         String page,
         int tab,
-        int frame,
+        long frame,
         Map<String, String> headers,
         TransferControl control)
         throws Exception {
@@ -70,8 +70,8 @@ public final class MediaNetworkSession {
       return Map.of();
     }
 
-    default Bootstrap captured(String url, String page, int tab, int frame, TransferControl control)
-        throws Exception {
+    default Bootstrap captured(
+        String url, String page, int tab, long frame, TransferControl control) throws Exception {
       return null;
     }
 
@@ -100,7 +100,7 @@ public final class MediaNetworkSession {
     return latest(url, page, -1, -1);
   }
 
-  public static Observation latest(String url, String page, int tab, int frame) {
+  public static Observation latest(String url, String page, int tab, long frame) {
     Provider p = provider();
     if (p == null || page == null) return null;
     Observation o = p.latest(url, page, tab, frame);

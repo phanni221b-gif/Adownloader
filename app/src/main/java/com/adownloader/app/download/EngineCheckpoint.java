@@ -15,7 +15,7 @@ public interface EngineCheckpoint {
     return -1;
   }
 
-  default int browserFrameId() throws Exception {
+  default long browserFrameId() throws Exception {
     return -1;
   }
 

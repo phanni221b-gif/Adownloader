@@ -14,13 +14,14 @@ public final class HttpSource implements AutoCloseable {
   private final JobCookieJar cookies;
   private final FailureDiagnostics.Session diagnosticSession = FailureDiagnostics.current();
   private String topPage;
-  private int topTab = -1, topFrame = -1;
+  private int topTab = -1;
+  private long topFrame = -1;
 
   public String browserScopeKey() {
     return topTab + ":" + topFrame;
   }
 
-  public HttpSource browserScope(int tab, int frame) {
+  public HttpSource browserScope(int tab, long frame) {
     topTab = tab;
     topFrame = frame;
     return this;

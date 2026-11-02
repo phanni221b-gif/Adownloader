@@ -292,7 +292,7 @@ public class HlsHttpIntegrationTest {
                 return actual.latest(u, p);
               }
 
-              public MediaNetworkSession.Observation latest(String u, String p, int t, int f) {
+              public MediaNetworkSession.Observation latest(String u, String p, int t, long f) {
                 return actual.latest(u, p, t, f);
               }
 
@@ -301,7 +301,7 @@ public class HlsHttpIntegrationTest {
               }
 
               public MediaNetworkSession.Bootstrap captured(
-                  String u, String p, int t, int f, TransferControl c) throws Exception {
+                  String u, String p, int t, long f, TransferControl c) throws Exception {
                 var hit = actual.captured(u, p, t, f, c);
                 captureLookups.add(
                     URI.create(u).getPath() + " frame=" + f + " hit=" + (hit != null));
@@ -314,7 +314,7 @@ public class HlsHttpIntegrationTest {
               }
 
               public MediaNetworkSession.Bootstrap manifest(
-                  String u, String p, int t, int f, Map<String, String> h, TransferControl c)
+                  String u, String p, int t, long f, Map<String, String> h, TransferControl c)
                   throws Exception {
                 return actual.manifest(u, p, t, f, h, c);
               }

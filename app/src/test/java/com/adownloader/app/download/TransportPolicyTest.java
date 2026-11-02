@@ -177,7 +177,7 @@ public class TransportPolicyTest {
           }
 
           public MediaNetworkSession.Bootstrap captured(
-              String u, String p, int tab, int frame, TransferControl c) {
+              String u, String p, int tab, long frame, TransferControl c) {
             if (!u.equals(root) || !p.equals(page) || tab != 9 || frame != 2) return null;
             return new MediaNetworkSession.Bootstrap(
                 root,
@@ -245,7 +245,7 @@ public class TransportPolicyTest {
           }
 
           public MediaNetworkSession.Bootstrap captured(
-              String u, String p, int tab, int frame, TransferControl control) {
+              String u, String p, int tab, long frame, TransferControl control) {
             return new MediaNetworkSession.Bootstrap(
                 finalUrl,
                 200,
@@ -289,5 +289,48 @@ public class TransportPolicyTest {
     String cookie = jar.header(java.net.URI.create(plan.tracks().get(0).parts.get(0).url));
     assertTrue(cookie.contains("CDN_ONLY"));
     assertFalse(cookie.contains("PRIVATE_ORIGIN"));
+  }
+
+  @Test
+  public void iframeIdsAboveSignedIntRangeRetainSuccessfulCaptureBinding() throws Exception {
+    install(0);
+    provider =
+        new MediaNetworkSession.Provider() {
+          public MediaNetworkSession.Observation latest(String u, String p) {
+            return null;
+          }
+
+          public MediaNetworkSession.Bootstrap captured(
+              String u, String p, int tab, long frame, TransferControl c) {
+            if (frame != 4294967297L) return null;
+            return new MediaNetworkSession.Bootstrap(
+                root,
+                200,
+                0,
+                Map.of("evidence-expires-at", Long.toString(System.currentTimeMillis() + 60000)),
+                "#EXTM3U\n#EXTINF:1,\npart.ts\n#EXT-X-ENDLIST\n".getBytes(StandardCharsets.UTF_8),
+                Map.of(),
+                Map.of());
+          }
+
+          public MediaNetworkSession.Bootstrap manifest(
+              String u, String p, Map<String, String> h, TransferControl c) {
+            throw new AssertionError("Successful captured iframe must not replay");
+          }
+        };
+    MediaNetworkSession.install(provider);
+    var candidate =
+        new com.adownloader.app.MediaCandidate(
+            root,
+            com.adownloader.app.MediaCandidate.MediaType.HLS,
+            "response-signature",
+            page,
+            Map.of(),
+            System.currentTimeMillis(),
+            Map.of("browserTabId", "9", "frameId", "4294967297"));
+    assertNotNull(
+        "64-bit frame ID must not disable captured evidence",
+        MediaProbeService.shared().prepareCaptured(candidate));
+    assertEquals(0, nativeRoots.get());
   }
 }

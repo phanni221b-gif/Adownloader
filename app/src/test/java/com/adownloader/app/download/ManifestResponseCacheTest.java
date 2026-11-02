@@ -13,7 +13,7 @@ public class ManifestResponseCacheTest {
   String page = "https://page.test/a", url = "https://cdn.test/movie/master.m3u8?token=PRIVATE";
   byte[] body = "#EXTM3U\n#EXTINF:1,\npart.ts\n#EXT-X-ENDLIST\n".getBytes(StandardCharsets.UTF_8);
 
-  MediaNetworkSession.Observation observation(int tab, int frame, int status) {
+  MediaNetworkSession.Observation observation(int tab, long frame, int status) {
     return new MediaNetworkSession.Observation(
         url,
         page,
@@ -25,7 +25,7 @@ public class ManifestResponseCacheTest {
         tab);
   }
 
-  void capture(String id, int tab, int frame) throws Exception {
+  void capture(String id, int tab, long frame) throws Exception {
     cache.page(tab, page);
     assertTrue(
         cache.begin(
@@ -51,6 +51,14 @@ public class ManifestResponseCacheTest {
     now.addAndGet(60001);
     assertNull(cache.get(url, page, 3, 2, new TransferControl()));
     assertEquals(0, cache.weight());
+  }
+
+  @Test
+  public void largeFrameIdsCannotCollideWithTheirTruncatedCounterparts() throws Exception {
+    capture("response-1", 3, 4294967297L);
+    assertNotNull(cache.get(url, page, 3, 4294967297L, new TransferControl()));
+    assertNull(cache.get(url, page, 3, 1, new TransferControl()));
+    assertNull(cache.get(url, page, 3, 8589934593L, new TransferControl()));
   }
 
   @Test

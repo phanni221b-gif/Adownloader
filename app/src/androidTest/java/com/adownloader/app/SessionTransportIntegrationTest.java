@@ -296,7 +296,7 @@ public class SessionTransportIntegrationTest {
               return realProvider.latest(u, p);
             }
 
-            public MediaNetworkSession.Observation latest(String u, String p, int t, int f) {
+            public MediaNetworkSession.Observation latest(String u, String p, int t, long f) {
               return realProvider.latest(u, p, t, f);
             }
 
@@ -306,7 +306,7 @@ public class SessionTransportIntegrationTest {
             }
 
             public MediaNetworkSession.Bootstrap manifest(
-                String u, String p, int t, int f, Map<String, String> h, TransferControl c)
+                String u, String p, int t, long f, Map<String, String> h, TransferControl c)
                 throws Exception {
               return realProvider.manifest(u, p, t, f, h, c);
             }

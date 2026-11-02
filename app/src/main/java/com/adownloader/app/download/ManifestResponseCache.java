@@ -11,7 +11,7 @@ public final class ManifestResponseCache implements AutoCloseable {
   public static final int MAX_BODY = 8 * 1024 * 1024, MAX_BYTES = 16 * 1024 * 1024;
   public static final long TTL = 60000;
 
-  private record Key(int tab, int frame, String page, String url) {}
+  private record Key(int tab, long frame, String page, String url) {}
 
   private record Entry(
       MediaNetworkSession.Bootstrap response, long at, long order, List<String> aliases) {}
@@ -134,7 +134,7 @@ public final class ManifestResponseCache implements AutoCloseable {
   }
 
   private static boolean matches(
-      Key key, List<String> aliases, String url, String page, int tab, int frame) {
+      Key key, List<String> aliases, String url, String page, int tab, long frame) {
     return key.tab == tab
         && key.frame == frame
         && key.page.equals(page)
@@ -295,7 +295,7 @@ public final class ManifestResponseCache implements AutoCloseable {
   }
 
   public synchronized MediaNetworkSession.Bootstrap get(
-      String url, String page, int tab, int frame, TransferControl control) throws Exception {
+      String url, String page, int tab, long frame, TransferControl control) throws Exception {
     if (tab < 0 || frame < 0 || !Objects.equals(pages.get(tab), page)) return null;
     Key key = new Key(tab, frame, page, url);
     long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(8);

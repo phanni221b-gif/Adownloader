@@ -87,7 +87,7 @@ public final class MediaProbeService implements AutoCloseable {
             item.getPageUrl(),
             contexts(item),
             scope(item, "browserTabId"),
-            scope(item, "frameId"),
+            frameScope(item),
             item.getMetadata().getOrDefault("mediaObservedAt", ""));
       } catch (Exception failure) {
         if (local != null && !(failure instanceof TransferControl.Stopped))
@@ -126,7 +126,7 @@ public final class MediaProbeService implements AutoCloseable {
     try (HttpSource source =
         new HttpSource(item.getUrl(), item.getHeaders(), control)
             .pageContext(item.getPageUrl())
-            .browserScope(scope(item, "browserTabId"), scope(item, "frameId"))
+            .browserScope(scope(item, "browserTabId"), frameScope(item))
             .resourceContexts(contexts)
             .capturedManifestsOnly()
             .onContext((url, headers) -> contexts.put(url, new LinkedHashMap<>(headers)))) {
@@ -167,6 +167,15 @@ public final class MediaProbeService implements AutoCloseable {
     } catch (Exception ignored) {
     }
     return out;
+  }
+
+  private static long frameScope(MediaCandidate item) {
+    try {
+      long frame = Long.parseLong(item.getMetadata().getOrDefault("frameId", "-1"));
+      return frame >= 0 && frame <= 9007199254740991L ? frame : -1;
+    } catch (NumberFormatException invalid) {
+      return -1;
+    }
   }
 
   private static int scope(MediaCandidate item, String key) {
@@ -240,7 +249,7 @@ public final class MediaProbeService implements AutoCloseable {
       String page,
       Map<String, Map<String, String>> contexts,
       int tab,
-      int frame,
+      long frame,
       String evidence)
       throws Exception {
     TreeMap<String, String> canonical = new TreeMap<>();
@@ -362,7 +371,7 @@ public final class MediaProbeService implements AutoCloseable {
       String page,
       Map<String, Map<String, String>> contexts,
       int tab,
-      int frame)
+      long frame)
       throws Exception {
     try (HttpSource source =
         new HttpSource(url, headers, control)

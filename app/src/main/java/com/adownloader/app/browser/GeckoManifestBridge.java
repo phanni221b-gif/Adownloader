@@ -83,7 +83,7 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
         new MediaNetworkSession.Observation(
             url,
             page,
-            j.optInt("frameId"),
+            j.optLong("frameId"),
             status,
             System.currentTimeMillis(),
             Collections.unmodifiableMap(MediaHeaders.select(headers)),
@@ -160,7 +160,7 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
             new MediaNetworkSession.Observation(
                 j.optString("url"),
                 j.optString("pageUrl"),
-                j.optInt("frameId", -1),
+                j.optLong("frameId", -1),
                 j.optInt("geckoStatus"),
                 j.optLong("observedAt"),
                 headers,
@@ -192,7 +192,7 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
 
   @Override
   public MediaNetworkSession.Bootstrap captured(
-      String url, String page, int tab, int frame, TransferControl control) throws Exception {
+      String url, String page, int tab, long frame, TransferControl control) throws Exception {
     return captures.get(url, page, tab, frame, control);
   }
 
@@ -233,7 +233,8 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
     if (closed) return;
     String kind = j.optString("kind");
     if (kind.equals("frame-bind")) {
-      int tab = j.optInt("tabId", -1), frame = j.optInt("frameId", -1);
+      int tab = j.optInt("tabId", -1);
+      long frame = j.optLong("frameId", -1);
       if (tab >= 0 && frame >= 0 && browser.detectorFor(session) != null) {
         if (ports.size() >= 64) ports.remove(ports.keySet().iterator().next());
         ports.put(tab + ":" + frame, port);
@@ -321,7 +322,7 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
         : null;
   }
 
-  private synchronized Bound find(String url, String page, int tab, int frame) {
+  private synchronized Bound find(String url, String page, int tab, long frame) {
     Bound found = null;
     for (var b : observations.values())
       if (b.observation.url().equals(url)
@@ -333,7 +334,7 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
 
   @Override
   public synchronized MediaNetworkSession.Observation latest(
-      String url, String page, int tab, int frame) {
+      String url, String page, int tab, long frame) {
     Bound b = find(url, page, tab, frame);
     return !closed
             && b != null
@@ -366,7 +367,7 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
       String url,
       String page,
       int tab,
-      int frame,
+      long frame,
       Map<String, String> headers,
       TransferControl control)
       throws Exception {
