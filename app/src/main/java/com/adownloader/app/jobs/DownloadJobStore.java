@@ -428,15 +428,35 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
     changed();
   }
 
+  public static boolean failedOrCanceled(State state) {
+    return state == State.FAILED || state == State.CANCELED;
+  }
+
   public synchronized void clearTerminal(State state) {
-    if (state != State.COMPLETED && state != State.FAILED && state != State.CANCELED)
+    clearTerminal(state, Collections.emptySet());
+  }
+
+  public synchronized void clearTerminal(State state, Set<Long> busy) {
+    if (state != State.COMPLETED && !failedOrCanceled(state))
       throw new IllegalArgumentException("Not terminal");
     for (Job job : list())
-      if (job.state == state) {
-        if (cleanup(job.id))
-          getWritableDatabase().delete("jobs", "id=?", new String[] {"" + job.id});
-      }
+      if (!busy.contains(job.id)
+          && (job.state == state || state == State.FAILED && job.state == State.CANCELED))
+        clearTerminalRecord(job.id, job.state);
     changed();
+  }
+
+  public synchronized void clearFailedOrCanceled(long id) {
+    Job job = get(id);
+    if (job != null && failedOrCanceled(job.state)) clearTerminalRecord(id, job.state);
+  }
+
+  private void clearTerminalRecord(long id, State expected) {
+    if (cleanup(id)) {
+      getWritableDatabase()
+          .delete("jobs", "id=? AND state=?", new String[] {"" + id, expected.name()});
+      changed();
+    }
   }
 
   public synchronized boolean state(long id, State state, String error) {
@@ -550,22 +570,12 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
     Job job = get(id);
     if (job == null) return true;
     boolean pendingDone = true, filesDone = true;
-    if (!job.pending.isEmpty() && job.state != State.COMPLETED) {
-      try {
-        Uri uri = Uri.parse(job.pending);
-        context.getContentResolver().delete(uri, null, null);
-        try (Cursor c =
-            context
-                .getContentResolver()
-                .query(uri, new String[] {MediaStore.MediaColumns._ID}, null, null, null)) {
-          pendingDone = c == null || !c.moveToFirst();
-        }
-      } catch (Exception failure) {
-        pendingDone = false;
-      }
-    }
+    if (!job.pending.isEmpty() && job.state != State.COMPLETED) pendingDone = cleanupPending(job);
     try {
-      delete(new File(context.getFilesDir(), getDatabaseName().replace(".db", "") + "/" + id));
+      File base =
+          new File(context.getFilesDir(), getDatabaseName().replace(".db", "")).getCanonicalFile();
+      File root = new File(base, "" + id);
+      delete(root, root.getAbsolutePath());
     } catch (IOException failure) {
       filesDone = false;
     }
@@ -587,9 +597,53 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
     return pendingDone && filesDone;
   }
 
-  private static void delete(File f) throws IOException {
+  /** Only remove an exact, owned, unpublished output that no other job references. */
+  private boolean cleanupPending(Job job) {
+    try {
+      Uri uri = Uri.parse(job.pending);
+      if (!"content".equals(uri.getScheme()) || !"media".equals(uri.getAuthority())) return false;
+      try (Cursor c =
+          context
+              .getContentResolver()
+              .query(
+                  uri,
+                  new String[] {
+                    MediaStore.MediaColumns.IS_PENDING, MediaStore.MediaColumns.OWNER_PACKAGE_NAME
+                  },
+                  null,
+                  null,
+                  null)) {
+        if (c == null) return false;
+        if (!c.moveToFirst()) return true;
+        if (!context.getPackageName().equals(c.getString(1))) return false;
+        if (c.getInt(0) == 0)
+          return true; // Published content is preserved even if the job state is stale.
+      }
+      try (Cursor refs =
+          getReadableDatabase()
+              .rawQuery(
+                  "SELECT 1 FROM jobs WHERE id<>? AND (pending=? OR uri=?) LIMIT 1",
+                  new String[] {"" + job.id, job.pending, job.pending})) {
+        if (refs.moveToFirst()) return false;
+      }
+      context.getContentResolver().delete(uri, null, null);
+      try (Cursor c =
+          context
+              .getContentResolver()
+              .query(uri, new String[] {MediaStore.MediaColumns._ID}, null, null, null)) {
+        return c != null && !c.moveToFirst();
+      }
+    } catch (Exception unavailable) {
+      return false;
+    }
+  }
+
+  private static void delete(File f, String root) throws IOException {
+    String path = f.getCanonicalPath();
+    if (!path.equals(root) && !path.startsWith(root + File.separator))
+      throw new IOException("CLEANUP_OUTSIDE_JOB");
     File[] children = f.listFiles();
-    if (children != null) for (File child : children) delete(child);
+    if (children != null) for (File child : children) delete(child, root);
     if (f.exists() && !f.delete()) throw new IOException("CLEANUP_FAILED");
   }
 

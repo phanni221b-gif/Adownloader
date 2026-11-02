@@ -399,4 +399,69 @@ public class UiFlowTest {
     snapshot("popup-site-management");
     device.pressBack();
   }
+
+  @Test
+  public void cleanupMenuConfirmsFailedAndCanceledOnlyAndCancelKeepsRecords() throws Exception {
+    var jobs = com.adownloader.app.jobs.DownloadJobs.get(context);
+    var store = jobs.store;
+    var states =
+        List.of(
+            com.adownloader.app.jobs.DownloadJobStore.State.FAILED,
+            com.adownloader.app.jobs.DownloadJobStore.State.FAILED,
+            com.adownloader.app.jobs.DownloadJobStore.State.CANCELED,
+            com.adownloader.app.jobs.DownloadJobStore.State.CANCELED,
+            com.adownloader.app.jobs.DownloadJobStore.State.PAUSED,
+            com.adownloader.app.jobs.DownloadJobStore.State.NEEDS_REFRESH,
+            com.adownloader.app.jobs.DownloadJobStore.State.COMPLETED);
+    List<Long> ids = new ArrayList<>();
+    try {
+      for (var state : states) {
+        long id =
+            store.enqueue(
+                "cleanup-ui-" + UUID.randomUUID(),
+                "VIDEO",
+                "정리 테스트 " + state,
+                "fixture.test",
+                new JSONObject()
+                    .put("url", "https://fixture.test/cleanup")
+                    .put("headers", new JSONObject()));
+        store.state(id, state, "");
+        ids.add(id);
+      }
+      tab("nav_downloads");
+      assertTrue(device.wait(Until.hasObject(By.text("정리 테스트 COMPLETED")), 10000));
+      long until;
+      view("download_menu").click();
+      var option = device.wait(Until.findObject(By.text("실패·취소 기록 정리")), 5000);
+      assertNotNull(option);
+      option.click();
+      assertTrue(device.wait(Until.hasObject(By.textContains("기록 4개를 정리할까요?")), 5000));
+      snapshot("cleanup-failed-canceled-confirm");
+      view("action_cancel").click();
+      for (long id : ids) assertNotNull(store.get(id));
+      view("download_menu").click();
+      option = device.wait(Until.findObject(By.text("실패·취소 기록 정리")), 5000);
+      assertNotNull(option);
+      option.click();
+      view("action_confirm").click();
+      until = System.currentTimeMillis() + 10000;
+      while (System.currentTimeMillis() < until && store.get(ids.get(0)) != null) Thread.sleep(50);
+      for (int i = 0; i < ids.size(); i++) {
+        if (i < 4) assertNull(store.get(ids.get(i)));
+        else assertEquals(states.get(i), store.get(ids.get(i)).state);
+      }
+      snapshot("cleanup-failed-canceled-result");
+    } finally {
+      for (long id : ids) {
+        var job = store.get(id);
+        if (job == null) continue;
+        if (job.state == com.adownloader.app.jobs.DownloadJobStore.State.COMPLETED)
+          store.getWritableDatabase().delete("jobs", "id=?", new String[] {"" + id});
+        else {
+          store.state(id, com.adownloader.app.jobs.DownloadJobStore.State.CANCELED, "");
+          store.clearFailedOrCanceled(id);
+        }
+      }
+    }
+  }
 }

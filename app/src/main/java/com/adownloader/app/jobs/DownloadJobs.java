@@ -30,6 +30,8 @@ public final class DownloadJobs {
   private final java.util.Set<Long> deferredResume =
       java.util.concurrent.ConcurrentHashMap.newKeySet();
 
+  private final Set<Long> deferredHistoryCleanup = ConcurrentHashMap.newKeySet();
+
   public boolean isExecuting(long id) {
     return active.containsKey(id);
   }
@@ -207,6 +209,7 @@ public final class DownloadJobs {
                         }
                       }
                     }
+                    finishHistoryCleanup(job.id);
                   })
               .get();
         }
@@ -244,7 +247,37 @@ public final class DownloadJobs {
   }
 
   public void clearHistory(DownloadJobStore.State state) {
-    commands.execute(() -> store.clearTerminal(state));
+    commands.execute(
+        () -> {
+          if (state != DownloadJobStore.State.FAILED) {
+            store.clearTerminal(state);
+            return;
+          }
+          Set<Long> busy = new HashSet<>(active.keySet());
+          busy.addAll(refreshing.keySet());
+          Set<Long> selected = new HashSet<>();
+          if (state == DownloadJobStore.State.FAILED)
+            for (var job : store.list())
+              if (DownloadJobStore.failedOrCanceled(job.state)) {
+                selected.add(job.id);
+                if (busy.contains(job.id)) deferredHistoryCleanup.add(job.id);
+              }
+          store.clearTerminal(state, busy);
+          for (long id : selected) if (store.get(id) == null) cancelHistoryNotification(id);
+        });
+  }
+
+  private void cancelHistoryNotification(long id) {
+    context.getSystemService(android.app.NotificationManager.class).cancel("job:" + id, 0);
+  }
+
+  private void finishHistoryCleanup(long id) {
+    if (!active.containsKey(id)
+        && !refreshing.containsKey(id)
+        && deferredHistoryCleanup.remove(id)) {
+      store.clearFailedOrCanceled(id);
+      if (store.get(id) == null) cancelHistoryNotification(id);
+    }
   }
 
   public void offerRefresh(MediaCandidate candidate, java.util.function.LongConsumer callback) {
@@ -358,10 +391,12 @@ public final class DownloadJobs {
                           refreshFailure(id, failure, callback);
                         } finally {
                           refreshing.remove(id, control);
+                          commands.execute(() -> finishHistoryCleanup(id));
                         }
                       });
                 } catch (Exception failure) {
                   refreshing.remove(id, control);
+                  commands.execute(() -> finishHistoryCleanup(id));
                   commands.execute(() -> refreshFailure(id, failure, callback));
                 }
               });

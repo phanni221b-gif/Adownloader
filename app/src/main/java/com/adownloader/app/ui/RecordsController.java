@@ -65,16 +65,30 @@ public final class RecordsController {
               androidx.appcompat.widget.PopupMenu menu =
                   new androidx.appcompat.widget.PopupMenu(activity, view);
               menu.getMenu().add(0, 1, 0, "완료 기록 지우기");
-              menu.getMenu().add(0, 2, 1, "실패 기록 지우기");
+              menu.getMenu().add(0, 2, 1, "실패·취소 기록 정리");
               menu.setOnMenuItemClickListener(
                   item -> {
+                    boolean failures = item.getItemId() != 1;
+                    long count =
+                        all.stream()
+                            .filter(
+                                row ->
+                                    row.optString("jobState").equals("FAILED")
+                                        || row.optString("jobState").equals("CANCELED"))
+                            .count();
+                    if (failures && count == 0) {
+                      Toast.makeText(activity, "정리할 실패·취소 기록이 없습니다.", Toast.LENGTH_SHORT).show();
+                      return true;
+                    }
                     UiSheets.action(
                         activity,
                         R.drawable.ic_download,
-                        "다운로드 기록 지우기",
-                        "목록 기록만 지웁니다. 저장한 영상은 유지됩니다.",
+                        failures ? "실패·취소 기록 정리" : "다운로드 기록 지우기",
+                        failures
+                            ? "실패 및 취소된 다운로드 기록 " + count + "개를 정리할까요?\n완료된 파일과 복구 가능한 작업은 유지됩니다."
+                            : "목록 기록만 지웁니다. 저장한 영상은 유지됩니다.",
                         "취소",
-                        "기록 지우기",
+                        failures ? "기록 정리" : "기록 지우기",
                         () ->
                             com.adownloader.app.jobs.DownloadJobs.get(activity)
                                 .clearHistory(
