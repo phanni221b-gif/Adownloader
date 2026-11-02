@@ -40,13 +40,19 @@ public class TerminalCleanupIntegrationTest {
     context.deleteDatabase("cleanup-tests.db");
   }
 
+  static String chunkedPadding() {
+    byte[] data = new byte[600000];
+    new Random(641).nextBytes(data);
+    return Base64.getEncoder().encodeToString(data);
+  }
+
   long job(DownloadJobStore.State state) throws Exception {
     JSONObject request =
         new JSONObject()
             .put("url", "https://fixture.test/media")
             .put("headers", new JSONObject().put("Cookie", "PRIVATE_JOB_COOKIE"))
             .put("cookieState", "PRIVATE_JOB_SESSION")
-            .put("padding", "x".repeat(600000));
+            .put("padding", chunkedPadding());
     long id =
         store.enqueue(
             "cleanup-" + UUID.randomUUID(), "VIDEO", "cleanup fixture", "fixture.test", request);
@@ -305,3 +311,4 @@ public class TerminalCleanupIntegrationTest {
     assertTrue(other.exists());
   }
 }
+
