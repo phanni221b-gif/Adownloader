@@ -3,6 +3,7 @@ plugins {
 }
 
 val geckoVersion = project.property("geckoVersion").toString()
+val sourceCommit = providers.exec { commandLine("git", "rev-parse", "HEAD"); isIgnoreExitValue = true }.standardOutput.asText.get().trim().let { if (it.matches(Regex("[0-9a-f]{40}"))) it else "UNKNOWN" }
 
 android {
     buildFeatures { buildConfig = true }
@@ -17,9 +18,10 @@ android {
         applicationId = "com.adownloader.app"
         minSdk = 30
         targetSdk = 36
-        versionCode = 15
-        versionName = "0.6.5"
+        versionCode = 16
+        versionName = "0.6.6"
         buildConfigField("String", "GECKO_VERSION", "\"$geckoVersion\"")
+        buildConfigField("String", "COMMIT_SHA", "\"$sourceCommit\"")
 
         ndk {
             // Current release is optimized for modern Android phones such as Fold8.

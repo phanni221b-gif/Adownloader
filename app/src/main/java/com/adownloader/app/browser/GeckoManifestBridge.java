@@ -20,6 +20,7 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
 
   private static final class Pending {
     final WebExtension.Port port;
+    final FailureDiagnostics.Session diagnostic = FailureDiagnostics.current();
     final CompletableFuture<MediaNetworkSession.Bootstrap> future = new CompletableFuture<>();
     final ByteArrayOutputStream body = new ByteArrayOutputStream();
     String url = "";
@@ -82,7 +83,7 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
         new MediaNetworkSession.Observation(
             url,
             page,
-            j.optInt("frameId"),
+            j.optLong("frameId"),
             status,
             System.currentTimeMillis(),
             Collections.unmodifiableMap(MediaHeaders.select(headers)),
@@ -101,6 +102,20 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
 
   public synchronized void discardTab(int tab) {
     captures.discard(tab);
+    Set<WebExtension.Port> retired = new HashSet<>();
+    ports
+        .entrySet()
+        .removeIf(
+            e -> {
+              if (e.getKey().startsWith(tab + ":")) {
+                retired.add(e.getValue());
+                return true;
+              }
+              return false;
+            });
+    for (Pending p : pending.values())
+      if (retired.contains(p.port))
+        p.future.completeExceptionally(new DownloadError(DownloadError.Category.ACCESS_BLOCKED));
     observations.values().removeIf(b -> b.tabId == tab);
   }
 
@@ -128,6 +143,12 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
               metadata.put(name, value);
           }
         metadata.put("request-type", j.optString("requestType"));
+        JSONArray redirects = j.optJSONArray("redirectAliases");
+        if (redirects != null) {
+          if (redirects.length() > 8) return false;
+          for (int i = 0; i < redirects.length(); i++)
+            metadata.put("redirect-source-" + i, redirects.optString(i));
+        }
         List<String> cookies = new ArrayList<>();
         JSONArray list = j.optJSONArray("cookies");
         if (list != null)
@@ -139,7 +160,7 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
             new MediaNetworkSession.Observation(
                 j.optString("url"),
                 j.optString("pageUrl"),
-                j.optInt("frameId", -1),
+                j.optLong("frameId", -1),
                 j.optInt("geckoStatus"),
                 j.optLong("observedAt"),
                 headers,
@@ -171,7 +192,7 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
 
   @Override
   public MediaNetworkSession.Bootstrap captured(
-      String url, String page, int tab, int frame, TransferControl control) throws Exception {
+      String url, String page, int tab, long frame, TransferControl control) throws Exception {
     return captures.get(url, page, tab, frame, control);
   }
 
@@ -192,22 +213,28 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
           public void onDisconnect(WebExtension.Port actual) {
             synchronized (GeckoManifestBridge.this) {
               ports.values().removeIf(p -> p == actual);
-              pending.values().stream()
-                  .filter(p -> p.port == actual)
-                  .forEach(
-                      p ->
-                          p.future.completeExceptionally(
-                              new DownloadError(DownloadError.Category.ACCESS_BLOCKED)));
+              pending.values().stream().filter(p -> p.port == actual).forEach(p -> disconnected(p));
             }
           }
         });
+  }
+
+  private void disconnected(Pending p) {
+    if (p.future.isDone()) return;
+    if (p.diagnostic != null)
+      p.diagnostic.fail(
+          new DownloadError(DownloadError.Category.NETWORK),
+          DownloadError.Category.NETWORK,
+          "BRIDGE_DISCONNECTED");
+    p.future.completeExceptionally(new DownloadError(DownloadError.Category.ACCESS_BLOCKED));
   }
 
   private synchronized void receive(JSONObject j, WebExtension.Port port, GeckoSession session) {
     if (closed) return;
     String kind = j.optString("kind");
     if (kind.equals("frame-bind")) {
-      int tab = j.optInt("tabId", -1), frame = j.optInt("frameId", -1);
+      int tab = j.optInt("tabId", -1);
+      long frame = j.optLong("frameId", -1);
       if (tab >= 0 && frame >= 0 && browser.detectorFor(session) != null) {
         if (ports.size() >= 64) ports.remove(ports.keySet().iterator().next());
         ports.put(tab + ":" + frame, port);
@@ -295,7 +322,7 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
         : null;
   }
 
-  private synchronized Bound find(String url, String page, int tab, int frame) {
+  private synchronized Bound find(String url, String page, int tab, long frame) {
     Bound found = null;
     for (var b : observations.values())
       if (b.observation.url().equals(url)
@@ -307,7 +334,7 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
 
   @Override
   public synchronized MediaNetworkSession.Observation latest(
-      String url, String page, int tab, int frame) {
+      String url, String page, int tab, long frame) {
     Bound b = find(url, page, tab, frame);
     return !closed
             && b != null
@@ -340,7 +367,7 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
       String url,
       String page,
       int tab,
-      int frame,
+      long frame,
       Map<String, String> headers,
       TransferControl control)
       throws Exception {
@@ -397,11 +424,8 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
     for (Pending p : pending.values())
       p.future.completeExceptionally(new DownloadError(DownloadError.Category.ACCESS_BLOCKED));
     pending.clear();
-    for (WebExtension.Port p : ports.values())
-      try {
-        p.disconnect();
-      } catch (Exception ignored) {
-      }
+    // Gecko owns content-port shutdown on navigation/session close. Explicit disconnect here
+    // races the already queued remote disconnect and shuts its native dispatcher down twice.
     ports.clear();
     observations.clear();
     captures.close();

@@ -66,8 +66,13 @@ public final class RecordsController {
                   new androidx.appcompat.widget.PopupMenu(activity, view);
               menu.getMenu().add(0, 1, 0, "완료 기록 지우기");
               menu.getMenu().add(0, 2, 1, "실패·취소 기록 정리");
+              menu.getMenu().add(0, 3, 2, "최근 실패 보고서 공유");
               menu.setOnMenuItemClickListener(
                   item -> {
+                    if (item.getItemId() == 3) {
+                      FailureJournalUi.share(activity, 0);
+                      return true;
+                    }
                     boolean failures = item.getItemId() != 1;
                     long count =
                         all.stream()
@@ -458,6 +463,9 @@ public final class RecordsController {
 
   private void bindActions(DownloadHolder holder, JSONObject row) {
     String state = row.optString("jobState"), action = null, label = null;
+    holder.diagnostic.setVisibility(
+        state.equals("FAILED") || state.equals("NEEDS_REFRESH") ? View.VISIBLE : View.GONE);
+    holder.diagnostic.setOnClickListener(v -> FailureJournalUi.share(activity, row.optLong("job")));
     long id = row.optLong("job");
     switch (state) {
       case "QUEUED":
@@ -536,7 +544,7 @@ public final class RecordsController {
 
   private static final class DownloadHolder extends RecyclerView.ViewHolder {
     final TextView title, subtitle, detail;
-    final View open;
+    final View open, diagnostic;
     final com.google.android.material.button.MaterialButton primary, secondary;
     final ImageView image;
     final LinearProgressIndicator progress;
@@ -547,6 +555,7 @@ public final class RecordsController {
       subtitle = view.findViewById(R.id.item_subtitle);
       detail = view.findViewById(R.id.item_detail);
       open = view.findViewById(R.id.item_open);
+      diagnostic = view.findViewById(R.id.item_diagnostic);
       primary = view.findViewById(R.id.item_primary);
       secondary = view.findViewById(R.id.item_secondary);
       image = view.findViewById(R.id.item_thumbnail);

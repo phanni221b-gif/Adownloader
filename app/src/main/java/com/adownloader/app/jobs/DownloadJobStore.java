@@ -453,8 +453,11 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
 
   private void clearTerminalRecord(long id, State expected) {
     if (cleanup(id)) {
-      getWritableDatabase()
-          .delete("jobs", "id=? AND state=?", new String[] {"" + id, expected.name()});
+      int deleted =
+          getWritableDatabase()
+              .delete("jobs", "id=? AND state=?", new String[] {"" + id, expected.name()});
+      if (deleted > 0 && failedOrCanceled(expected))
+        com.adownloader.app.diagnostics.FailureJournal.get(context).deleteJob(id);
       changed();
     }
   }

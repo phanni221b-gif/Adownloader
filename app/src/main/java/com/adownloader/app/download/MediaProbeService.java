@@ -59,31 +59,44 @@ public final class MediaProbeService implements AutoCloseable {
   }
 
   public MediaProbeResult preview(MediaCandidate item) throws Exception {
-    return get(
-        item.getUrl(),
-        item.getType(),
-        item.getHeaders(),
-        new TransferControl(),
-        true,
-        item.getPageUrl(),
-        contexts(item),
-        scope(item, "browserTabId"),
-        scope(item, "frameId"),
-        item.getMetadata().getOrDefault("mediaObservedAt", ""));
+    return candidate(item, new TransferControl(), true);
   }
 
   public MediaProbeResult probe(MediaCandidate item, TransferControl control) throws Exception {
-    return get(
-        item.getUrl(),
-        item.getType(),
-        item.getHeaders(),
-        control,
-        false,
-        item.getPageUrl(),
-        contexts(item),
-        scope(item, "browserTabId"),
-        scope(item, "frameId"),
-        item.getMetadata().getOrDefault("mediaObservedAt", ""));
+    return candidate(item, control, false);
+  }
+
+  private MediaProbeResult candidate(MediaCandidate item, TransferControl control, boolean detached)
+      throws Exception {
+    FailureDiagnostics.Session parent = FailureDiagnostics.current();
+    Map<String, String> metadata = new LinkedHashMap<>(item.getMetadata());
+    metadata.put("detectionSource", item.getSource());
+    FailureDiagnostics.Session local =
+        parent == null
+            ? new FailureDiagnostics.Session(
+                0, item.getType().name(), item.getUrl(), item.getPageUrl(), metadata)
+            : null;
+    try (var scope = FailureDiagnostics.activate(local == null ? parent : local)) {
+      try {
+        return get(
+            item.getUrl(),
+            item.getType(),
+            item.getHeaders(),
+            control,
+            detached,
+            item.getPageUrl(),
+            contexts(item),
+            scope(item, "browserTabId"),
+            frameScope(item),
+            item.getMetadata().getOrDefault("mediaObservedAt", ""));
+      } catch (Exception failure) {
+        if (local != null && !(failure instanceof TransferControl.Stopped))
+          local.fail(failure, FailureDiagnostics.category(failure), "PROBE_FAILURE");
+        throw failure;
+      } finally {
+        if (local != null) local.complete();
+      }
+    }
   }
 
   public record PlaybackPlan(
@@ -113,16 +126,20 @@ public final class MediaProbeService implements AutoCloseable {
     try (HttpSource source =
         new HttpSource(item.getUrl(), item.getHeaders(), control)
             .pageContext(item.getPageUrl())
-            .browserScope(scope(item, "browserTabId"), scope(item, "frameId"))
+            .browserScope(scope(item, "browserTabId"), frameScope(item))
             .resourceContexts(contexts)
             .capturedManifestsOnly()
             .onContext((url, headers) -> contexts.put(url, new LinkedHashMap<>(headers)))) {
       var result = fetchWithSource(source, item.getUrl(), item.getType(), null);
+      Map<String, String> finalHeaders =
+          contexts.getOrDefault(
+              result.finalManifestUrl,
+              result.finalManifestUrl.equals(item.getUrl()) ? item.getHeaders() : Map.of());
       return new PlaybackPlan(
           result,
-          contexts.getOrDefault(item.getUrl(), item.getHeaders()),
+          finalHeaders,
           contexts,
-          source.cookieState());
+          source.cookieStateFor(result.finalManifestUrl, finalHeaders));
     } catch (Exception unavailable) {
       return null;
     }
@@ -150,6 +167,15 @@ public final class MediaProbeService implements AutoCloseable {
     } catch (Exception ignored) {
     }
     return out;
+  }
+
+  private static long frameScope(MediaCandidate item) {
+    try {
+      long frame = Long.parseLong(item.getMetadata().getOrDefault("frameId", "-1"));
+      return frame >= 0 && frame <= 9007199254740991L ? frame : -1;
+    } catch (NumberFormatException invalid) {
+      return -1;
+    }
   }
 
   private static int scope(MediaCandidate item, String key) {
@@ -223,7 +249,7 @@ public final class MediaProbeService implements AutoCloseable {
       String page,
       Map<String, Map<String, String>> contexts,
       int tab,
-      int frame,
+      long frame,
       String evidence)
       throws Exception {
     TreeMap<String, String> canonical = new TreeMap<>();
@@ -272,11 +298,16 @@ public final class MediaProbeService implements AutoCloseable {
       }
     }
     if (created) {
+      FailureDiagnostics.Session diagnostic = FailureDiagnostics.current();
+      boolean ownsDiagnostic = diagnostic == null;
+      if (diagnostic == null)
+        diagnostic = new FailureDiagnostics.Session(0, type.name(), url, page, Map.of());
+      FailureDiagnostics.Session diagnosticOwner = diagnostic;
       Entry owner = entry;
       MediaProbeResult old = previous;
       Runnable fetch =
           () -> {
-            try {
+            try (var diagnosticScope = FailureDiagnostics.activate(diagnosticOwner)) {
               MediaProbeResult result =
                   fetch(
                       url,
@@ -305,10 +336,14 @@ public final class MediaProbeService implements AutoCloseable {
                 }
               }
             } catch (Exception error) {
+              if (ownsDiagnostic && !(error instanceof TransferControl.Stopped))
+                diagnosticOwner.fail(error, FailureDiagnostics.category(error), "PROBE_FAILURE");
               owner.future.completeExceptionally(error);
               synchronized (this) {
                 cache.remove(key, owner);
               }
+            } finally {
+              if (ownsDiagnostic) diagnosticOwner.complete();
             }
           };
       if (detached) io.execute(fetch);
@@ -336,7 +371,7 @@ public final class MediaProbeService implements AutoCloseable {
       String page,
       Map<String, Map<String, String>> contexts,
       int tab,
-      int frame)
+      long frame)
       throws Exception {
     try (HttpSource source =
         new HttpSource(url, headers, control)
@@ -411,6 +446,17 @@ public final class MediaProbeService implements AutoCloseable {
     } else if (type == MediaCandidate.MediaType.DASH)
       tracks = ManifestParser.dash(root.url, root.text);
     else throw new DownloadError(DownloadError.Category.UNSUPPORTED_FORMAT);
+    Map<String, Object> manifestInfo = new LinkedHashMap<>();
+    manifestInfo.put("segmentCount", tracks.stream().mapToInt(t -> t.parts.size()).sum());
+    manifestInfo.put("audioGroupPresent", tracks.stream().anyMatch(t -> t.audio));
+    manifestInfo.put(
+        "selectedHeight",
+        tracks.stream().filter(t -> !t.audio).mapToInt(t -> t.height).max().orElse(0));
+    manifestInfo.put(
+        "selectedWidth",
+        tracks.stream().filter(t -> !t.audio).mapToInt(t -> t.width).max().orElse(0));
+    manifestInfo.put("variantCount", variantCount(root.text));
+    FailureDiagnostics.event(Map.of("action", "MANIFEST_PARSED", "manifest", manifestInfo));
     return new MediaProbeResult(
         root,
         documents,
@@ -438,6 +484,15 @@ public final class MediaProbeService implements AutoCloseable {
     for (HttpSource.Document d : new HashSet<>(documents.values())) size += d.text.length() * 2L;
     if (size > 16L * 1024 * 1024) throw new DownloadError(DownloadError.Category.MANIFEST_INVALID);
     return result;
+  }
+
+  private static int variantCount(String text) {
+    int count = 0, at = 0;
+    while ((at = text.indexOf("#EXT-X-STREAM-INF:", at)) >= 0) {
+      if (at == 0 || text.charAt(at - 1) == '\n') count++;
+      at += 18;
+    }
+    return count;
   }
 
   private static long expiry(String url) {

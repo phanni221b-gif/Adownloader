@@ -46,6 +46,7 @@ public class JobStoreIntegrationTest {
         "example.test",
         new JSONObject()
             .put("url", "https://example.test/video?token=TOP_SECRET")
+            .put("metadata", new JSONObject().put("browserTabId", "9").put("frameId", "4294967297"))
             .put("headers", new JSONObject().put("Cookie", "auth=COOKIE_SECRET")));
   }
 
@@ -53,6 +54,7 @@ public class JobStoreIntegrationTest {
   public void authenticatedContextIsEncryptedAndBoundToJob() throws Exception {
     long id = job();
     assertTrue(store.request(id).getString("url").contains("TOP_SECRET"));
+    assertEquals(4294967297L, new JobJournal(store, id).browserFrameId());
     try (Cursor c =
         store
             .getReadableDatabase()
@@ -92,6 +94,7 @@ public class JobStoreIntegrationTest {
     store = new DownloadJobStore(context, "store-tests.db");
     store.reconcile();
     assertEquals(DownloadJobStore.State.PAUSED, store.get(id).state);
+    assertEquals(4294967297L, new JobJournal(store, id).browserFrameId());
     assertTrue(store.request(id).getString("url").contains("TOP_SECRET"));
   }
 

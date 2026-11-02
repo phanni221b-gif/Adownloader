@@ -29,9 +29,9 @@ public final class JobJournal implements EngineCheckpoint {
   }
 
   @Override
-  public int browserFrameId() throws Exception {
+  public long browserFrameId() throws Exception {
     var m = store.request(id).optJSONObject("metadata");
-    return m == null ? -1 : m.optInt("frameId", -1);
+    return m == null ? -1 : m.optLong("frameId", -1);
   }
 
   @Override

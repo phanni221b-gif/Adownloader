@@ -13,7 +13,7 @@ public class ManifestResponseCacheTest {
   String page = "https://page.test/a", url = "https://cdn.test/movie/master.m3u8?token=PRIVATE";
   byte[] body = "#EXTM3U\n#EXTINF:1,\npart.ts\n#EXT-X-ENDLIST\n".getBytes(StandardCharsets.UTF_8);
 
-  MediaNetworkSession.Observation observation(int tab, int frame, int status) {
+  MediaNetworkSession.Observation observation(int tab, long frame, int status) {
     return new MediaNetworkSession.Observation(
         url,
         page,
@@ -25,7 +25,7 @@ public class ManifestResponseCacheTest {
         tab);
   }
 
-  void capture(String id, int tab, int frame) throws Exception {
+  void capture(String id, int tab, long frame) throws Exception {
     cache.page(tab, page);
     assertTrue(
         cache.begin(
@@ -51,6 +51,14 @@ public class ManifestResponseCacheTest {
     now.addAndGet(60001);
     assertNull(cache.get(url, page, 3, 2, new TransferControl()));
     assertEquals(0, cache.weight());
+  }
+
+  @Test
+  public void largeFrameIdsCannotCollideWithTheirTruncatedCounterparts() throws Exception {
+    capture("response-1", 3, 4294967297L);
+    assertNotNull(cache.get(url, page, 3, 4294967297L, new TransferControl()));
+    assertNull(cache.get(url, page, 3, 1, new TransferControl()));
+    assertNull(cache.get(url, page, 3, 8589934593L, new TransferControl()));
   }
 
   @Test
@@ -104,5 +112,40 @@ public class ManifestResponseCacheTest {
             Map.of("request-started-at", "99998"),
             List.of()));
     assertArrayEquals(body, cache.get(url, page, 3, 2, new TransferControl()).body());
+  }
+
+  @Test
+  public void verifiedRedirectAliasesReuseOnlyTheFinalResponseAndExactBinding() throws Exception {
+    cache.page(3, page);
+    String original = "https://page.test/hls/original.m3u8?signature=PRIVATE";
+    assertTrue(
+        cache.begin(
+            "response-1",
+            observation(3, 2, 200),
+            Map.of("redirect-source-0", original),
+            List.of()));
+    assertTrue(cache.chunk("response-1", 3, 0, body));
+    assertTrue(cache.end("response-1", 3, 1, body.length));
+    var hit = cache.get(original, page, 3, 2, new TransferControl());
+    assertNotNull("Original redirect URL must find the successful final response", hit);
+    assertEquals(url, hit.url());
+    assertEquals(1, hit.redirects());
+    assertEquals(original, hit.metadata().get("captured-request-url"));
+    assertArrayEquals(body, hit.body());
+    assertNull(cache.get(original + "x", page, 3, 2, new TransferControl()));
+    assertNull(cache.get(original, page, 4, 2, new TransferControl()));
+    assertNull(cache.get(original, page, 3, 0, new TransferControl()));
+    cache.page(3, "https://page.test/b");
+    assertNull(cache.get(original, page, 3, 2, new TransferControl()));
+    cache.page(3, page);
+    assertFalse(
+        cache.begin(
+            "response-2",
+            observation(3, 2, 200),
+            Map.of("redirect-source-0", "https://user:pass@host.test/a"),
+            List.of()));
+    capture("response-3", 3, 2);
+    now.addAndGet(60001);
+    assertNull(cache.get(original, page, 3, 2, new TransferControl()));
   }
 }

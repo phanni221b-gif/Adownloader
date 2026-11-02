@@ -26,6 +26,9 @@
         </LinearLayout>
 
         <com.google.android.material.button.MaterialButton android:id="@+id/setting_diagnostics" style="@style/UiSetting" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:text="기기 진단 정보" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/setting_failure_share" style="@style/UiSetting" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="최근 실패 보고서 공유" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/setting_failure_clear" style="@style/UiSetting" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="진단 기록 모두 삭제" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="실패 진단은 기기에만 저장됩니다. 공유를 누를 때만 JSON 파일로 내보냅니다." android:textAppearance="@style/UiBody" />
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:text="DRM 우회 기능 없음" android:textAppearance="@style/UiBody" />
     </LinearLayout>
 </ScrollView>

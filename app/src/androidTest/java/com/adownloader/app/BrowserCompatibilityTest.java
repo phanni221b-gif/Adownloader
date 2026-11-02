@@ -374,4 +374,30 @@ public class BrowserCompatibilityTest {
     assertFalse(lastAgent.get().contains("Android"));
     assertSame(original, manager.getSession());
   }
+
+  @Test
+  public void repeatedBoundPortSessionTeardownDoesNotDoubleShutdownNativeDispatcher()
+      throws Exception {
+    for (int i = 0; i < 3; i++) {
+      open("/tab-0");
+      awaitTitle("tab-0");
+      long deadline = System.currentTimeMillis() + 10000;
+      while (com.adownloader.app.download.MediaNetworkSession.latest(
+                  base + "/media?tab=0", base + "/tab-0")
+              == null
+          && System.currentTimeMillis() < deadline) Thread.sleep(50);
+      assertNotNull(
+          com.adownloader.app.download.MediaNetworkSession.latest(
+              base + "/media?tab=0", base + "/tab-0"));
+      BrowserSessionManager manager = browser();
+      app.runOnMainSync(
+          () -> {
+            manager.close();
+            activity.finish();
+          });
+      app.waitForIdleSync();
+      activity = null;
+      Thread.sleep(400);
+    }
+  }
 }

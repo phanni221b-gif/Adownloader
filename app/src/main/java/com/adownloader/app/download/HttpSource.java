@@ -12,14 +12,16 @@ public final class HttpSource implements AutoCloseable {
   }
 
   private final JobCookieJar cookies;
+  private final FailureDiagnostics.Session diagnosticSession = FailureDiagnostics.current();
   private String topPage;
-  private int topTab = -1, topFrame = -1;
+  private int topTab = -1;
+  private long topFrame = -1;
 
   public String browserScopeKey() {
     return topTab + ":" + topFrame;
   }
 
-  public HttpSource browserScope(int tab, int frame) {
+  public HttpSource browserScope(int tab, long frame) {
     topTab = tab;
     topFrame = frame;
     return this;
@@ -64,6 +66,10 @@ public final class HttpSource implements AutoCloseable {
 
   public String cookieState() throws IOException {
     return cookies.snapshot();
+  }
+
+  public String cookieStateFor(String finalUrl, Map<String, String> headers) throws IOException {
+    return cookies.snapshotFor(finalUrl, headers);
   }
 
   private String playbackRequestType = "playback-response";
@@ -146,21 +152,23 @@ public final class HttpSource implements AutoCloseable {
       String action,
       java.util.Collection<String> names) {
     var observation = MediaNetworkSession.latest(url, topPage, topTab, topFrame);
-    MediaNetworkSession.trace(
-        stage(url),
-        url,
-        transport,
-        code,
-        hops,
-        mime,
-        body,
-        names,
-        observation == null ? java.util.List.of() : observation.headerNames(),
-        observation != null || action.equals("GECKO_RESPONSE_CACHE"),
-        action,
-        transport.equals("gecko-response-cache")
-            ? playbackRequestType
-            : transport.equals("gecko") ? "content-fetch" : "native-http");
+    try (var diagnosticScope = FailureDiagnostics.activate(diagnosticSession)) {
+      MediaNetworkSession.trace(
+          stage(url),
+          url,
+          transport,
+          code,
+          hops,
+          mime,
+          body,
+          names,
+          observation == null ? java.util.List.of() : observation.headerNames(),
+          observation != null || action.equals("GECKO_RESPONSE_CACHE"),
+          action,
+          transport.equals("gecko-response-cache")
+              ? playbackRequestType
+              : transport.equals("gecko") ? "content-fetch" : "native-http");
+    }
   }
 
   private final Map<String, java.util.Collection<String>> lastSentNames =
@@ -186,6 +194,8 @@ public final class HttpSource implements AutoCloseable {
   }
 
   private void persistCookies() throws DownloadError {
+    FailureDiagnostics.event(
+        diagnosticSession, Map.of("action", "COOKIE_UPDATE", "cookieRefreshed", true));
     try {
       if (cookieListener != null) cookieListener.changed(cookies.snapshot());
     } catch (Exception storage) {
@@ -237,6 +247,7 @@ public final class HttpSource implements AutoCloseable {
   }
 
   public HttpURLConnection resume(String url, long offset, String validator) throws Exception {
+    if (diagnosticSession != null) diagnosticSession.phase(FailureDiagnostics.Stage.RANGE_RESUME);
     return request(url, offset, -1, validator, true);
   }
 
@@ -341,19 +352,58 @@ public final class HttpSource implements AutoCloseable {
                     "",
                     DownloadError.Category.NETWORK));
       }
+      FailureDiagnostics.event(
+          diagnosticSession,
+          Map.of(
+              "action",
+              "PHASE",
+              "stage",
+              stage(current),
+              "contentLengthPresent",
+              connection.getHeaderField("Content-Length") != null,
+              "etagPresent",
+              connection.getHeaderField("ETag") != null,
+              "rangeSupported",
+              code == 206 || "bytes".equalsIgnoreCase(connection.getHeaderField("Accept-Ranges"))));
       lastRedirects = hop;
       lastSentNames.put(current, sentNames);
+      String errorBody = "UNKNOWN";
+      if (code >= 400) {
+        try (InputStream denied = connection.getErrorStream()) {
+          if (denied != null) {
+            connection.setReadTimeout(1500);
+            byte[] sample = new byte[4096];
+            int used = 0, n;
+            while (used < sample.length
+                && (n = denied.read(sample, used, sample.length - used)) > 0) used += n;
+            errorBody = bodyKind(new String(sample, 0, used, StandardCharsets.UTF_8));
+          }
+        } catch (Exception ignored) {
+        }
+      }
       record(
           current,
           code,
           hop,
           connection.getContentType(),
-          "UNKNOWN",
+          errorBody,
           "native",
           "NATIVE_INITIAL",
           sentNames);
-      if (cookies.accept(URI.create(current), connection.getHeaderFields())
-          && cookieListener != null)
+      boolean cookieChanged = cookies.accept(URI.create(current), connection.getHeaderFields());
+      if (cookieChanged)
+        FailureDiagnostics.event(
+            diagnosticSession,
+            Map.of(
+                "action",
+                "COOKIE_UPDATE",
+                "setCookieObserved",
+                true,
+                "cookieRefreshed",
+                true,
+                "cookieEntryCount",
+                cookies.entryCount()));
+      if (cookieChanged && cookieListener != null)
         try {
           cookieListener.changed(cookies.snapshot());
         } catch (Exception storage) {
@@ -635,7 +685,12 @@ public final class HttpSource implements AutoCloseable {
     if (playback != null && topPage != null && topTab >= 0 && topFrame >= 0) {
       var captured = playback.captured(url, topPage, topTab, topFrame, control);
       if (captured != null) {
-        if (!url.equals(captured.url())
+        boolean verifiedRedirect =
+            url.equals(captured.metadata().get("captured-request-url"))
+                && captured.redirects() > 0
+                && captured.redirects() <= 8
+                && !(url.startsWith("https:") && !captured.url().startsWith("https:"));
+        if ((!url.equals(captured.url()) && !verifiedRedirect)
             || captured.status() < 200
             || captured.status() >= 300
             || captured.body().length == 0
@@ -677,11 +732,6 @@ public final class HttpSource implements AutoCloseable {
     if (capturedOnly) throw new DownloadError(DownloadError.Category.ACCESS_BLOCKED);
     try {
       Document d = nativeDocument(url, previous);
-      if (d.text
-          .stripLeading()
-          .toLowerCase(java.util.Locale.ROOT)
-          .matches("(?s)<(?:!doctype|html|head|body|form).*"))
-        HlsDiagnostic.body(d, documentRole.isEmpty() ? "root" : documentRole);
       record(
           url,
           d.status,
@@ -691,6 +741,12 @@ public final class HttpSource implements AutoCloseable {
           "native",
           "NATIVE_INITIAL",
           lastSentNames.getOrDefault(url, java.util.List.of()));
+      if (d.text
+          .stripLeading()
+          .toLowerCase(java.util.Locale.ROOT)
+          .matches("(?s)<(?:!doctype|html|head|body|form).*"))
+        HlsDiagnostic.body(d, documentRole.isEmpty() ? "root" : documentRole);
+
       if (d.text.contains("#EXT-X-STREAM-INF:")) {
         var proof = MediaNetworkSession.latest(url, topPage, topTab, topFrame);
         MediaNetworkSession.trace(

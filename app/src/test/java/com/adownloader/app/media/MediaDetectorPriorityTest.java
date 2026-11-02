@@ -7,6 +7,30 @@ import java.util.*;
 import org.junit.Test;
 
 public class MediaDetectorPriorityTest {
+  @org.junit.Test
+  public void latePageHintCannotReplaceSuccessfulResponseBinding() {
+    MediaDetector detector = new MediaDetector(null);
+    String url = "https://page.test/start.m3u8", page = "https://page.test/watch";
+    detector.capture(
+        url,
+        "application/vnd.apple.mpegurl",
+        "redirect-observation",
+        page,
+        java.util.Map.of(),
+        java.util.Map.of("browserTabId", "3", "frameId", "7", "mediaObservedAt", "123"));
+    detector.capture(
+        url,
+        "application/vnd.apple.mpegurl",
+        "performance-resource",
+        page,
+        java.util.Map.of(),
+        java.util.Map.of("browserTabId", "3", "frameId", "0", "title", "Page title"));
+    var result = detector.snapshot().get(0);
+    org.junit.Assert.assertEquals("7", result.getMetadata().get("frameId"));
+    org.junit.Assert.assertEquals("123", result.getMetadata().get("mediaObservedAt"));
+    org.junit.Assert.assertEquals("Page title", result.getMetadata().get("title"));
+  }
+
   @Test
   public void confirmedBodySignatureOverridesMisleadingFileExtensionAndDomHint() {
     var detector = new MediaDetector(null);

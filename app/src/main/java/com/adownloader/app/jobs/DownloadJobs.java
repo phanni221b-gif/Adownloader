@@ -73,6 +73,7 @@ public final class DownloadJobs {
                         }
                     });
             JSONObject metadata = new JSONObject(candidate.getMetadata());
+            metadata.put("detectionSource", candidate.getSource());
             JSONObject request =
                 new JSONObject()
                     .put("url", candidate.getUrl())
@@ -103,6 +104,8 @@ public final class DownloadJobs {
   private static void usePlayback(JSONObject request, MediaProbeService.PlaybackPlan playback)
       throws Exception {
     request
+        .put("diagnosticPlaybackPlan", true)
+        .put("url", playback.probe().finalManifestUrl)
         .put("plan", PlanCodec.encode(playback.tracks()))
         .put("cookieState", playback.cookieState())
         .put("headers", new JSONObject(playback.headers()))
@@ -336,7 +339,17 @@ public final class DownloadJobs {
           JSONObject previous = old;
           refreshWorkers.execute(
               () -> {
-                try {
+                Map<String, String> diagnosticMetadata =
+                    new LinkedHashMap<>(candidate.getMetadata());
+                diagnosticMetadata.put("detectionSource", candidate.getSource());
+                var diagnostic =
+                    new FailureDiagnostics.Session(
+                        id,
+                        candidate.getType().name(),
+                        candidate.getUrl(),
+                        candidate.getPageUrl(),
+                        diagnosticMetadata);
+                try (var diagnosticScope = FailureDiagnostics.activate(diagnostic)) {
                   control.check();
                   boolean segmented =
                       candidate.getType() == MediaCandidate.MediaType.HLS
@@ -423,13 +436,20 @@ public final class DownloadJobs {
                                 });
                           }
                         } catch (Exception failure) {
+                          if (!(failure instanceof TransferControl.Stopped))
+                            diagnostic.fail(
+                                failure, FailureDiagnostics.category(failure), "PROBE_FAILURE");
                           refreshFailure(id, failure, callback);
                         } finally {
+                          diagnostic.complete();
                           refreshing.remove(id, control);
                           commands.execute(() -> finishHistoryCleanup(id));
                         }
                       });
                 } catch (Exception failure) {
+                  if (!(failure instanceof TransferControl.Stopped))
+                    diagnostic.fail(failure, FailureDiagnostics.category(failure), "PROBE_FAILURE");
+                  diagnostic.complete();
                   refreshing.remove(id, control);
                   commands.execute(() -> finishHistoryCleanup(id));
                   commands.execute(() -> refreshFailure(id, failure, callback));

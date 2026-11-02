@@ -72,6 +72,11 @@ public final class MediaDetector {
         (url, h) -> {
           if (Objects.equals(resourcePages.get(url), current.getPageUrl())) scoped.put(url, h);
         });
+    meta.put("detectionSource", current.getSource());
+    if (detectionDiagnostics != null)
+      meta.put(
+          "geckoPlaybackObserved",
+          Boolean.toString(detectionDiagnostics.optInt("playbackObserved") > 0));
     meta.put("requestContextVersion", "2");
     meta.put("requestContexts", new org.json.JSONObject(scoped).toString());
     Map<String, String> origins = new LinkedHashMap<>();
@@ -113,7 +118,9 @@ public final class MediaDetector {
   }
 
   private static boolean networkSource(String source) {
-    return "network-response".equals(source) || "response-signature".equals(source);
+    return "network-response".equals(source)
+        || "response-signature".equals(source)
+        || "redirect-observation".equals(source);
   }
 
   public synchronized void capture(
@@ -176,6 +183,16 @@ public final class MediaDetector {
       Map<String, String> combined = new LinkedHashMap<>(previous.getMetadata());
       meta.forEach(
           (k, v) -> {
+            // A later DOM/Performance hint may describe another frame. It cannot rebind
+            // successful network evidence to that frame or observation generation.
+            if (authoritative
+                && Set.of(
+                        "browserTabId",
+                        "frameId",
+                        "frameHost",
+                        "mediaObservedAt",
+                        "requestContextVerified")
+                    .contains(k)) return;
             if (v != null && !v.isBlank()) combined.put(k, v);
           });
       next =

@@ -70,6 +70,7 @@ public class SuccessfulResponseIntegrationTest {
   }
 
   String target() {
+    if (mode.equals("redirect")) return "/entry.m3u8";
     return mode.equals("dash")
         ? "/m/manifest.mpd"
         : mode.equals("master") ? "/m/master.m3u8" : "/m/playlist.m3u8";
@@ -78,13 +79,13 @@ public class SuccessfulResponseIntegrationTest {
   String html() {
     return """
 <!doctype html><meta charset='utf-8'><title>Successful response fixture</title>
-<video id='v' muted autoplay controls></video><button onclick='v.play();watch()'>Play fixture</button><script>
+<video id='v' muted autoplay controls data-video-url='@ROOT@'></video><button onclick='v.play();watch()'>Play fixture</button><script>
 const root='@ROOT@',rootAuth='@AUTH@',segmentAuth='@SEGMENT@';
 let phase='START';const ms=new MediaSource();v.src=URL.createObjectURL(ms);v.muted=true;function watch(){const timer=setInterval(()=>{if(v.currentTime>0.1){clearInterval(timer);fetch('/played');}},50);}
 const load=async(url,auth)=>{const r=await fetch(url,{headers:{Authorization:auth}});if(!r.ok)throw Error('fixture response');return r;};
 const buffer=async(mime,parts,u)=>{phase='SOURCE_BUFFER';const sb=ms.addSourceBuffer(mime);const append=bytes=>new Promise((resolve,reject)=>{sb.addEventListener('updateend',resolve,{once:true});sb.addEventListener('error',reject,{once:true});sb.appendBuffer(bytes);});for(const part of parts){phase='SEGMENT_APPEND';await append(await(await load(new URL(part,u),segmentAuth)).arrayBuffer());}};
 ms.addEventListener('sourceopen',async()=>{try{
-  phase='ROOT';let u=new URL(root,location),text=await(await load(u,rootAuth)).text();
+  phase='ROOT';let u=new URL(root,location);const originalResponse=await load(u,rootAuth);u=new URL(originalResponse.url);let text=await originalResponse.text();
   if(root.endsWith('.mpd')){
     const doc=new DOMParser().parseFromString(text,'application/xml');
     for(const rep of doc.querySelectorAll('Representation')){
@@ -152,6 +153,13 @@ ms.addEventListener('sourceopen',async()=>{try{
       if (path.equals("/played")) {
         played = true;
         respond(s, 200, "text/plain", new byte[] {1});
+        return;
+      }
+      if (path.equals("/entry.m3u8")) {
+        s.getOutputStream()
+            .write(
+                "HTTP/1.1 302 Found\r\nLocation: /m/playlist.m3u8\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    .getBytes(StandardCharsets.US_ASCII));
         return;
       }
       boolean browser = "cors".equals(h.get("sec-fetch-mode")),
@@ -282,7 +290,12 @@ ms.addEventListener('sourceopen',async()=>{try{
         frame = Integer.parseInt(item.getMetadata().get("frameId"));
     try {
       provider.manifest(
-          item.getUrl(), item.getPageUrl(), tab, frame, item.getHeaders(), new TransferControl());
+          kind.equals("redirect") ? base + "/m/playlist.m3u8" : item.getUrl(),
+          item.getPageUrl(),
+          tab,
+          frame,
+          item.getHeaders(),
+          new TransferControl());
       fail("content.fetch replay must fail");
     } catch (DownloadError e) {
       assertEquals(DownloadError.Category.ACCESS_BLOCKED, e.category);
@@ -385,6 +398,12 @@ ms.addEventListener('sourceopen',async()=>{try{
   public void oneTimeActualPlaybackResponseWorksWhenNativeAndContentFetchBothFail()
       throws Exception {
     run("oneTime", false, false, false);
+  }
+
+  @Test
+  public void originalRedirectHintReusesSuccessfulFinalResponseWithoutNativeReplay()
+      throws Exception {
+    run("redirect", false, false, false);
   }
 
   @Test

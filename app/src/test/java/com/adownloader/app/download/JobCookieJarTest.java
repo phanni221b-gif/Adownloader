@@ -152,4 +152,21 @@ public class JobCookieJarTest {
     restored.restore(jar.snapshot());
     assertEquals("keep=yes", restored.header(part, "sid=stale; keep=yes"));
   }
+
+  @Test
+  public void redirectedJobRebasesOnlyItsActualFinalRequestSeed() throws Exception {
+    String original = "https://page.test/hls/entry.m3u8",
+        cdn = "https://cdn.test/video/master.m3u8";
+    var old = new JobCookieJar(original, Map.of("Cookie", "login=PRIVATE_ORIGIN"));
+    old.accept(
+        URI.create(cdn),
+        Map.of("Set-Cookie", List.of("next=CDN_NEXT; Secure; SameSite=None; Path=/video/")));
+    var fresh = new JobCookieJar(cdn, Map.of());
+    fresh.restore(old.snapshotFor(cdn, Map.of("Cookie", "clearance=CDN_ONLY")));
+    String h = fresh.header(URI.create("https://cdn.test/video/part.ts"));
+    assertTrue(h.contains("clearance=CDN_ONLY"));
+    assertTrue(h.contains("next=CDN_NEXT"));
+    assertFalse(h.contains("PRIVATE_ORIGIN"));
+    assertEquals("", fresh.header(URI.create("https://foreign.test/video/part.ts")));
+  }
 }

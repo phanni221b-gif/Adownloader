@@ -90,4 +90,25 @@ public class HlsDiagnosticTest {
     assertEquals(HlsDiagnostic.Stage.UNSUPPORTED, unsupported.diagnostic.stage);
     assertEquals("EXT-X-MAP", unsupported.diagnostic.tag);
   }
+
+  @Test
+  public void blockedPreviewShowsSafeStageStatusAndRedirectInsteadOfInventedMediaDetails() {
+    var e =
+        new DownloadError(DownloadError.Category.ACCESS_BLOCKED)
+            .diagnostic(
+                new HlsDiagnostic(
+                    "https://cdn.test/private?token=SECRET",
+                    403,
+                    "text/html",
+                    1,
+                    "root",
+                    HlsDiagnostic.Stage.ROOT_HTTP,
+                    "",
+                    DownloadError.Category.ACCESS_BLOCKED));
+    String label = AccessPresentation.preview(e);
+    assertTrue(label.contains("HTTP 403"));
+    assertTrue(label.contains("서버 이동 후"));
+    assertFalse(label.contains("SECRET"));
+    assertFalse(label.contains("private"));
+  }
 }
