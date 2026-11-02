@@ -35,7 +35,7 @@ public class TerminalCleanupIntegrationTest {
       store.state(j.id, DownloadJobStore.State.CANCELED, "");
       store.cleanup(j.id);
     }
-    for (Uri u : media) context.getContentResolver().delete(u, null, null);
+    for (Uri u : media) if (exists(u)) context.getContentResolver().delete(u, null, null);
     store.close();
     context.deleteDatabase("cleanup-tests.db");
   }
@@ -224,7 +224,11 @@ public class TerminalCleanupIntegrationTest {
       throws Exception {
     long failed = job(DownloadJobStore.State.FAILED), paused = job(DownloadJobStore.State.PAUSED);
     Uri u = pending(failed);
-    store.pending(paused, u.toString());
+    store.pending(
+        paused,
+        ContentUris.withAppendedId(
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI, ContentUris.parseId(u))
+            .toString());
     store.clearTerminal(DownloadJobStore.State.FAILED);
     assertNotNull(store.get(failed));
     assertEquals("CLEANUP_PENDING", store.get(failed).error);
@@ -236,6 +240,32 @@ public class TerminalCleanupIntegrationTest {
     assertNull(store.get(failed));
     assertFalse(exists(u));
     assertEquals(DownloadJobStore.State.PAUSED, store.get(paused).state);
+  }
+
+  @Test
+  public void malformedPendingUriCannotDeleteAMediaStoreCollectionOrOtherRows() throws Exception {
+    long failed = job(DownloadJobStore.State.FAILED), paused = job(DownloadJobStore.State.PAUSED);
+    Uri own = pending(failed), other = pending(paused);
+    byte[] expected = bytes(other);
+    for (String invalid :
+        List.of(
+            MediaStore.Video.Media.EXTERNAL_CONTENT_URI.toString(),
+            own.toString() + "?includePending=1",
+            own.toString()
+                .replace("/" + ContentUris.parseId(own), "/0" + ContentUris.parseId(own)))) {
+      store.pending(failed, invalid);
+      store.clearTerminal(DownloadJobStore.State.FAILED);
+      assertNotNull(store.get(failed));
+      assertEquals("CLEANUP_PENDING", store.get(failed).error);
+      assertTrue(exists(own));
+      assertArrayEquals(expected, bytes(other));
+    }
+    store.pending(failed, own.toString());
+    store.clearTerminal(DownloadJobStore.State.FAILED);
+    assertNull(store.get(failed));
+    assertFalse(exists(own));
+    assertNotNull(store.get(paused));
+    assertArrayEquals(expected, bytes(other));
   }
 
   @Test

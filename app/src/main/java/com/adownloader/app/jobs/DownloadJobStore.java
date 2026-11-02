@@ -602,6 +602,14 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
     try {
       Uri uri = Uri.parse(job.pending);
       if (!"content".equals(uri.getScheme()) || !"media".equals(uri.getAuthority())) return false;
+      List<String> path = uri.getPathSegments();
+      if (path.size() != 4
+          || !Set.of("audio", "video").contains(path.get(1))
+          || !path.get(2).equals("media")
+          || uri.getQuery() != null
+          || uri.getFragment() != null) return false;
+      long mediaId = ContentUris.parseId(uri);
+      if (mediaId <= 0 || !Long.toString(mediaId).equals(path.get(3))) return false;
       try (Cursor c =
           context
               .getContentResolver()
@@ -621,10 +629,10 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
       }
       try (Cursor refs =
           getReadableDatabase()
-              .rawQuery(
-                  "SELECT 1 FROM jobs WHERE id<>? AND (pending=? OR uri=?) LIMIT 1",
-                  new String[] {"" + job.id, job.pending, job.pending})) {
-        if (refs.moveToFirst()) return false;
+              .rawQuery("SELECT pending,uri FROM jobs WHERE id<>?", new String[] {"" + job.id})) {
+        while (refs.moveToNext())
+          for (int column = 0; column < 2; column++)
+            if (sameMediaRow(uri, refs.getString(column))) return false;
       }
       context.getContentResolver().delete(uri, null, null);
       try (Cursor c =
@@ -634,6 +642,21 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
         return c != null && !c.moveToFirst();
       }
     } catch (Exception unavailable) {
+      return false;
+    }
+  }
+
+  private static boolean sameMediaRow(Uri target, String raw) {
+    try {
+      Uri other = Uri.parse(raw);
+      if (!"content".equals(other.getScheme())
+          || !"media".equals(other.getAuthority())
+          || ContentUris.parseId(target) != ContentUris.parseId(other)) return false;
+      String a = target.getPathSegments().get(0), b = other.getPathSegments().get(0);
+      return a.equals(b)
+          || a.equals("external") && !b.equals("internal")
+          || b.equals("external") && !a.equals("internal");
+    } catch (Exception invalid) {
       return false;
     }
   }
