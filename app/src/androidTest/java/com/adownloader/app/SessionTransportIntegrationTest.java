@@ -271,7 +271,15 @@ public class SessionTransportIntegrationTest {
         "Successful Gecko HLS context was not captured; candidates="
             + browser.getDetector().snapshot().size()
             + "; metrics="
-            + String.valueOf(browser.getDetector().detectionDiagnostics));
+            + String.valueOf(browser.getDetector().detectionDiagnostics)
+            + "; capturedNames="
+            + browser.getDetector().snapshot().stream()
+                .map(
+                    x ->
+                        MediaHeaders.names(x.getHeaders().keySet()).toString()
+                            + "/recent="
+                            + (MediaNetworkSession.latest(x.getUrl(), x.getPageUrl()) != null))
+                .toList());
   }
 
   void run(String kind, boolean blocked) throws Exception {
@@ -338,7 +346,11 @@ public class SessionTransportIntegrationTest {
 
   @Test
   public void extensionlessMseResponseKeepsOnlyConfirmedMediaAuthentication() throws Exception {
-    run("extensionless", false);
+    for (int iteration = 0; iteration < 3; iteration++) {
+      run("extensionless", false);
+      ins.runOnMainSync(activity::finish);
+      activity = null;
+    }
   }
 
   @Test
