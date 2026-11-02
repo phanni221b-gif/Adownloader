@@ -306,7 +306,7 @@ ms.addEventListener('sourceopen',async()=>{try{
     if (blocked) {
       assertEquals("ACCESS_BLOCKED", result.error);
       assertTrue(diagnostics.contains("SEGMENT_NATIVE_BLOCKED"));
-      jobs.action(id.get(), "CANCEL");
+      jobs.action(id.get(), "CANCEL", null);
     } else {
       assertEquals("category=" + result.error, DownloadJobStore.State.COMPLETED, result.state);
       try (var fd = context.getContentResolver().openFileDescriptor(Uri.parse(result.uri), "r")) {
