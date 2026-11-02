@@ -87,20 +87,31 @@ public final class MediaProbeService implements AutoCloseable {
   }
 
   public record PlaybackPlan(
-      List<ManifestParser.Track> tracks,
+      MediaProbeResult probe,
       Map<String, String> headers,
       Map<String, Map<String, String>> contexts,
-      String cookieState,
-      String disposition) {}
+      String cookieState) {
+    public List<ManifestParser.Track> tracks() {
+      return probe.tracks();
+    }
+
+    public String disposition() {
+      return probe.disposition;
+    }
+  }
 
   /** Resolve only already captured evidence before the queued job is acknowledged to the UI. */
   public PlaybackPlan prepareCaptured(MediaCandidate item) {
+    return prepareCaptured(item, new TransferControl());
+  }
+
+  public PlaybackPlan prepareCaptured(MediaCandidate item, TransferControl control) {
     if (item.getType() != MediaCandidate.MediaType.HLS
         && item.getType() != MediaCandidate.MediaType.DASH) return null;
     if (MediaNetworkSession.provider() == null) return null;
     Map<String, Map<String, String>> contexts = contexts(item);
     try (HttpSource source =
-        new HttpSource(item.getUrl(), item.getHeaders(), new TransferControl())
+        new HttpSource(item.getUrl(), item.getHeaders(), control)
             .pageContext(item.getPageUrl())
             .browserScope(scope(item, "browserTabId"), scope(item, "frameId"))
             .resourceContexts(contexts)
@@ -108,11 +119,10 @@ public final class MediaProbeService implements AutoCloseable {
             .onContext((url, headers) -> contexts.put(url, new LinkedHashMap<>(headers)))) {
       var result = fetchWithSource(source, item.getUrl(), item.getType(), null);
       return new PlaybackPlan(
-          result.tracks(),
+          result,
           contexts.getOrDefault(item.getUrl(), item.getHeaders()),
           contexts,
-          source.cookieState(),
-          result.disposition);
+          source.cookieState());
     } catch (Exception unavailable) {
       return null;
     }

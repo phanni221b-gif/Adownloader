@@ -431,6 +431,15 @@ ms.addEventListener('sourceopen',async()=>{try{
   @Test
   public void acknowledgedQueuedPlaybackPlanSurvivesBrowserClosureBeforeAnyTransfer()
       throws Exception {
+    queuedHandoff(false);
+  }
+
+  @Test
+  public void refreshedCapturedPlanIsDurableBeforeTheBrowserCloses() throws Exception {
+    queuedHandoff(true);
+  }
+
+  private void queuedHandoff(boolean refresh) throws Exception {
     mode = "closeBrowser";
     var item = discover();
     DownloadJobs jobs = DownloadJobs.get(context);
@@ -467,6 +476,17 @@ ms.addEventListener('sourceopen',async()=>{try{
           assertFalse(raw.contains(rootAuth));
           assertFalse(raw.contains(segmentAuth));
         }
+      if (refresh) {
+        jobs.store.state(id.get(), DownloadJobStore.State.NEEDS_REFRESH, "EXPIRED_URL");
+        CountDownLatch refreshed = new CountDownLatch(1);
+        jobs.refresh(id.get(), item, message -> refreshed.countDown());
+        assertTrue(refreshed.await(20, TimeUnit.SECONDS));
+        assertEquals(DownloadJobStore.State.QUEUED, jobs.store.get(id.get()).state);
+        var updated = jobs.store.request(id.get());
+        assertTrue(updated.has("plan"));
+        assertFalse(updated.optBoolean("cookieBootstrap"));
+        assertFalse(updated.optString("cookieState").isBlank());
+      }
       ins.runOnMainSync(activity::finish);
       activity = null;
       long until = System.currentTimeMillis() + 5000;
