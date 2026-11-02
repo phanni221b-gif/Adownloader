@@ -62,8 +62,7 @@ public final class MediaExtensionManager implements AutoCloseable {
                           || !(message instanceof JSONObject)) return null;
                       JSONObject json = (JSONObject) message;
                       if (json.optString("kind").startsWith("manifest-capture-"))
-                        return GeckoResult.fromValue(
-                            new JSONObject(java.util.Map.of("ok", bridge.capture(json))));
+                        return GeckoResult.fromValue(bridge.capture(json));
                       route(json);
                       return null;
                     }

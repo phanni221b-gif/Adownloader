@@ -53,7 +53,7 @@ function prefix(details,metadata,headers,f,known=false){
     id='response-'+(++captureSerial);captureExports++;reserved=true;
     const proof=observedMedia({...details,mediaRequestSnapshot:savedContext},metadata,headers,'response-signature',kind==='hls'?'application/vnd.apple.mpegurl':'application/dash+xml');
     const cookies=(details.responseHeaders||[]).filter(h=>lower(h.name)==='set-cookie'&&typeof h.value==='string'&&h.value.length<=4096&&!/[\r\n]/.test(h.value)).map(h=>h.value).slice(0,32);
-    start=browser.runtime.sendNativeMessage(NATIVE_APP,{kind:'manifest-capture-start',captureId:id,tabId:details.tabId,frameId:details.frameId||0,pageUrl:capturedPage,url:details.url,geckoStatus:details.statusCode,requestType:details.type,observedAt:proof.at||Date.now(),headers:proof.headers,headerNames:proof.names,metadata:{'request-started-at':String(savedContext?.at||proof.at||Date.now()),'content-type':kind==='hls'?'application/vnd.apple.mpegurl':'application/dash+xml','etag':metadata.etag||'','last-modified':metadata.modified||''},cookies}).catch(()=>({ok:false}));
+    start=browser.runtime.sendNativeMessage(NATIVE_APP,{kind:'manifest-capture-start',captureId:id,tabId:details.tabId,frameId:details.frameId||0,pageUrl:capturedPage,url:details.url,geckoStatus:details.statusCode,requestType:details.type,observedAt:proof.at||Date.now(),headers:proof.headers,headerNames:proof.names,metadata:{'request-started-at':String(savedContext?.at||proof.at||Date.now()),'content-type':kind==='hls'?'application/vnd.apple.mpegurl':'application/dash+xml','etag':metadata.etag||'','last-modified':metadata.modified||''},cookies}).catch(()=>false);
     if(!known){payload({...details,mediaRequestSnapshot:savedContext},metadata,headers,'response-signature',kind==='hls'?'application/vnd.apple.mpegurl':'application/dash+xml');detection(details.tabId,true);}
    }else if(kind==='ts'||kind==='fmp4'||kind==='bmff'&&f.blobPlayers){segment({...details,mediaRequestSnapshot:savedContext},metadata,headers,true);finish();}
    else if(kind==='bmff'&&details.type==='media'&&!f.blobPlayers){payload({...details,mediaRequestSnapshot:savedContext},metadata,headers,'response-signature','video/mp4');finish();}
@@ -65,10 +65,10 @@ function prefix(details,metadata,headers,f,known=false){
   if(!id||!validPage()){abort();unreserve();return;}
   const total=size;
   (async()=>{try{
-   const accepted=await start;if(accepted?.ok===false||!validPage())throw Error();
+   const accepted=await start;if(accepted!==true||!validPage())throw Error();
    let index=0;
-   for(const chunk of chunks)for(let at=0;at<chunk.length;at+=49152){if(!validPage())throw Error();const encodeBegan=clock(),bytes=chunk.subarray(at,at+49152);let binary='';for(let i=0;i<bytes.length;i++)binary+=String.fromCharCode(bytes[i]);const encoded=btoa(binary);stat.captureExportMs+=clock()-encodeBegan;const ack=await browser.runtime.sendNativeMessage(NATIVE_APP,{kind:'manifest-capture-chunk',captureId:id,tabId:details.tabId,index:index++,data:encoded});if(ack?.ok===false)throw Error();}
-   if(!validPage())throw Error();await browser.runtime.sendNativeMessage(NATIVE_APP,{kind:'manifest-capture-end',captureId:id,tabId:details.tabId,bytes:total,chunks:index});stat.manifestCaptured=(stat.manifestCaptured||0)+1;stat.manifestBytes=(stat.manifestBytes||0)+total;
+   for(const chunk of chunks)for(let at=0;at<chunk.length;at+=49152){if(!validPage())throw Error();const encodeBegan=clock(),bytes=chunk.subarray(at,at+49152);let binary='';for(let i=0;i<bytes.length;i++)binary+=String.fromCharCode(bytes[i]);const encoded=btoa(binary);stat.captureExportMs+=clock()-encodeBegan;const ack=await browser.runtime.sendNativeMessage(NATIVE_APP,{kind:'manifest-capture-chunk',captureId:id,tabId:details.tabId,index:index++,data:encoded});if(ack!==true)throw Error();}
+   if(!validPage())throw Error();const completed=await browser.runtime.sendNativeMessage(NATIVE_APP,{kind:'manifest-capture-end',captureId:id,tabId:details.tabId,bytes:total,chunks:index});if(completed!==true)throw Error();stat.manifestCaptured=(stat.manifestCaptured||0)+1;stat.manifestBytes=(stat.manifestBytes||0)+total;
   }catch(_){if(id)browser.runtime.sendNativeMessage(NATIVE_APP,{kind:'manifest-capture-abort',captureId:id,tabId:details.tabId}).catch(()=>{});}finally{release();unreserve();}})();
  };
  filter.onerror=finish;

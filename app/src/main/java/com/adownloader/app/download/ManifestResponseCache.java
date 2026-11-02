@@ -150,12 +150,12 @@ public final class ManifestResponseCache implements AutoCloseable {
     try {
       order = Long.parseLong(metadata.getOrDefault("request-started-at", Long.toString(o.at())));
     } catch (NumberFormatException invalid) {
-      return false;
+      return reject("ORDER_PARSE");
     }
-    if (order <= 0 || order > o.at()) return false;
+    if (order <= 0 || order > o.at()) return reject("ORDER_TIMESTAMP");
     Entry previous = ready.get(key);
-    if (previous != null && previous.order > order) return false;
-    if (pending.values().stream().anyMatch(p -> p.key.equals(key) && p.order > order)) return false;
+    if (previous != null && previous.order > order) return reject("OLDER_REQUEST");
+    if (pending.values().stream().anyMatch(p -> p.key.equals(key) && p.order > order)) return reject("OLDER_REQUEST");
     // A newer request replaces evidence for this exact candidate binding.
     pending.values().removeIf(p -> p.key.equals(key));
     ready.remove(key);
