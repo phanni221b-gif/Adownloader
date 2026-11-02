@@ -119,6 +119,11 @@ public class ProcessRecoveryTest {
             .getJSONObject("headers")
             .getString("Cookie")
             .contains("PRIVATE_REQUEST_CONTEXT"));
+    if (kind.equals("cookie-hls")) {
+      var savedHeaders = jobs.store.request(id).getJSONObject("headers");
+      assertEquals("Bearer PRIVATE_RECOVERY_AUTH", savedHeaders.getString("Authorization"));
+      assertEquals("PRIVATE_RECOVERY_TOKEN", savedHeaders.getString("X-Playback-Token"));
+    }
     String firstPart = null;
     if (!direct) {
       List<ManifestParser.Track> plan =
@@ -683,10 +688,6 @@ public class ProcessRecoveryTest {
         1,
         stats.getInt("/cookie/playlist.m3u8"));
     assertEquals(0, stats.optInt("cookie-denied"));
-    long savedId = context.getSharedPreferences("recovery-test", 0).getLong("cookie-hls", -1);
-    var savedHeaders = DownloadJobs.get(context).store.request(savedId).getJSONObject("headers");
-    assertEquals("Bearer PRIVATE_RECOVERY_AUTH", savedHeaders.getString("Authorization"));
-    assertEquals("PRIVATE_RECOVERY_TOKEN", savedHeaders.getString("X-Playback-Token"));
     for (File f :
         Objects.requireNonNull(context.getDatabasePath("downloads.db").getParentFile().listFiles()))
       if (f.isFile()) {
