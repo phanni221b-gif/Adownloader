@@ -183,6 +183,16 @@ public final class MediaDetector {
       Map<String, String> combined = new LinkedHashMap<>(previous.getMetadata());
       meta.forEach(
           (k, v) -> {
+            // A later DOM/Performance hint may describe another frame. It cannot rebind
+            // successful network evidence to that frame or observation generation.
+            if (authoritative
+                && Set.of(
+                        "browserTabId",
+                        "frameId",
+                        "frameHost",
+                        "mediaObservedAt",
+                        "requestContextVerified")
+                    .contains(k)) return;
             if (v != null && !v.isBlank()) combined.put(k, v);
           });
       next =

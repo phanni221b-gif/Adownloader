@@ -36,6 +36,8 @@ public class HlsHttpIntegrationTest {
   private final AtomicInteger denied = new AtomicInteger(), redirects = new AtomicInteger();
   private final AtomicBoolean intact = new AtomicBoolean();
   private final List<String> deniedReasons = new CopyOnWriteArrayList<>();
+  private final List<String> captureLookups = new CopyOnWriteArrayList<>();
+  private MediaNetworkSession.Provider tracedProvider;
 
   @Before
   public void start() throws Exception {
@@ -282,6 +284,42 @@ public class HlsHttpIntegrationTest {
               .findFirst()
               .orElse(null);
       if (found != null && openEarly && !shown) {
+        MediaNetworkSession.Provider actual = MediaNetworkSession.provider();
+        assertNotNull(actual);
+        tracedProvider =
+            new MediaNetworkSession.Provider() {
+              public MediaNetworkSession.Observation latest(String u, String p) {
+                return actual.latest(u, p);
+              }
+
+              public MediaNetworkSession.Observation latest(String u, String p, int t, int f) {
+                return actual.latest(u, p, t, f);
+              }
+
+              public Map<String, Object> captureDiagnostics() {
+                return actual.captureDiagnostics();
+              }
+
+              public MediaNetworkSession.Bootstrap captured(
+                  String u, String p, int t, int f, TransferControl c) throws Exception {
+                var hit = actual.captured(u, p, t, f, c);
+                captureLookups.add(
+                    URI.create(u).getPath() + " frame=" + f + " hit=" + (hit != null));
+                return hit;
+              }
+
+              public MediaNetworkSession.Bootstrap manifest(
+                  String u, String p, Map<String, String> h, TransferControl c) throws Exception {
+                return actual.manifest(u, p, h, c);
+              }
+
+              public MediaNetworkSession.Bootstrap manifest(
+                  String u, String p, int t, int f, Map<String, String> h, TransferControl c)
+                  throws Exception {
+                return actual.manifest(u, p, t, f, h, c);
+              }
+            };
+        MediaNetworkSession.install(tracedProvider);
         ins.runOnMainSync(() -> activity.findViewById(R.id.media_action).performClick());
         shown = true;
       }
@@ -350,7 +388,12 @@ public class HlsHttpIntegrationTest {
       assertTrue(inspection.video && inspection.audio);
     }
     assertEquals(
-        "No unauthenticated preview or transfer requests: " + deniedReasons, 0, denied.get());
+        "No unauthenticated preview or transfer requests: "
+            + deniedReasons
+            + "; evidence="
+            + captureLookups,
+        0,
+        denied.get());
     for (File db : context.getDatabasePath("download-jobs.db").getParentFile().listFiles())
       if (db.isFile()) {
         String raw = new String(Files.readAllBytes(db.toPath()), StandardCharsets.ISO_8859_1);
