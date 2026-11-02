@@ -173,6 +173,9 @@ public class FailureJournalIntegrationTest {
       assertEquals(report.getString("failureId"), new JSONObject(exported).getString("failureId"));
       for (String secret : SECRETS) assertFalse(exported.contains(secret));
     }
+    File evidence = new File("/sdcard/Download/Adownloader-ui-proof/failure-journal-example.json");
+    evidence.getParentFile().mkdirs();
+    Files.copy(file.toPath(), evidence.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
     assertNoSecrets(context.getDataDir());
     File outside = new File(context.getCacheDir(), "not-a-diagnostic.txt");
     Files.writeString(outside.toPath(), "fixture");
@@ -363,7 +366,8 @@ public class FailureJournalIntegrationTest {
           androidx.test.uiautomator.UiDevice.getInstance(ins)
               .wait(
                   androidx.test.uiautomator.Until.findObject(
-                      androidx.test.uiautomator.By.res(context.getPackageName(),"sheet_title").text("기기 진단 정보")),
+                      androidx.test.uiautomator.By.res(context.getPackageName(), "sheet_title")
+                          .text("기기 진단 정보")),
                   3000));
     } finally {
       if (activity != null) {

@@ -551,11 +551,13 @@ public final class FailureDiagnostics {
                               Stage.INIT_SEGMENT,
                               Stage.VIDEO_SEGMENT,
                               Stage.AUDIO_SEGMENT,
+                              Stage.AUDIO_PLAYLIST,
                               Stage.DIRECT_MEDIA,
                               Stage.RANGE_RESUME)
                           .contains(stage)
                       ? stage
                       : Stage.VARIANT_PLAYLIST;
+              case ATTRIBUTE -> h.tag.equals("EXT-X-STREAM-INF") ? Stage.MASTER_MANIFEST : stage;
               case CHILD_AUTH, SEGMENT_URI -> phase;
               default -> stage;
             };

@@ -102,6 +102,20 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
 
   public synchronized void discardTab(int tab) {
     captures.discard(tab);
+    Set<WebExtension.Port> retired = new HashSet<>();
+    ports
+        .entrySet()
+        .removeIf(
+            e -> {
+              if (e.getKey().startsWith(tab + ":")) {
+                retired.add(e.getValue());
+                return true;
+              }
+              return false;
+            });
+    for (Pending p : pending.values())
+      if (retired.contains(p.port))
+        p.future.completeExceptionally(new DownloadError(DownloadError.Category.ACCESS_BLOCKED));
     observations.values().removeIf(b -> b.tabId == tab);
   }
 
@@ -409,11 +423,8 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
     for (Pending p : pending.values())
       p.future.completeExceptionally(new DownloadError(DownloadError.Category.ACCESS_BLOCKED));
     pending.clear();
-    for (WebExtension.Port p : ports.values())
-      try {
-        p.disconnect();
-      } catch (Exception ignored) {
-      }
+    // Gecko owns content-port shutdown on navigation/session close. Explicit disconnect here
+    // races the already queued remote disconnect and shuts its native dispatcher down twice.
     ports.clear();
     observations.clear();
     captures.close();

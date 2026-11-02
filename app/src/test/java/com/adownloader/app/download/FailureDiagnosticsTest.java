@@ -215,4 +215,34 @@ public class FailureDiagnosticsTest {
                     .get("failure"))
             .get("stage"));
   }
+
+  @Test
+  public void audioPlaylistParseFailureDoesNotBecomeAnUnrelatedVideoVariantFailure() {
+    var s = session();
+    s.event(
+        Map.of(
+            "stage",
+            "AUDIO_PLAYLIST",
+            "transport",
+            "native",
+            "status",
+            200,
+            "action",
+            "NATIVE_INITIAL"));
+    var error =
+        new DownloadError(DownloadError.Category.MANIFEST_INVALID)
+            .diagnostic(
+                new HlsDiagnostic(
+                    "https://cdn.test/audio?SECRET",
+                    200,
+                    "application/vnd.apple.mpegurl",
+                    0,
+                    "media",
+                    HlsDiagnostic.Stage.VARIANT_PARSE,
+                    "",
+                    DownloadError.Category.MANIFEST_INVALID));
+    assertEquals(
+        "AUDIO_PLAYLIST",
+        ((Map<?, ?>) s.report(error, error.category, "PROBE_FAILURE").get("failure")).get("stage"));
+  }
 }

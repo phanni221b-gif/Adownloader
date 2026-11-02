@@ -731,11 +731,6 @@ public final class HttpSource implements AutoCloseable {
     if (capturedOnly) throw new DownloadError(DownloadError.Category.ACCESS_BLOCKED);
     try {
       Document d = nativeDocument(url, previous);
-      if (d.text
-          .stripLeading()
-          .toLowerCase(java.util.Locale.ROOT)
-          .matches("(?s)<(?:!doctype|html|head|body|form).*"))
-        HlsDiagnostic.body(d, documentRole.isEmpty() ? "root" : documentRole);
       record(
           url,
           d.status,
@@ -745,6 +740,12 @@ public final class HttpSource implements AutoCloseable {
           "native",
           "NATIVE_INITIAL",
           lastSentNames.getOrDefault(url, java.util.List.of()));
+      if (d.text
+          .stripLeading()
+          .toLowerCase(java.util.Locale.ROOT)
+          .matches("(?s)<(?:!doctype|html|head|body|form).*"))
+        HlsDiagnostic.body(d, documentRole.isEmpty() ? "root" : documentRole);
+
       if (d.text.contains("#EXT-X-STREAM-INF:")) {
         var proof = MediaNetworkSession.latest(url, topPage, topTab, topFrame);
         MediaNetworkSession.trace(
