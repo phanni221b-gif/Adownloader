@@ -35,6 +35,7 @@ public class HlsHttpIntegrationTest {
   private Activity activity;
   private final AtomicInteger denied = new AtomicInteger(), redirects = new AtomicInteger();
   private final AtomicBoolean intact = new AtomicBoolean();
+  private final List<String> deniedReasons = new CopyOnWriteArrayList<>();
 
   @Before
   public void start() throws Exception {
@@ -153,6 +154,7 @@ public class HlsHttpIntegrationTest {
         if (!cookie.contains("dash=PRIVATE_DASH_CONTEXT")) {
           status = 403;
           body = new byte[0];
+          deniedReasons.add("DASH_COOKIE");
           denied.incrementAndGet();
         } else {
           body = asset(path.substring(path.lastIndexOf('/') + 1));
@@ -172,6 +174,11 @@ public class HlsHttpIntegrationTest {
             || !cookie.contains("edge=PRIVATE_EDGE_CONTEXT")) {
           mime = "text/html";
           body = "<html>challenge access denied</html>".getBytes();
+          deniedReasons.add(
+              "ROOT_COOKIE initial="
+                  + cookie.contains("initial=PRIVATE_HLS_CONTEXT")
+                  + " edge="
+                  + cookie.contains("edge=PRIVATE_EDGE_CONTEXT"));
           denied.incrementAndGet();
         } else {
           extra =
@@ -190,6 +197,7 @@ public class HlsHttpIntegrationTest {
         if (!cookie.contains("child=PRIVATE_CHILD_CONTEXT")) {
           status = 403;
           body = new byte[0];
+          deniedReasons.add("VARIANT_COOKIE");
           denied.incrementAndGet();
         } else {
           mime = "application/octet-stream";
@@ -203,6 +211,11 @@ public class HlsHttpIntegrationTest {
             || !h.getOrDefault("referer", "").equals(base + "/segment-player")) {
           status = 403;
           body = new byte[0];
+          deniedReasons.add(
+              "SEGMENT_CONTEXT cookie="
+                  + cookie.contains("seg=PRIVATE_SEGMENT_CONTEXT")
+                  + " referrer="
+                  + h.getOrDefault("referer", "").equals(base + "/segment-player"));
           denied.incrementAndGet();
         } else {
           String name = path.substring(path.lastIndexOf('/') + 1);
@@ -336,7 +349,8 @@ public class HlsHttpIntegrationTest {
           PostProcessor.inspect(fd.getFileDescriptor(), 3, true, true);
       assertTrue(inspection.video && inspection.audio);
     }
-    assertEquals(0, denied.get());
+    assertEquals(
+        "No unauthenticated preview or transfer requests: " + deniedReasons, 0, denied.get());
     for (File db : context.getDatabasePath("download-jobs.db").getParentFile().listFiles())
       if (db.isFile()) {
         String raw = new String(Files.readAllBytes(db.toPath()), StandardCharsets.ISO_8859_1);

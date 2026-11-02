@@ -31,7 +31,7 @@ public class FailureJournalIntegrationTest {
   private ServerSocket server;
   private ExecutorService serverIo;
   private volatile boolean direct;
-  private final List<Uri> published = new ArrayList<>();
+  private final Set<Uri> published = new LinkedHashSet<>();
   private static final String[] SECRETS = {
     "SUPER_SECRET_COOKIE_123",
     "Bearer VERY_SECRET_TOKEN",
@@ -178,7 +178,7 @@ public class FailureJournalIntegrationTest {
     Files.copy(file.toPath(), evidence.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
     assertNoSecrets(context.getDataDir());
     File outside = new File(context.getCacheDir(), "not-a-diagnostic.txt");
-    Files.writeString(outside.toPath(), "fixture");
+    Files.write(outside.toPath(), "fixture".getBytes(StandardCharsets.UTF_8));
     try {
       FailureJournalUi.intent(context, outside);
       fail("Provider must not expose the entire cache");
@@ -366,7 +366,7 @@ public class FailureJournalIntegrationTest {
           androidx.test.uiautomator.UiDevice.getInstance(ins)
               .wait(
                   androidx.test.uiautomator.Until.findObject(
-                      androidx.test.uiautomator.By.res(context.getPackageName(), "sheet_title")
+                      androidx.test.uiautomator.By.res(context.getPackageName(), "action_title")
                           .text("기기 진단 정보")),
                   3000));
     } finally {
