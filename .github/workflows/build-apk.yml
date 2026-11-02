@@ -38,7 +38,7 @@ jobs:
           git fetch --no-tags --depth=1 origin a13c305e91592daa8f617c09e97d29ce9640edcf
           node ci/benchmark-response-capture.cjs
           gradle :app:testDebugUnitTest :app:lintRelease :app:assembleRelease --stacktrace
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: host-test-results
@@ -56,7 +56,7 @@ jobs:
           grep "launchable-activity: name='com.adownloader.app.MainActivity'" apk-badging.txt
           if grep -R -E 'import android.webkit|androidx.webkit|class (BrowserActivity|StableBrowserActivity|GeckoBrowserActivity)' app/src/main app/build.gradle.kts; then exit 1; fi
           sha256sum "$APK" > unsigned.sha256
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Adownloader-unsigned-arm64
           path: |
@@ -98,7 +98,7 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: bash ci/run-android-tests.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: android-integration-results
