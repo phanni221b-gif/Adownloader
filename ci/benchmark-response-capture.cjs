@@ -4,7 +4,7 @@ const fs=require('fs'),vm=require('vm'),cp=require('child_process'),assert=requi
 const baseline='a13c305e91592daa8f617c09e97d29ce9640edcf';
 function setup(old){
  const callbacks={},sent=[];const event=n=>({addListener(fn,filter){(callbacks[n]??=[]).push(d=>{if(!filter?.types||filter.types.includes(d.type))fn(d);});}});
- const browser={webRequest:{onBeforeSendHeaders:event('before'),onHeadersReceived:event('response'),onCompleted:event('complete'),onErrorOccurred:event('error'),filterResponseData(){throw Error('Normal images must never be filtered');}},runtime:{onMessage:{addListener(fn){(callbacks.message??=[]).push(fn);}},sendNativeMessage(_,m){sent.push(m);return Promise.resolve();}},tabs:{onRemoved:event('removed')}};
+ const browser={webRequest:{onBeforeSendHeaders:event('before'),onHeadersReceived:event('response'),onBeforeRedirect:event('redirect'),onCompleted:event('complete'),onErrorOccurred:event('error'),filterResponseData(){throw Error('Normal images must never be filtered');}},runtime:{onMessage:{addListener(fn){(callbacks.message??=[]).push(fn);}},sendNativeMessage(_,m){sent.push(m);return Promise.resolve();}},tabs:{onRemoved:event('removed')}};
  const context=vm.createContext({browser,URL,Date,Map,Set,performance,TextDecoder,Uint8Array,ArrayBuffer,setTimeout:()=>0,clearTimeout(){}});
  for(const name of ['request_context','background']){const path='app/src/main/assets/media_sniffer/'+name+'.js';const source=old?cp.execFileSync('git',['show',baseline+':'+path],{encoding:'utf8'}):fs.readFileSync(path,'utf8');vm.runInContext(source,context);}
  for(const fn of callbacks.message)fn({kind:'page-meta',pageUrl:'https://fixture.test/page',pageTitle:'Benchmark'},{tab:{id:1},frameId:0});

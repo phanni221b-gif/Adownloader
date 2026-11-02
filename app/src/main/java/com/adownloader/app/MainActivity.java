@@ -63,6 +63,7 @@ public final class MainActivity extends AppCompatActivity
     popups = new PopupController(this, browser::load);
     mediaExtension =
         new MediaExtensionManager(
+            this,
             browser.getRuntime(),
             browser,
             new MediaExtensionManager.StatusListener() {
@@ -583,6 +584,7 @@ public final class MainActivity extends AppCompatActivity
       if (detector != null && detector.detectionDiagnostics != null)
         for (String key :
             java.util.List.of(
+                "playbackObserved",
                 "videoElements",
                 "blobPlayers",
                 "mediaSegments",

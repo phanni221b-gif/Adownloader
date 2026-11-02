@@ -36,5 +36,8 @@
             android:foregroundServiceType="dataSync" />
     <service android:name=".jobs.TransferJobService" android:enabled="@bool/user_transfer_available" tools:targetApi="34" android:exported="false" android:permission="android.permission.BIND_JOB_SERVICE" />
         <receiver android:name=".jobs.JobActionReceiver" android:exported="false" />
+        <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.diagnostics" android:exported="false" android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/diagnostic_paths" />
+        </provider>
     </application>
 </manifest>

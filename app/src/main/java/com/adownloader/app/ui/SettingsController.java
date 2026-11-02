@@ -61,6 +61,15 @@ public final class SettingsController {
     }
     ((TextView) activity.findViewById(R.id.app_version))
         .setText("버전 " + version + " · Gecko " + com.adownloader.app.BuildConfig.GECKO_VERSION);
+    activity
+        .findViewById(R.id.setting_diagnostics)
+        .setOnClickListener(v -> DeviceDiagnostics.show(activity));
+    activity
+        .findViewById(R.id.setting_failure_share)
+        .setOnClickListener(v -> FailureJournalUi.share(activity, 0));
+    activity
+        .findViewById(R.id.setting_failure_clear)
+        .setOnClickListener(v -> FailureJournalUi.clear(activity));
     refresh();
   }
 

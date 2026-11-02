@@ -105,4 +105,39 @@ public class ManifestResponseCacheTest {
             List.of()));
     assertArrayEquals(body, cache.get(url, page, 3, 2, new TransferControl()).body());
   }
+
+  @Test
+  public void verifiedRedirectAliasesReuseOnlyTheFinalResponseAndExactBinding() throws Exception {
+    cache.page(3, page);
+    String original = "https://page.test/hls/original.m3u8?signature=PRIVATE";
+    assertTrue(
+        cache.begin(
+            "response-1",
+            observation(3, 2, 200),
+            Map.of("redirect-source-0", original),
+            List.of()));
+    assertTrue(cache.chunk("response-1", 3, 0, body));
+    assertTrue(cache.end("response-1", 3, 1, body.length));
+    var hit = cache.get(original, page, 3, 2, new TransferControl());
+    assertNotNull("Original redirect URL must find the successful final response", hit);
+    assertEquals(url, hit.url());
+    assertEquals(1, hit.redirects());
+    assertEquals(original, hit.metadata().get("captured-request-url"));
+    assertArrayEquals(body, hit.body());
+    assertNull(cache.get(original + "x", page, 3, 2, new TransferControl()));
+    assertNull(cache.get(original, page, 4, 2, new TransferControl()));
+    assertNull(cache.get(original, page, 3, 0, new TransferControl()));
+    cache.page(3, "https://page.test/b");
+    assertNull(cache.get(original, page, 3, 2, new TransferControl()));
+    cache.page(3, page);
+    assertFalse(
+        cache.begin(
+            "response-2",
+            observation(3, 2, 200),
+            Map.of("redirect-source-0", "https://user:pass@host.test/a"),
+            List.of()));
+    capture("response-3", 3, 2);
+    now.addAndGet(60001);
+    assertNull(cache.get(original, page, 3, 2, new TransferControl()));
+  }
 }

@@ -93,6 +93,12 @@ public final class DownloadEngine {
 
   public Result download(String url, MediaCandidate.MediaType type, Map<String, String> headers)
       throws Exception {
+    FailureDiagnostics.phase(
+        type == MediaCandidate.MediaType.HLS
+            ? FailureDiagnostics.Stage.ROOT_MANIFEST
+            : type == MediaCandidate.MediaType.DASH
+                ? FailureDiagnostics.Stage.DASH_MPD
+                : FailureDiagnostics.Stage.DIRECT_MEDIA);
     control.check();
     if (checkpoint != null) {
       Result finalized = checkpoint.loadFinal();
@@ -135,6 +141,7 @@ public final class DownloadEngine {
             StorageBudget.estimate(
                 tracks, checkpoint == null ? 0 : checkpoint.committedSegmentBytes());
         progress.update(budget.exact ? "저장 공간 확인 중" : "저장 공간 확인 중 · 실제 용량은 서버 응답에 따라 달라집니다", 0);
+        FailureDiagnostics.phase(FailureDiagnostics.Stage.STORAGE);
         StorageBudget.require(budget, directory.getUsableSpace());
         if (destination != null)
           try (DescriptorChannel target = new DescriptorChannel(destination)) {
@@ -169,6 +176,16 @@ public final class DownloadEngine {
               for (int i = 0; i < track.parts.size(); i++) {
                 control.check();
                 ManifestParser.Part part = track.parts.get(i);
+                FailureDiagnostics.event(
+                    Map.of(
+                        "action",
+                        "PHASE",
+                        "stage",
+                        part.initialization
+                            ? "INIT_SEGMENT"
+                            : track.audio ? "AUDIO_SEGMENT" : "VIDEO_SEGMENT",
+                        "segmentIndex",
+                        i));
                 File segment = new File(directory, "part-" + trackIndex + "-" + i);
                 if (checkpoint == null || !checkpoint.verified(segment, trackIndex, i)) {
                   HttpSource.Decoder decoder = null;
@@ -176,6 +193,7 @@ public final class DownloadEngine {
                   if (part.keyUrl != null) {
                     if (!part.keyUrl.equals(lastKey)) {
                       if (keyBytes != null) Arrays.fill(keyBytes, (byte) 0);
+                      FailureDiagnostics.phase(FailureDiagnostics.Stage.AES_KEY);
                       keyBytes = source.bytes(part.keyUrl, 0, -1, 1024);
                       lastKey = part.keyUrl;
                     }
@@ -228,9 +246,11 @@ public final class DownloadEngine {
           }
           progress.update("원본 트랙 무손실 병합 및 검증 중", 100);
           control.check();
+          FailureDiagnostics.phase(FailureDiagnostics.Stage.MUX);
           if (destination == null) PostProcessor.muxSources(inputs, output, control);
           else PostProcessor.muxSources(inputs, destination, control);
           control.check();
+          FailureDiagnostics.phase(FailureDiagnostics.Stage.FINAL_INSPECTION);
           if (destination == null) PostProcessor.inspect(output, duration, video, audio);
           else PostProcessor.inspect(destination, duration, video, audio);
           if (checkpoint != null && destination != null) {
@@ -249,6 +269,7 @@ public final class DownloadEngine {
       if (destination != null) {
         if (checkpoint == null) throw new DownloadError(DownloadError.Category.STORAGE);
         checkpoint.copy(source, url, destination, control);
+        FailureDiagnostics.phase(FailureDiagnostics.Stage.FINAL_INSPECTION);
         PostProcessor.Inspection inspection =
             PostProcessor.inspect(
                 destination,
@@ -278,6 +299,7 @@ public final class DownloadEngine {
         // A rare container conversion retains a durable finalized file before overwriting its input
         // URI.
         File output = temp(".mp4");
+        FailureDiagnostics.phase(FailureDiagnostics.Stage.MUX);
         PostProcessor.muxDescriptor(destination, output, control);
         PostProcessor.inspect(
             output, inspection.durationUs / 1000000.0, inspection.video, inspection.audio);
@@ -291,6 +313,7 @@ public final class DownloadEngine {
       }
       File file = temp(".media");
       copy(source, url, file);
+      FailureDiagnostics.phase(FailureDiagnostics.Stage.FINAL_INSPECTION);
       PostProcessor.Inspection inspection =
           PostProcessor.inspect(
               file,
@@ -314,6 +337,7 @@ public final class DownloadEngine {
             file, inspection.video ? "video/mp4" : "audio/mp4", inspection.video ? ".mp4" : ".m4a");
       // Repack other supported containers rather than assigning them a false .mp4 extension.
       File output = temp(".mp4");
+      FailureDiagnostics.phase(FailureDiagnostics.Stage.MUX);
       PostProcessor.mux(Collections.singletonList(file), output, control);
       PostProcessor.inspect(
           output, inspection.durationUs / 1_000_000.0, inspection.video, inspection.audio);

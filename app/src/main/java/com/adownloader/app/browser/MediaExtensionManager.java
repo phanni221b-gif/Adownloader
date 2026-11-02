@@ -29,6 +29,7 @@ public final class MediaExtensionManager implements AutoCloseable {
   }
 
   private final GeckoManifestBridge bridge;
+  private final DetectionFailureWatchdog detectionWatchdog;
   private final GeckoRuntime runtime;
   private final BrowserSessionManager browser;
   private final Map<Integer, org.mozilla.geckoview.GeckoSession> tabSessions =
@@ -37,8 +38,17 @@ public final class MediaExtensionManager implements AutoCloseable {
   private final StatusListener statusListener;
 
   public MediaExtensionManager(
-      GeckoRuntime runtime, BrowserSessionManager browser, StatusListener statusListener) {
+      android.content.Context context,
+      GeckoRuntime runtime,
+      BrowserSessionManager browser,
+      StatusListener statusListener) {
     bridge = new GeckoManifestBridge(browser);
+    detectionWatchdog =
+        new DetectionFailureWatchdog(
+            context,
+            new android.os.Handler(android.os.Looper.getMainLooper()),
+            id -> browser.detectorFor(tabSessions.get(id)),
+            20000);
     this.runtime = runtime;
     this.browser = browser;
     this.statusListener = statusListener;
@@ -73,6 +83,15 @@ public final class MediaExtensionManager implements AutoCloseable {
             },
             error -> {
               if (closed) return;
+              var diagnostic =
+                  new com.adownloader.app.download.FailureDiagnostics.Session(
+                      0, "UNKNOWN", "", "", Map.of());
+              diagnostic.phase(com.adownloader.app.download.FailureDiagnostics.Stage.GECKO_BRIDGE);
+              diagnostic.fail(
+                  error,
+                  com.adownloader.app.download.DownloadError.Category.UNKNOWN,
+                  "BRIDGE_INSTALL_FAILED");
+              diagnostic.complete();
               Log.e(TAG, "Unable to install built-in media extension");
               if (statusListener != null) statusListener.onExtensionError(error.getMessage());
             });
@@ -87,6 +106,7 @@ public final class MediaExtensionManager implements AutoCloseable {
           .removeIf(
               entry -> {
                 if (entry.getValue() != session) return false;
+                detectionWatchdog.discard(entry.getKey());
                 bridge.discardTab(entry.getKey());
                 pending.remove(entry.getKey());
                 return true;
@@ -146,8 +166,14 @@ public final class MediaExtensionManager implements AutoCloseable {
 
   private void handleMessage(JSONObject json, MediaDetector detector) {
     bridge.observe(json);
+    int diagnosticTab = json.optInt("tabId", -1);
+    if ("page-meta".equals(json.optString("kind")))
+      detectionWatchdog.page(diagnosticTab, json.optString("pageUrl"));
+    if ("manifest-invalidate".equals(json.optString("kind")))
+      detectionWatchdog.discard(diagnosticTab);
     if ("detection".equals(json.optString("kind"))) {
       detector.detectionDiagnostics = json.optJSONObject("metrics");
+      detectionWatchdog.metrics(diagnosticTab, detector.detectionDiagnostics);
       return;
     }
     if ("performance".equals(json.optString("kind"))) {
@@ -204,11 +230,13 @@ public final class MediaExtensionManager implements AutoCloseable {
     if (json.optBoolean("mediaSuccess")) metadata.put("requestContextVerified", "true");
     metadata.put("browserTabId", String.valueOf(json.optInt("tabId", -1)));
     detector.capture(url, contentType, source, pageUrl, headers, metadata);
+    if (!detector.snapshot().isEmpty()) detectionWatchdog.candidate(diagnosticTab);
   }
 
   @Override
   public void close() {
     closed = true;
+    detectionWatchdog.close();
     bridge.close();
     browser.setSessionObserver(null);
     for (var tab : browser.tabs())

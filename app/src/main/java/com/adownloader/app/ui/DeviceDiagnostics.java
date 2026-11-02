@@ -51,6 +51,7 @@ public final class DeviceDiagnostics {
 
   public static void configureNetwork(Context raw) {
     Context context = raw.getApplicationContext();
+    com.adownloader.app.diagnostics.FailureJournal.get(context).install();
     com.adownloader.app.download.MediaNetworkSession.diagnostics(
         event -> {
           synchronized (DeviceDiagnostics.class) {
@@ -95,6 +96,26 @@ public final class DeviceDiagnostics {
       out.put("api", Build.VERSION.SDK_INT);
       out.put("model", Build.MANUFACTURER + " " + Build.MODEL);
       out.put("gecko", BuildConfig.GECKO_VERSION);
+      try {
+        var manager =
+            (android.net.ConnectivityManager)
+                activity.getSystemService(Context.CONNECTIVITY_SERVICE);
+        var caps = manager.getNetworkCapabilities(manager.getActiveNetwork());
+        JSONObject route = new JSONObject();
+        route.put("available", caps != null);
+        if (caps != null) {
+          route.put(
+              "vpnTransport", caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN));
+          route.put(
+              "validated",
+              caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED));
+          route.put("metered", manager.isActiveNetworkMetered());
+        }
+        route.put("proxyConfigured", manager.getDefaultProxy() != null);
+        out.put("networkRoute", route);
+      } catch (Exception ignored) {
+      }
+
       var metrics = activity.getResources().getDisplayMetrics();
       out.put("resolution", metrics.widthPixels + "x" + metrics.heightPixels);
       out.put("densityDpi", metrics.densityDpi);

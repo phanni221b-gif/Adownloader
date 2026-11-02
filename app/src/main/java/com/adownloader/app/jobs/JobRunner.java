@@ -18,13 +18,51 @@ public final class JobRunner {
   public JobRunner(Context context, DownloadJobStore store) {
     this.context = context.getApplicationContext();
     this.store = store;
+    com.adownloader.app.diagnostics.FailureJournal.get(context).install();
   }
 
   public void run(DownloadJobStore.Job job, TransferControl control) {
     DownloadEngine engine = null;
     ParcelFileDescriptor destination = null;
+    FailureDiagnostics.Session diagnostics = null;
+    FailureDiagnostics.Scope diagnosticScope = null;
     try {
       JSONObject request = store.request(job.id);
+      Map<String, String> diagnosticMetadata = new LinkedHashMap<>();
+      JSONObject diagnosticJson = request.optJSONObject("metadata");
+      if (diagnosticJson != null)
+        for (String key :
+            List.of(
+                "title",
+                "detectionSource",
+                "frameHost",
+                "requestContextVerified",
+                "geckoPlaybackObserved"))
+          diagnosticMetadata.put(key, diagnosticJson.optString(key));
+      diagnostics =
+          new FailureDiagnostics.Session(
+              job.id,
+              job.type,
+              request.optString("url"),
+              request.optString("page"),
+              diagnosticMetadata);
+      diagnosticScope = FailureDiagnostics.activate(diagnostics);
+      if (request.optBoolean("diagnosticPlaybackPlan"))
+        diagnostics.event(
+            Map.of(
+                "stage",
+                job.type.equals("DASH") ? "DASH_MPD" : "ROOT_MANIFEST",
+                "action",
+                "GECKO_RESPONSE_CACHE",
+                "transport",
+                "gecko-response-cache",
+                "status",
+                200,
+                "manifestCacheUsed",
+                true,
+                "nativeRequestSkipped",
+                true));
+      FailureDiagnostics.phase(FailureDiagnostics.Stage.MEDIASTORE);
       Map<String, String> headers = new LinkedHashMap<>();
       JSONObject saved = request.optJSONObject("headers");
       if (saved != null) {
@@ -147,6 +185,9 @@ public final class JobRunner {
                                     || error instanceof java.net.UnknownHostException
                                 ? DownloadError.Category.NETWORK
                                 : DownloadError.Category.UNKNOWN;
+        if (diagnostics == null)
+          diagnostics = new FailureDiagnostics.Session(job.id, job.type, "", "", Map.of());
+        diagnostics.fail(error, category, "DOWNLOAD_FAILURE");
         com.adownloader.app.ui.DeviceDiagnostics.failure(context, category);
         if (error instanceof DownloadError && ((DownloadError) error).diagnostic != null)
           context
@@ -166,6 +207,8 @@ public final class JobRunner {
       }
       JobNotifications.status(context, store.get(job.id));
     } finally {
+      if (diagnostics != null) diagnostics.complete();
+      if (diagnosticScope != null) diagnosticScope.close();
       if (destination != null)
         try {
           destination.close();
@@ -216,6 +259,7 @@ public final class JobRunner {
         }
       }
     }
+    FailureDiagnostics.phase(FailureDiagnostics.Stage.FINAL_INSPECTION);
     try (ParcelFileDescriptor fd = context.getContentResolver().openFileDescriptor(uri, "rw")) {
       if (fd != null) fd.getFileDescriptor().sync();
       if (fd == null) throw new DownloadError(DownloadError.Category.STORAGE);
@@ -226,6 +270,7 @@ public final class JobRunner {
           result.mime.startsWith("audio/"));
     }
     control.check();
+    FailureDiagnostics.phase(FailureDiagnostics.Stage.MEDIASTORE);
     ContentValues published = new ContentValues();
     published.put(MediaStore.MediaColumns.IS_PENDING, 0);
     if (context.getContentResolver().update(uri, published, null, null) <= 0)

@@ -22,8 +22,9 @@ public final class MediaSheetController {
   private final Downloader downloader;
   private final ExecutorService io = Executors.newFixedThreadPool(2);
   private final Map<String, String> information = new ConcurrentHashMap<>();
+  private final Map<String, String> informationVersions = new ConcurrentHashMap<>();
   private BottomSheetDialog dialog;
-  private boolean closed;
+  private volatile boolean closed;
   private MediaAdapter activeAdapter;
   private View activeContent;
 
@@ -93,24 +94,35 @@ public final class MediaSheetController {
   }
 
   private void loadPreviews(List<MediaCandidate> candidates, MediaAdapter adapter) {
-    for (MediaCandidate item : candidates.subList(0, Math.min(6, candidates.size())))
-      if (!information.containsKey(item.getUrl())) {
-        information.put(
-            item.getUrl(),
-            MediaNetworkSession.latest(item.getUrl(), item.getPageUrl()) != null
-                ? "영상 확인 중 · 브라우저 인증 사용 가능"
-                : "정보 분석 중");
-        io.execute(
-            () -> {
-              String info = preview(item);
-              if (closed) return;
-              information.put(item.getUrl(), info);
-              activity.runOnUiThread(
-                  () -> {
-                    if (!closed) adapter.notifyDataSetChanged();
-                  });
-            });
-      }
+    for (MediaCandidate item : candidates.subList(0, Math.min(6, candidates.size()))) {
+      String version =
+          com.adownloader.app.media.MediaIdentity.hash(
+              item.getPageUrl()
+                  + "|"
+                  + item.getMetadata().getOrDefault("browserTabId", "")
+                  + ":"
+                  + item.getMetadata().getOrDefault("frameId", "")
+                  + "|"
+                  + item.getMetadata().getOrDefault("mediaObservedAt", "")
+                  + "|"
+                  + new TreeMap<>(item.getHeaders()));
+      if (version.equals(informationVersions.put(item.getUrl(), version))) continue;
+      information.put(
+          item.getUrl(),
+          MediaNetworkSession.latest(item.getUrl(), item.getPageUrl()) != null
+              ? "영상 확인 중 · 브라우저 인증 사용 가능"
+              : "정보 분석 중");
+      io.execute(
+          () -> {
+            String info = preview(item);
+            if (closed || !version.equals(informationVersions.get(item.getUrl()))) return;
+            information.put(item.getUrl(), info);
+            activity.runOnUiThread(
+                () -> {
+                  if (!closed) adapter.notifyDataSetChanged();
+                });
+          });
+    }
   }
 
   private String preview(MediaCandidate item) {
@@ -123,7 +135,7 @@ public final class MediaSheetController {
           && (error.category == DownloadError.Category.AUTH
               || error.category == DownloadError.Category.ACCESS_BLOCKED
               || error.category == DownloadError.Category.EXPIRED_URL))
-        return AccessPresentation.preview(error.category.name());
+        return AccessPresentation.preview(error);
       return "세부 정보 확인 불가 · 원본 자동 선택";
     }
   }

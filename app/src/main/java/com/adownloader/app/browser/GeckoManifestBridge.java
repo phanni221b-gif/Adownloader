@@ -20,6 +20,7 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
 
   private static final class Pending {
     final WebExtension.Port port;
+    final FailureDiagnostics.Session diagnostic = FailureDiagnostics.current();
     final CompletableFuture<MediaNetworkSession.Bootstrap> future = new CompletableFuture<>();
     final ByteArrayOutputStream body = new ByteArrayOutputStream();
     String url = "";
@@ -128,6 +129,12 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
               metadata.put(name, value);
           }
         metadata.put("request-type", j.optString("requestType"));
+        JSONArray redirects = j.optJSONArray("redirectAliases");
+        if (redirects != null) {
+          if (redirects.length() > 8) return false;
+          for (int i = 0; i < redirects.length(); i++)
+            metadata.put("redirect-source-" + i, redirects.optString(i));
+        }
         List<String> cookies = new ArrayList<>();
         JSONArray list = j.optJSONArray("cookies");
         if (list != null)
@@ -192,15 +199,20 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
           public void onDisconnect(WebExtension.Port actual) {
             synchronized (GeckoManifestBridge.this) {
               ports.values().removeIf(p -> p == actual);
-              pending.values().stream()
-                  .filter(p -> p.port == actual)
-                  .forEach(
-                      p ->
-                          p.future.completeExceptionally(
-                              new DownloadError(DownloadError.Category.ACCESS_BLOCKED)));
+              pending.values().stream().filter(p -> p.port == actual).forEach(p -> disconnected(p));
             }
           }
         });
+  }
+
+  private void disconnected(Pending p) {
+    if (p.future.isDone()) return;
+    if (p.diagnostic != null)
+      p.diagnostic.fail(
+          new DownloadError(DownloadError.Category.NETWORK),
+          DownloadError.Category.NETWORK,
+          "BRIDGE_DISCONNECTED");
+    p.future.completeExceptionally(new DownloadError(DownloadError.Category.ACCESS_BLOCKED));
   }
 
   private synchronized void receive(JSONObject j, WebExtension.Port port, GeckoSession session) {

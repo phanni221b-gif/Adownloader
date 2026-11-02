@@ -13,5 +13,5 @@
         <com.google.android.material.button.MaterialButton android:id="@+id/item_primary" style="@style/UiTextAction" android:layout_width="wrap_content" android:layout_height="48dp" android:visibility="gone" />
         <com.google.android.material.button.MaterialButton android:id="@+id/item_secondary" style="@style/UiTextAction" android:layout_width="wrap_content" android:layout_height="48dp" android:text="취소" android:visibility="gone" />
     </LinearLayout>
-
+    <com.google.android.material.button.MaterialButton android:id="@+id/item_diagnostic" style="@style/UiTextAction" android:layout_width="wrap_content" android:layout_height="48dp" android:layout_gravity="end" android:text="진단 보고서 공유" android:visibility="gone" />
 </LinearLayout>

@@ -194,15 +194,35 @@ public final class JobCookieJar implements AutoCloseable {
     return String.join("; ", pairs);
   }
 
+  public synchronized int entryCount() {
+    int seed = 0;
+    for (String pair : initial.split(";")) if (pair.contains("=")) seed++;
+    return entries.size() + seed;
+  }
+
   public synchronized boolean hasResponseCookies() {
     return !entries.isEmpty();
   }
 
   public synchronized String snapshot() throws IOException {
+    return snapshotFor(sourceOrigin, initial);
+  }
+
+  /**
+   * Rebase only to an observed final media URL and its exact request Cookie, never the old seed.
+   */
+  public synchronized String snapshotFor(String finalUrl, Map<String, String> observedHeaders)
+      throws IOException {
+    String finalOrigin = MediaHeaders.origin(finalUrl);
+    if (finalOrigin.isEmpty()) throw new IOException("COOKIE_STATE_INVALID");
+    return snapshotFor(finalOrigin, header(observedHeaders, "cookie"));
+  }
+
+  private String snapshotFor(String boundOrigin, String seed) throws IOException {
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(bytes);
-    out.writeUTF(sourceOrigin);
-    out.writeUTF(initial);
+    out.writeUTF(boundOrigin);
+    out.writeUTF(seed);
     out.writeInt(entries.size());
     for (Entry e : entries.values()) {
       out.writeUTF(e.name);

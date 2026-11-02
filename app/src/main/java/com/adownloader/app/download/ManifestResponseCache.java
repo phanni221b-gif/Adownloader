@@ -13,13 +13,15 @@ public final class ManifestResponseCache implements AutoCloseable {
 
   private record Key(int tab, int frame, String page, String url) {}
 
-  private record Entry(MediaNetworkSession.Bootstrap response, long at, long order) {}
+  private record Entry(
+      MediaNetworkSession.Bootstrap response, long at, long order, List<String> aliases) {}
 
   private static final class Pending {
     final Key key;
     final MediaNetworkSession.Observation observation;
     final Map<String, String> metadata;
     final List<String> cookies;
+    final List<String> aliases;
     final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     int index;
     final long order;
@@ -35,6 +37,7 @@ public final class ManifestResponseCache implements AutoCloseable {
       observation = o;
       this.metadata = Map.copyOf(metadata);
       this.cookies = List.copyOf(cookies);
+      this.aliases = redirectAliases(metadata, key.url);
     }
   }
 
@@ -107,6 +110,47 @@ public final class ManifestResponseCache implements AutoCloseable {
     }
   }
 
+  private static List<String> redirectAliases(Map<String, String> metadata, String finalUrl) {
+    List<String> urls = new ArrayList<>();
+    Set<String> unique = new HashSet<>();
+    int bytes = 0;
+    if (metadata.containsKey("redirect-source-8")) return null;
+    for (int i = 0; i < 8; i++) {
+      String u = metadata.get("redirect-source-" + i);
+      if (u == null) {
+        for (int j = i + 1; j < 8; j++)
+          if (metadata.containsKey("redirect-source-" + j)) return null;
+        break;
+      }
+      if (!validUrl(u) || u.equals(finalUrl) || !unique.add(u) || (bytes += u.length()) > 65536)
+        return null;
+      urls.add(u);
+    }
+    for (int i = 0; i < urls.size(); i++) {
+      String next = i + 1 < urls.size() ? urls.get(i + 1) : finalUrl;
+      if (urls.get(i).startsWith("https:") && !next.startsWith("https:")) return null;
+    }
+    return List.copyOf(urls);
+  }
+
+  private static boolean matches(
+      Key key, List<String> aliases, String url, String page, int tab, int frame) {
+    return key.tab == tab
+        && key.frame == frame
+        && key.page.equals(page)
+        && (key.url.equals(url) || aliases.contains(url));
+  }
+
+  private static boolean overlaps(Key a, List<String> aa, Key b, List<String> ba) {
+    return a.tab == b.tab
+        && a.frame == b.frame
+        && a.page.equals(b.page)
+        && (a.url.equals(b.url)
+            || aa.contains(b.url)
+            || ba.contains(a.url)
+            || aa.stream().anyMatch(ba::contains));
+  }
+
   private void expire() {
     long now = clock.getAsLong();
     ready.values().removeIf(e -> now - e.at < 0 || now - e.at > TTL);
@@ -145,6 +189,8 @@ public final class ManifestResponseCache implements AutoCloseable {
         || !validUrl(o.url())
         || !Objects.equals(pages.get(o.tab()), o.page())
         || Math.abs(clock.getAsLong() - o.at()) > 10000) return reject("BEGIN_VALIDATION");
+    List<String> aliases = redirectAliases(metadata, o.url());
+    if (aliases == null) return reject("REDIRECT_VALIDATION");
     Key key = new Key(o.tab(), o.frame(), o.page(), o.url());
     long order;
     try {
@@ -153,12 +199,16 @@ public final class ManifestResponseCache implements AutoCloseable {
       return reject("ORDER_PARSE");
     }
     if (order <= 0 || order > o.at()) return reject("ORDER_TIMESTAMP");
-    Entry previous = ready.get(key);
-    if (previous != null && previous.order > order) return reject("OLDER_REQUEST");
-    if (pending.values().stream().anyMatch(p -> p.key.equals(key) && p.order > order)) return reject("OLDER_REQUEST");
-    // A newer request replaces evidence for this exact candidate binding.
-    pending.values().removeIf(p -> p.key.equals(key));
-    ready.remove(key);
+    if (ready.entrySet().stream()
+        .anyMatch(
+            e ->
+                overlaps(e.getKey(), e.getValue().aliases, key, aliases)
+                    && e.getValue().order > order)) return reject("OLDER_REQUEST");
+    if (pending.values().stream()
+        .anyMatch(p -> overlaps(p.key, p.aliases, key, aliases) && p.order > order))
+      return reject("OLDER_REQUEST");
+    pending.values().removeIf(p -> overlaps(p.key, p.aliases, key, aliases));
+    ready.entrySet().removeIf(e -> overlaps(e.getKey(), e.getValue().aliases, key, aliases));
     pending.put(id, new Pending(key, o, metadata, cookies, order));
     notifyAll();
     return true;
@@ -223,8 +273,14 @@ public final class ManifestResponseCache implements AutoCloseable {
     metadata.put("evidence-expires-at", Long.toString(p.observation.at() + TTL));
     var response =
         new MediaNetworkSession.Bootstrap(
-            p.key.url, p.observation.status(), 0, metadata, body, cookies, p.observation.headers());
-    ready.put(p.key, new Entry(response, p.observation.at(), p.order));
+            p.key.url,
+            p.observation.status(),
+            p.aliases.size(),
+            metadata,
+            body,
+            cookies,
+            p.observation.headers());
+    ready.put(p.key, new Entry(response, p.observation.at(), p.order, p.aliases));
     while (ready.size() > 16 || weight() > MAX_BYTES)
       ready.remove(ready.keySet().iterator().next());
     return true;
@@ -247,9 +303,25 @@ public final class ManifestResponseCache implements AutoCloseable {
       control.check();
       expire();
       if (!Objects.equals(pages.get(tab), page)) return null;
-      Entry hit = ready.get(key);
-      if (hit != null) return hit.response;
-      if (pending.values().stream().noneMatch(p -> p.key.equals(key))
+      Entry hit = null;
+      for (var e : ready.entrySet())
+        if (matches(e.getKey(), e.getValue().aliases, url, page, tab, frame)
+            && (hit == null || e.getValue().order > hit.order)) hit = e.getValue();
+      if (hit != null) {
+        var response = hit.response;
+        if (response.url().equals(url)) return response;
+        Map<String, String> meta = new LinkedHashMap<>(response.metadata());
+        meta.put("captured-request-url", url);
+        return new MediaNetworkSession.Bootstrap(
+            response.url(),
+            response.status(),
+            response.redirects(),
+            meta,
+            response.body(),
+            response.responseCookies(),
+            response.requestHeaders());
+      }
+      if (pending.values().stream().noneMatch(p -> matches(p.key, p.aliases, url, page, tab, frame))
           || System.nanoTime() > deadline) return null;
       wait(50);
     }

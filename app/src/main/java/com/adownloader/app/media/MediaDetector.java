@@ -72,6 +72,11 @@ public final class MediaDetector {
         (url, h) -> {
           if (Objects.equals(resourcePages.get(url), current.getPageUrl())) scoped.put(url, h);
         });
+    meta.put("detectionSource", current.getSource());
+    if (detectionDiagnostics != null)
+      meta.put(
+          "geckoPlaybackObserved",
+          Boolean.toString(detectionDiagnostics.optInt("playbackObserved") > 0));
     meta.put("requestContextVersion", "2");
     meta.put("requestContexts", new org.json.JSONObject(scoped).toString());
     Map<String, String> origins = new LinkedHashMap<>();
@@ -113,7 +118,9 @@ public final class MediaDetector {
   }
 
   private static boolean networkSource(String source) {
-    return "network-response".equals(source) || "response-signature".equals(source);
+    return "network-response".equals(source)
+        || "response-signature".equals(source)
+        || "redirect-observation".equals(source);
   }
 
   public synchronized void capture(

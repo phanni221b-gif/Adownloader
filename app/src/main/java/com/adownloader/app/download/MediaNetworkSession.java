@@ -221,6 +221,7 @@ public final class MediaNetworkSession {
                 .contains(action)
             ? action
             : "NATIVE_INITIAL");
+    FailureDiagnostics.event(safe);
     var listener = sink;
     if (listener != null) listener.accept(Collections.unmodifiableMap(safe));
   }
