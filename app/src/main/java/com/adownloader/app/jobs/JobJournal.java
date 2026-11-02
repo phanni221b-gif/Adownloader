@@ -23,6 +23,18 @@ public final class JobJournal implements EngineCheckpoint {
   }
 
   @Override
+  public int browserTabId() throws Exception {
+    var m = store.request(id).optJSONObject("metadata");
+    return m == null ? -1 : m.optInt("browserTabId", -1);
+  }
+
+  @Override
+  public int browserFrameId() throws Exception {
+    var m = store.request(id).optJSONObject("metadata");
+    return m == null ? -1 : m.optInt("frameId", -1);
+  }
+
+  @Override
   public boolean cookieBootstrap() throws Exception {
     return store.request(id).optBoolean("cookieBootstrap");
   }
@@ -41,19 +53,33 @@ public final class JobJournal implements EngineCheckpoint {
       JSONObject h = all.optJSONObject(url);
       if (h == null) continue;
       Map<String, String> headers = new LinkedHashMap<>();
-      for (String key :
-          List.of(
-              "Cookie",
-              "Referer",
-              "Origin",
-              "User-Agent",
-              "cookie",
-              "referer",
-              "origin",
-              "user-agent")) if (h.has(key)) headers.put(key, h.optString(key));
+      for (Iterator<String> keys = h.keys(); keys.hasNext(); ) {
+        String key = keys.next();
+        if (MediaHeaders.allowed(key)
+            && (meta.optString("requestContextVersion").equals("2")
+                || !MediaHeaders.sensitive(key)
+                || key.equalsIgnoreCase("cookie"))) headers.put(key, h.optString(key));
+      }
       out.put(url, headers);
     }
     return out;
+  }
+
+  @Override
+  public void requestContext(String url, Map<String, String> headers) throws Exception {
+    JSONObject request = store.request(id), meta = request.optJSONObject("metadata");
+    if (meta == null) meta = new JSONObject();
+    JSONObject all = new JSONObject(meta.optString("requestContexts", "{}"));
+    if (all.length() >= 128 && !all.has(url)) return;
+    all.put(url, new JSONObject(MediaHeaders.select(headers)));
+    meta.put("requestContexts", all.toString()).put("requestContextVersion", "2");
+    JSONObject origins = new JSONObject(meta.optString("requestContextOrigins", "{}"));
+    origins.put(url, MediaHeaders.origin(url));
+    meta.put("requestContextOrigins", origins.toString());
+    request.put("metadata", meta);
+    if (url.equals(request.optString("url")))
+      request.put("headers", new JSONObject(MediaHeaders.select(headers)));
+    store.writeContext(id, request);
   }
 
   @Override

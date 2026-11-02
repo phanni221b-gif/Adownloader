@@ -95,7 +95,11 @@ public final class MediaSheetController {
   private void loadPreviews(List<MediaCandidate> candidates, MediaAdapter adapter) {
     for (MediaCandidate item : candidates.subList(0, Math.min(6, candidates.size())))
       if (!information.containsKey(item.getUrl())) {
-        information.put(item.getUrl(), "정보 분석 중");
+        information.put(
+            item.getUrl(),
+            MediaNetworkSession.latest(item.getUrl(), item.getPageUrl()) != null
+                ? "영상 확인 중 · 브라우저 인증 사용 가능"
+                : "정보 분석 중");
         io.execute(
             () -> {
               String info = preview(item);
@@ -115,6 +119,11 @@ public final class MediaSheetController {
     try {
       return MediaProbeService.shared().preview(item).description;
     } catch (Exception unavailable) {
+      if (unavailable instanceof DownloadError error
+          && (error.category == DownloadError.Category.AUTH
+              || error.category == DownloadError.Category.ACCESS_BLOCKED
+              || error.category == DownloadError.Category.EXPIRED_URL))
+        return AccessPresentation.preview(error.category.name());
       return "세부 정보 확인 불가 · 원본 자동 선택";
     }
   }

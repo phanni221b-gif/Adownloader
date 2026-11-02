@@ -45,6 +45,7 @@ public final class DownloadJobs {
 
   private DownloadJobs(Context context) {
     this.context = context.getApplicationContext();
+    com.adownloader.app.ui.DeviceDiagnostics.configureNetwork(this.context);
     store = new DownloadJobStore(context);
     commands.execute(
         () -> {
@@ -63,8 +64,7 @@ public final class DownloadJobs {
                 .getHeaders()
                 .forEach(
                     (name, value) -> {
-                      if (Arrays.asList("cookie", "referer", "origin", "user-agent")
-                          .contains(name.toLowerCase(Locale.ROOT)))
+                      if (MediaHeaders.allowed(name))
                         try {
                           headers.put(name, value);
                         } catch (JSONException ignored) {
@@ -320,8 +320,7 @@ public final class DownloadJobs {
                               .getHeaders()
                               .forEach(
                                   (key, value) -> {
-                                    if (Arrays.asList("cookie", "referer", "origin", "user-agent")
-                                        .contains(key.toLowerCase(Locale.ROOT)))
+                                    if (MediaHeaders.allowed(key))
                                       try {
                                         headers.put(key, value);
                                       } catch (JSONException ignored) {

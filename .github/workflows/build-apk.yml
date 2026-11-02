@@ -1,7 +1,7 @@
 name: Build and verify Adownloader
 on:
   push:
-    branches: [main, rebuild-gecko-v2, rebuild-gecko-release, ui-ux-v050, reliability-v060, validation-v060, stabilize-v061, validation-v061, compatibility-v062, validation-v062]
+    branches: [main, rebuild-gecko-v2, rebuild-gecko-release, ui-ux-v050, reliability-v060, validation-v060, stabilize-v061, validation-v061, compatibility-v062, validation-v062, compatibility-v063, validation-v063]
   pull_request:
   workflow_dispatch:
 permissions:
@@ -33,6 +33,7 @@ jobs:
           node ci/test-media-extension.cjs
           node ci/test-deep-detection.cjs
           node ci/test-content-extension.cjs
+          node ci/test-session-context.cjs
           gradle :app:testDebugUnitTest :app:lintRelease :app:assembleRelease --stacktrace
       - uses: actions/upload-artifact@v4
         if: always()

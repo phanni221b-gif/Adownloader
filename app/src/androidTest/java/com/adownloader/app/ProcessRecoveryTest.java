@@ -67,7 +67,15 @@ public class ProcessRecoveryTest {
                     type,
                     "test",
                     BASE + "/page",
-                    Collections.singletonMap("Cookie", "fixture=PRIVATE_REQUEST_CONTEXT"),
+                    kind.equals("cookie-hls")
+                        ? Map.of(
+                            "Cookie",
+                            "fixture=PRIVATE_REQUEST_CONTEXT",
+                            "Authorization",
+                            "Bearer PRIVATE_RECOVERY_AUTH",
+                            "X-Playback-Token",
+                            "PRIVATE_RECOVERY_TOKEN")
+                        : Collections.singletonMap("Cookie", "fixture=PRIVATE_REQUEST_CONTEXT"),
                     System.currentTimeMillis()),
                 value -> {
                   id[0] = value;
@@ -111,6 +119,11 @@ public class ProcessRecoveryTest {
             .getJSONObject("headers")
             .getString("Cookie")
             .contains("PRIVATE_REQUEST_CONTEXT"));
+    if (kind.equals("cookie-hls")) {
+      var savedHeaders = jobs.store.request(id).getJSONObject("headers");
+      assertEquals("Bearer PRIVATE_RECOVERY_AUTH", savedHeaders.getString("Authorization"));
+      assertEquals("PRIVATE_RECOVERY_TOKEN", savedHeaders.getString("X-Playback-Token"));
+    }
     String firstPart = null;
     if (!direct) {
       List<ManifestParser.Track> plan =
@@ -431,7 +444,7 @@ public class ProcessRecoveryTest {
     get(changed ? "/change" : "/expire");
     action(jobs, id, "RESUME");
     DownloadJobStore.Job expired = await(jobs, id, DownloadJobStore.State.NEEDS_REFRESH);
-    assertEquals("EXPIRED_URL", expired.error);
+    assertEquals("ACCESS_BLOCKED", expired.error);
     MediaCandidate fresh =
         new MediaCandidate(
             BASE + path + "?token=new",
@@ -683,6 +696,8 @@ public class ProcessRecoveryTest {
         assertFalse(
             "Response cookies must not be plaintext in download databases",
             bytes.contains("PRIVATE_SERVER_COOKIE_JAR"));
+        assertFalse(bytes.contains("PRIVATE_RECOVERY_AUTH"));
+        assertFalse(bytes.contains("PRIVATE_RECOVERY_TOKEN"));
       }
   }
 }

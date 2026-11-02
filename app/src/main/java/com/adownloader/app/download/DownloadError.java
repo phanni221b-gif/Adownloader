@@ -72,8 +72,9 @@ public final class DownloadError extends IOException {
     if (code == 403
         && !authenticationChallenge
         && com.adownloader.app.media.CdnQueryPolicy.signed(url)
-        && (previouslyAccepted || com.adownloader.app.media.CdnQueryPolicy.expiresAt(url) <= now))
+        && com.adownloader.app.media.CdnQueryPolicy.expiresAt(url) <= now)
       return new DownloadError(Category.EXPIRED_URL);
+    if (code == 403 && !authenticationChallenge) return new DownloadError(Category.ACCESS_BLOCKED);
     return http(code);
   }
 }

@@ -28,7 +28,8 @@ public final class PlanCodec {
                 .put("length", p.length)
                 .put("sequence", p.sequence)
                 .put("key", p.keyUrl)
-                .put("iv", p.iv));
+                .put("iv", p.iv)
+                .put("initialization", p.initialization));
       result.put(row.put("parts", parts));
     }
     return result;
@@ -59,6 +60,7 @@ public final class PlanCodec {
                 p.getLong("sequence"),
                 p.has("key") ? p.getString("key") : null,
                 p.has("iv") ? p.getString("iv") : null));
+        track.parts.get(track.parts.size() - 1).initialization = p.optBoolean("initialization");
       }
       result.add(track);
     }

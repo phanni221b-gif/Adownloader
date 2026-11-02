@@ -45,7 +45,8 @@ public final class MediaProbeService implements AutoCloseable {
 
   public MediaProbeResult preview(
       String url, MediaCandidate.MediaType type, Map<String, String> headers) throws Exception {
-    return get(url, type, headers, new TransferControl(), true, null);
+    return get(
+        url, type, headers, new TransferControl(), true, null, Collections.emptyMap(), -1, -1);
   }
 
   public MediaProbeResult probe(
@@ -54,7 +55,7 @@ public final class MediaProbeService implements AutoCloseable {
       Map<String, String> headers,
       TransferControl control)
       throws Exception {
-    return get(url, type, headers, control, false, null);
+    return get(url, type, headers, control, false, null, Collections.emptyMap(), -1, -1);
   }
 
   public MediaProbeResult preview(MediaCandidate item) throws Exception {
@@ -64,11 +65,55 @@ public final class MediaProbeService implements AutoCloseable {
         item.getHeaders(),
         new TransferControl(),
         true,
-        item.getPageUrl());
+        item.getPageUrl(),
+        contexts(item),
+        scope(item, "browserTabId"),
+        scope(item, "frameId"));
   }
 
   public MediaProbeResult probe(MediaCandidate item, TransferControl control) throws Exception {
-    return get(item.getUrl(), item.getType(), item.getHeaders(), control, false, item.getPageUrl());
+    return get(
+        item.getUrl(),
+        item.getType(),
+        item.getHeaders(),
+        control,
+        false,
+        item.getPageUrl(),
+        contexts(item),
+        scope(item, "browserTabId"),
+        scope(item, "frameId"));
+  }
+
+  private static Map<String, Map<String, String>> contexts(MediaCandidate item) {
+    Map<String, Map<String, String>> out = new LinkedHashMap<>();
+    try {
+      String raw = item.getMetadata().getOrDefault("requestContexts", "");
+      if (raw.length() > 8388608 || raw.isEmpty()) return out;
+      org.json.JSONObject all = new org.json.JSONObject(raw);
+      boolean verified = "2".equals(item.getMetadata().get("requestContextVersion"));
+      for (Iterator<String> it = all.keys(); it.hasNext() && out.size() < 128; ) {
+        String url = it.next();
+        org.json.JSONObject h = all.optJSONObject(url);
+        if (h == null) continue;
+        Map<String, String> values = new LinkedHashMap<>();
+        for (Iterator<String> keys = h.keys(); keys.hasNext(); ) {
+          String k = keys.next();
+          if (verified || !MediaHeaders.sensitive(k) || k.equalsIgnoreCase("cookie"))
+            values.put(k, h.optString(k));
+        }
+        out.put(url, MediaHeaders.select(values));
+      }
+    } catch (Exception ignored) {
+    }
+    return out;
+  }
+
+  private static int scope(MediaCandidate item, String key) {
+    try {
+      return Integer.parseInt(item.getMetadata().getOrDefault(key, "-1"));
+    } catch (Exception ignored) {
+      return -1;
+    }
   }
 
   private static String pageKey(String page) {
@@ -95,7 +140,16 @@ public final class MediaProbeService implements AutoCloseable {
     synchronized (this) {
       found =
           cache.get(
-              MediaIdentity.hash(type + "|" + url + "|" + canonical + "|" + source.pageSiteKey()));
+              MediaIdentity.hash(
+                  type
+                      + "|"
+                      + url
+                      + "|"
+                      + canonical
+                      + "|"
+                      + source.pageSiteKey()
+                      + "|"
+                      + source.browserScopeKey()));
     }
     if (found != null) {
       while (!found.future.isDone()) {
@@ -121,11 +175,16 @@ public final class MediaProbeService implements AutoCloseable {
       Map<String, String> headers,
       TransferControl control,
       boolean detached,
-      String page)
+      String page,
+      Map<String, Map<String, String>> contexts,
+      int tab,
+      int frame)
       throws Exception {
     TreeMap<String, String> canonical = new TreeMap<>();
     headers.forEach((k, v) -> canonical.put(k.toLowerCase(Locale.ROOT), v));
-    String key = MediaIdentity.hash(type + "|" + url + "|" + canonical + "|" + pageKey(page));
+    String key =
+        MediaIdentity.hash(
+            type + "|" + url + "|" + canonical + "|" + pageKey(page) + "|" + tab + ":" + frame);
     Entry entry;
     boolean created = false;
     MediaProbeResult previous = null;
@@ -167,7 +226,10 @@ public final class MediaProbeService implements AutoCloseable {
                       new LinkedHashMap<>(headers),
                       old,
                       detached ? new TransferControl() : control,
-                      page);
+                      page,
+                      contexts,
+                      tab,
+                      frame);
               if (result.weight() > 16L * 1024 * 1024)
                 throw new DownloadError(DownloadError.Category.MANIFEST_INVALID);
               owner.result = result;
@@ -213,9 +275,16 @@ public final class MediaProbeService implements AutoCloseable {
       Map<String, String> headers,
       MediaProbeResult previous,
       TransferControl control,
-      String page)
+      String page,
+      Map<String, Map<String, String>> contexts,
+      int tab,
+      int frame)
       throws Exception {
-    try (HttpSource source = new HttpSource(url, headers, control).pageContext(page)) {
+    try (HttpSource source =
+        new HttpSource(url, headers, control)
+            .pageContext(page)
+            .resourceContexts(contexts)
+            .browserScope(tab, frame)) {
       return fetchWithSource(
           source, url, type, previous != null && previous.requiresCookieSession ? null : previous);
     }
@@ -265,8 +334,18 @@ public final class MediaProbeService implements AutoCloseable {
         }
       }
       if (selection.audio != null) {
-        HttpSource.Document audio = document(source, selection.audio, previous, documents);
-        ManifestParser.Track a = ManifestParser.hlsTrack(audio.url, audio.text);
+        HttpSource.Document audio =
+            source.document(
+                selection.audio,
+                previous == null ? null : previous.documents.get(selection.audio),
+                "audio");
+        documents.put(selection.audio, audio);
+        ManifestParser.Track a;
+        try {
+          a = ManifestParser.hlsTrack(audio.url, HlsDiagnostic.body(audio, "audio"));
+        } catch (RuntimeException error) {
+          throw HlsDiagnostic.parse(audio, audio.text, "media", error);
+        }
         a.audio = true;
         a.representation = selection.audio;
         tracks.add(a);

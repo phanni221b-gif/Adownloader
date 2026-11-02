@@ -468,7 +468,7 @@ public final class RecordsController {
         break;
       case "NEEDS_REFRESH":
         if (row.optBoolean("canOpenPage")) {
-          label = "원래 페이지 열기";
+          label = com.adownloader.app.download.AccessPresentation.action(row.optString("error"));
           action = "OPEN";
         }
         break;

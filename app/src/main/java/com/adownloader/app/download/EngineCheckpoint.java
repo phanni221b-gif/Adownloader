@@ -11,6 +11,14 @@ public interface EngineCheckpoint {
     return null;
   }
 
+  default int browserTabId() throws Exception {
+    return -1;
+  }
+
+  default int browserFrameId() throws Exception {
+    return -1;
+  }
+
   default boolean cookieBootstrap() throws Exception {
     return false;
   }
@@ -18,6 +26,8 @@ public interface EngineCheckpoint {
   default Map<String, Map<String, String>> requestContexts() throws Exception {
     return Collections.emptyMap();
   }
+
+  default void requestContext(String url, Map<String, String> headers) throws Exception {}
 
   default String cookieState() throws Exception {
     return "";

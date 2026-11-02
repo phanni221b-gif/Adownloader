@@ -31,8 +31,7 @@ public final class JobRunner {
         Iterator<String> keys = saved.keys();
         while (keys.hasNext()) {
           String key = keys.next();
-          if (Arrays.asList("cookie", "referer", "origin", "user-agent")
-              .contains(key.toLowerCase(Locale.ROOT))) headers.put(key, saved.getString(key));
+          if (MediaHeaders.allowed(key)) headers.put(key, saved.getString(key));
         }
       }
       control.check();

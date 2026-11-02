@@ -13,6 +13,28 @@ import org.json.JSONObject;
 public final class DeviceDiagnostics {
   private DeviceDiagnostics() {}
 
+  public static void configureNetwork(Context raw) {
+    Context context = raw.getApplicationContext();
+    com.adownloader.app.download.MediaNetworkSession.diagnostics(
+        event -> {
+          synchronized (DeviceDiagnostics.class) {
+            try {
+              var prefs = context.getSharedPreferences("device_diagnostics", 0);
+              JSONObject rows = new JSONObject(prefs.getString("network", "{}"));
+              String key =
+                  event.get("stage") + ":" + event.get("transport") + ":" + event.get("action");
+              if (rows.length() >= 40 && !rows.has(key)) {
+                var it = rows.keys();
+                if (it.hasNext()) rows.remove(it.next());
+              }
+              rows.put(key, new JSONObject(event));
+              prefs.edit().putString("network", rows.toString()).apply();
+            } catch (Exception ignored) {
+            }
+          }
+        });
+  }
+
   public static void failure(Context context, DownloadError.Category category) {
     context
         .getSharedPreferences("device_diagnostics", 0)
@@ -76,6 +98,10 @@ public final class DeviceDiagnostics {
         failure = "NONE";
       }
       out.put("downloadFailure", failure);
+      try {
+        out.put("mediaNetwork", new JSONObject(preferences.getString("network", "{}")));
+      } catch (Exception ignored) {
+      }
       if (activity instanceof com.adownloader.app.MainActivity)
         out.put(
             "mediaDetection",
