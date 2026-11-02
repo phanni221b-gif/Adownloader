@@ -16,6 +16,10 @@ public class TransportPolicyTest {
   String root, page;
   AtomicInteger bridges = new AtomicInteger(), nativeRoots = new AtomicInteger();
   MediaNetworkSession.Provider provider;
+  Map<String, String> bootstrapHeaders = Map.of();
+  Map<String, List<String>> bootstrapCookies = Map.of();
+  java.util.concurrent.atomic.AtomicReference<String> sentCookie =
+      new java.util.concurrent.atomic.AtomicReference<>("");
   List<Map<String, Object>> trace = new CopyOnWriteArrayList<>();
 
   @Before
@@ -43,7 +47,10 @@ public class TransportPolicyTest {
       String line = r.readLine();
       if (line == null) return;
       if (line.contains("master.m3u8")) nativeRoots.incrementAndGet();
-      while ((line = r.readLine()) != null && !line.isEmpty()) {}
+      while ((line = r.readLine()) != null && !line.isEmpty()) {
+        if (line.toLowerCase(Locale.ROOT).startsWith("cookie:"))
+          sentCookie.set(line.substring(7).trim());
+      }
       byte[] b = "<html>access denied challenge</html>".getBytes(StandardCharsets.UTF_8);
       c.getOutputStream()
           .write(
@@ -89,8 +96,8 @@ public class TransportPolicyTest {
                 0,
                 Map.of("content-type", "application/vnd.apple.mpegurl"),
                 "#EXTM3U\n#EXTINF:1,\npart.ts\n#EXT-X-ENDLIST\n".getBytes(StandardCharsets.UTF_8),
-                Map.of(),
-                Map.of());
+                bootstrapCookies,
+                bootstrapHeaders);
           }
         };
     MediaNetworkSession.install(provider);
@@ -135,6 +142,27 @@ public class TransportPolicyTest {
       }
       assertEquals(0, bridges.get());
       assertEquals(1, nativeRoots.get());
+    }
+  }
+
+  @Test
+  public void bootstrapSeedThenResponseCookieReachNativeSegmentWithoutStaleOverwrite()
+      throws Exception {
+    install(0);
+    bootstrapHeaders = Map.of("Cookie", "sid=PRIVATE_FRESH");
+    bootstrapCookies = Map.of(root, List.of("session=PRIVATE_NEXT; Path=/v/; SameSite=Lax"));
+    try (HttpSource source =
+        new HttpSource(root, Map.of("Cookie", "sid=PRIVATE_OLD")).pageContext(page)) {
+      source.document(root, null, "root");
+      try {
+        source.open(root.replace("master.m3u8", "part.ts"), 0, -1);
+        fail();
+      } catch (DownloadError expected) {
+        assertEquals(DownloadError.Category.ACCESS_BLOCKED, expected.category);
+      }
+      assertTrue(sentCookie.get().contains("sid=PRIVATE_FRESH"));
+      assertTrue(sentCookie.get().contains("session=PRIVATE_NEXT"));
+      assertFalse(sentCookie.get().contains("PRIVATE_OLD"));
     }
   }
 }

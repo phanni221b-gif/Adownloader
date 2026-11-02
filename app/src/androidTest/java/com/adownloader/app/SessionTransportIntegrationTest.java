@@ -267,7 +267,11 @@ public class SessionTransportIntegrationTest {
           return browser.getDetector().forDownload(item);
       Thread.sleep(100);
     }
-    throw new AssertionError("Successful Gecko HLS context was not captured");
+    throw new AssertionError(
+        "Successful Gecko HLS context was not captured; candidates="
+            + browser.getDetector().snapshot().size()
+            + "; metrics="
+            + String.valueOf(browser.getDetector().detectionDiagnostics));
   }
 
   void run(String kind, boolean blocked) throws Exception {
