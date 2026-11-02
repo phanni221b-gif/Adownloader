@@ -34,6 +34,8 @@ public class SuccessfulResponseIntegrationTest {
       nativeSegments = new AtomicInteger(),
       segmentDenied = new AtomicInteger();
   volatile boolean played;
+  volatile String playerFailure = "NONE";
+  final AtomicInteger browserSegments = new AtomicInteger();
   final String rootAuth = "Bearer SYNTHETIC_ROOT", segmentAuth = "Bearer SYNTHETIC_SEGMENT";
   final CountDownLatch transferStarted = new CountDownLatch(1);
 
@@ -68,28 +70,43 @@ public class SuccessfulResponseIntegrationTest {
   }
 
   String target() {
-    return mode.equals("master") ? "/m/master.m3u8" : "/m/playlist.m3u8";
+    return mode.equals("dash")
+        ? "/m/manifest.mpd"
+        : mode.equals("master") ? "/m/master.m3u8" : "/m/playlist.m3u8";
   }
 
   String html() {
     return """
 <!doctype html><meta charset='utf-8'><title>Successful response fixture</title>
-<video id='v' muted autoplay controls></video><script>
-const root='%s',rootAuth='%s',segmentAuth='%s';
-const ms=new MediaSource();v.src=URL.createObjectURL(ms);v.muted=true;
+<video id='v' muted autoplay controls></video><button onclick='v.play();watch()'>Play fixture</button><script>
+const root='@ROOT@',rootAuth='@AUTH@',segmentAuth='@SEGMENT@';
+let phase='START';const ms=new MediaSource();v.src=URL.createObjectURL(ms);v.muted=true;function watch(){const timer=setInterval(()=>{if(v.currentTime>0.1){clearInterval(timer);fetch('/played');}},50);}
 const load=async(url,auth)=>{const r=await fetch(url,{headers:{Authorization:auth}});if(!r.ok)throw Error('fixture response');return r;};
+const buffer=async(mime,parts,u)=>{phase='SOURCE_BUFFER';const sb=ms.addSourceBuffer(mime);const append=bytes=>new Promise((resolve,reject)=>{sb.addEventListener('updateend',resolve,{once:true});sb.addEventListener('error',reject,{once:true});sb.appendBuffer(bytes);});for(const part of parts){phase='SEGMENT_APPEND';await append(await(await load(new URL(part,u),segmentAuth)).arrayBuffer());}};
 ms.addEventListener('sourceopen',async()=>{try{
-  let u=new URL(root,location),text=await(await load(u,rootAuth)).text();
-  if(text.includes('#EXT-X-STREAM-INF')){const lines=text.trim().split(/\\r?\\n/).filter(x=>x&&!x.startsWith('#'));u=new URL(lines.at(-1),u);text=await(await load(u,rootAuth)).text();}
-  const init=/#EXT-X-MAP:URI="([^"]+)"/.exec(text)[1],parts=text.split(/\\r?\\n/).filter(x=>x&&!x.startsWith('#'));
-  const sb=ms.addSourceBuffer('video/mp4; codecs="avc1.42E01E,mp4a.40.2"');
-  const append=bytes=>new Promise((resolve,reject)=>{sb.addEventListener('updateend',resolve,{once:true});sb.addEventListener('error',reject,{once:true});sb.appendBuffer(bytes);});
-  for(const part of [init,...parts])await append(await(await load(new URL(part,u),segmentAuth)).arrayBuffer());
-  ms.endOfStream();await v.play();const timer=setInterval(()=>{if(v.currentTime>0.1){clearInterval(timer);fetch('/played');}},50);
-}catch(e){fetch('/player-error');}});
+  phase='ROOT';let u=new URL(root,location),text=await(await load(u,rootAuth)).text();
+  if(root.endsWith('.mpd')){
+    const doc=new DOMParser().parseFromString(text,'application/xml');
+    for(const rep of doc.querySelectorAll('Representation')){
+      const parent=rep.parentElement,t=rep.querySelector('SegmentTemplate')||parent.querySelector('SegmentTemplate');
+      const id=rep.getAttribute('id'),mime=rep.getAttribute('mimeType')||parent.getAttribute('mimeType'),codec=rep.getAttribute('codecs')||parent.getAttribute('codecs');
+      let count=0;for(const span of t.querySelectorAll('S'))count+=1+Number(span.getAttribute('r')||0);
+      const start=Number(t.getAttribute('startNumber')||1),expand=(value,n)=>value.split('$RepresentationID$').join(id).split('$Number%05d$').join(String(n).padStart(5,'0')).split('$Number$').join(String(n));
+      const parts=[expand(t.getAttribute('initialization'),start)];for(let n=start;n<start+count;n++)parts.push(expand(t.getAttribute('media'),n));
+      await buffer(mime+'; codecs="'+codec+'"',parts,u);
+    }
+  }else{
+    if(text.includes('#EXT-X-STREAM-INF')){const lines=text.trim().split(/\\r?\\n/).filter(x=>x&&!x.startsWith('#'));u=new URL(lines.at(-1),u);text=await(await load(u,rootAuth)).text();}
+    const init=/#EXT-X-MAP:URI="([^"]+)"/.exec(text)[1],parts=text.split(/\\r?\\n/).filter(x=>x&&!x.startsWith('#'));
+    await buffer('video/mp4; codecs="avc1.42E01E,mp4a.40.2"',[init,...parts],u);
+  }
+  phase='END_STREAM';ms.endOfStream();phase='PLAY';watch();try{await v.play();}catch(e){fetch('/player-error?phase=PLAY&name='+encodeURIComponent(e.name));}
+}catch(e){fetch('/player-error?phase='+phase+'&name='+encodeURIComponent(e.name||'UNKNOWN'));}});
 </script>
 """
-        .formatted(target(), rootAuth, segmentAuth);
+        .replace("@ROOT@", target())
+        .replace("@AUTH@", rootAuth)
+        .replace("@SEGMENT@", segmentAuth);
   }
 
   void respond(Socket s, int code, String mime, byte[] bytes) throws Exception {
@@ -127,12 +144,18 @@ ms.addEventListener('sourceopen',async()=>{try{
         respond(s, 200, "text/html", "<title>Other page</title>".getBytes(StandardCharsets.UTF_8));
         return;
       }
+      if (path.startsWith("/player-error")) {
+        playerFailure = path.substring("/player-error".length());
+        respond(s, 200, "text/plain", new byte[] {1});
+        return;
+      }
       if (path.equals("/played")) {
         played = true;
         respond(s, 200, "text/plain", new byte[] {1});
         return;
       }
-      boolean browser = "cors".equals(h.get("sec-fetch-mode")), manifest = path.endsWith(".m3u8");
+      boolean browser = "cors".equals(h.get("sec-fetch-mode")),
+          manifest = path.endsWith(".m3u8") || path.endsWith(".mpd");
       if (manifest) {
         if (!browser) nativeManifests.incrementAndGet();
         boolean once =
@@ -149,20 +172,27 @@ ms.addEventListener('sourceopen',async()=>{try{
           return;
         }
         byte[] bytes =
-            path.endsWith("master.m3u8")
-                ? ("#EXTM3U\n"
-                       + "#EXT-X-STREAM-INF:BANDWIDTH=100,RESOLUTION=64x64,FRAME-RATE=12\n"
-                       + "low.m3u8\n"
-                       + "#EXT-X-STREAM-INF:BANDWIDTH=500000,RESOLUTION=160x90,FRAME-RATE=24\n"
-                       + "1080.m3u8\n")
-                    .getBytes(StandardCharsets.UTF_8)
-                : asset("fmp4/playlist.m3u8");
-        respond(s, 200, "application/vnd.apple.mpegurl", bytes);
+            path.endsWith(".mpd")
+                ? asset("manifest.mpd")
+                : path.endsWith("master.m3u8")
+                    ? ("#EXTM3U\n"
+                            + "#EXT-X-STREAM-INF:BANDWIDTH=100,RESOLUTION=64x64,FRAME-RATE=12\n"
+                            + "low.m3u8\n"
+                            + "#EXT-X-STREAM-INF:BANDWIDTH=500000,RESOLUTION=160x90,FRAME-RATE=24\n"
+                            + "1080.m3u8\n")
+                        .getBytes(StandardCharsets.UTF_8)
+                    : asset("fmp4/playlist.m3u8");
+        respond(
+            s,
+            200,
+            path.endsWith(".mpd") ? "application/dash+xml" : "application/vnd.apple.mpegurl",
+            bytes);
         return;
       }
       if (path.startsWith("/m/") && (path.endsWith(".m4s") || path.endsWith(".mp4"))) {
         boolean ok =
             segmentAuth.equals(h.get("authorization")) && (!mode.equals("browserOnly") || browser);
+        if (browser) browserSegments.incrementAndGet();
         if (!browser) {
           nativeSegments.incrementAndGet();
           if (!ok) segmentDenied.incrementAndGet();
@@ -176,7 +206,9 @@ ms.addEventListener('sourceopen',async()=>{try{
             ok ? 200 : 403,
             ok ? "video/mp4" : "text/html",
             ok
-                ? asset("fmp4/" + path.substring(path.lastIndexOf('/') + 1))
+                ? asset(
+                    (path.contains("-stream") ? "" : "fmp4/")
+                        + path.substring(path.lastIndexOf('/') + 1))
                 : "<html>segment blocked</html>".getBytes(StandardCharsets.UTF_8));
         return;
       }
@@ -202,7 +234,17 @@ ms.addEventListener('sourceopen',async()=>{try{
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
     var browser = browser();
     long deadline = System.currentTimeMillis() + 40000;
+    boolean tapped = false;
     while (System.currentTimeMillis() < deadline) {
+      if (!tapped && System.currentTimeMillis() > deadline - 35000) {
+        var button =
+            androidx.test.uiautomator.UiDevice.getInstance(ins)
+                .findObject(androidx.test.uiautomator.By.text("Play fixture"));
+        if (button != null) {
+          button.click();
+          tapped = true;
+        }
+      }
       for (var c : browser.getDetector().snapshot())
         if (c.getUrl().equals(base + target()) && played)
           return browser.getDetector().forDownload(c);
@@ -211,6 +253,10 @@ ms.addEventListener('sourceopen',async()=>{try{
     fail(
         "Real Gecko MSE playback must advance before capture/download assertions; played="
             + played
+            + " playerFailure="
+            + playerFailure
+            + " browserSegments="
+            + browserSegments.get()
             + " candidates="
             + browser.getDetector().snapshot().size());
     return null;
@@ -345,5 +391,10 @@ ms.addEventListener('sourceopen',async()=>{try{
   @Test
   public void nativeTransferContinuesAfterBrowserActivityCloses() throws Exception {
     run("closeBrowser", false, false, true);
+  }
+
+  @Test
+  public void actualDashPlaybackResponseUsesNativeSplitTrackTransfer() throws Exception {
+    run("dash", false, false, false);
   }
 }
