@@ -66,6 +66,15 @@ public final class MediaNetworkSession {
       return manifest(url, page, headers, control);
     }
 
+    default Map<String, Object> captureDiagnostics() {
+      return Map.of();
+    }
+
+    default Bootstrap captured(String url, String page, int tab, int frame, TransferControl control)
+        throws Exception {
+      return null;
+    }
+
     Bootstrap manifest(
         String url, String page, Map<String, String> headers, TransferControl control)
         throws Exception;
@@ -114,6 +123,36 @@ public final class MediaNetworkSession {
       Collection<String> geckoNames,
       boolean geckoSuccess,
       String action) {
+    trace(
+        stage,
+        url,
+        transport,
+        status,
+        redirects,
+        mime,
+        body,
+        names,
+        geckoNames,
+        geckoSuccess,
+        action,
+        transport.equals("native")
+            ? "native-http"
+            : transport.equals("gecko") ? "content-fetch" : "playback-response");
+  }
+
+  public static void trace(
+      String stage,
+      String url,
+      String transport,
+      int status,
+      int redirects,
+      String mime,
+      String body,
+      Collection<String> names,
+      Collection<String> geckoNames,
+      boolean geckoSuccess,
+      String action,
+      String requestType) {
     Map<String, Object> safe = new LinkedHashMap<>();
     safe.put(
         "stage",
@@ -135,7 +174,22 @@ public final class MediaNetworkSession {
     } catch (Exception e) {
       safe.put("host", "");
     }
-    safe.put("transport", "gecko".equals(transport) ? "gecko" : "native");
+    safe.put(
+        "transport",
+        Set.of("gecko", "gecko-response-cache").contains(transport) ? transport : "native");
+    safe.put(
+        "requestType",
+        Set.of(
+                    "media",
+                    "xmlhttprequest",
+                    "fetch",
+                    "other",
+                    "native-http",
+                    "content-fetch",
+                    "playback-response")
+                .contains(requestType)
+            ? requestType
+            : "UNKNOWN");
     safe.put("status", Math.max(0, Math.min(599, status)));
     safe.put("redirects", Math.max(0, Math.min(8, redirects)));
     String type = mime == null ? "" : mime.split(";", 2)[0].trim().toLowerCase(Locale.ROOT);
@@ -151,6 +205,8 @@ public final class MediaNetworkSession {
     missing.removeAll(MediaHeaders.names(names));
     safe.put("missingHeaderNames", missing);
     safe.put("geckoSuccess", geckoSuccess);
+    safe.put("manifestCacheUsed", "GECKO_RESPONSE_CACHE".equals(action));
+    safe.put("nativeRequestSkipped", "GECKO_RESPONSE_CACHE".equals(action));
     safe.put("nativeSuccess", transport.equals("native") && status >= 200 && status < 300);
     safe.put(
         "action",
@@ -158,6 +214,8 @@ public final class MediaNetworkSession {
                     "NATIVE_INITIAL",
                     "NATIVE_CONTEXT_RETRY",
                     "GECKO_BOOTSTRAP",
+                    "GECKO_RESPONSE_CACHE",
+                    "GECKO_CACHE_MISS",
                     "MANIFEST_NATIVE_BLOCKED",
                     "SEGMENT_NATIVE_BLOCKED")
                 .contains(action)

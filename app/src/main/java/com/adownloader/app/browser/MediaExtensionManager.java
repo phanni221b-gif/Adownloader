@@ -60,7 +60,10 @@ public final class MediaExtensionManager implements AutoCloseable {
                       if (closed
                           || !NATIVE_APP.equals(nativeApp)
                           || !(message instanceof JSONObject)) return null;
-                      route((JSONObject) message);
+                      JSONObject json = (JSONObject) message;
+                      if (json.optString("kind").startsWith("manifest-capture-"))
+                        return GeckoResult.fromValue(bridge.capture(json));
+                      route(json);
                       return null;
                     }
                   },
@@ -84,6 +87,7 @@ public final class MediaExtensionManager implements AutoCloseable {
           .removeIf(
               entry -> {
                 if (entry.getValue() != session) return false;
+                bridge.discardTab(entry.getKey());
                 pending.remove(entry.getKey());
                 return true;
               });
@@ -177,7 +181,7 @@ public final class MediaExtensionManager implements AutoCloseable {
             && !value.contains("\n")) headers.put(key, value);
       }
     }
-    detector.rememberContext(url, pageUrl, headers);
+    detector.rememberContext(url, pageUrl, headers, json.optBoolean("mediaSuccess"));
     if ("resource-context".equals(json.optString("kind"))) return;
     Map<String, String> metadata = new LinkedHashMap<>();
     JSONObject meta = json.optJSONObject("metadata");
@@ -190,6 +194,7 @@ public final class MediaExtensionManager implements AutoCloseable {
               "etag",
               "modified",
               "length",
+              "mediaObservedAt",
               "frameScore",
               "frameHost",
               "frameId")) {

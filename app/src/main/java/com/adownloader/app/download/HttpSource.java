@@ -37,6 +37,10 @@ public final class HttpSource implements AutoCloseable {
     return this;
   }
 
+  public String pageScopeKey() {
+    return topPage == null ? "" : topPage;
+  }
+
   public String pageSiteKey() {
     return topPage == null ? "" : CookieSites.site(URI.create(topPage));
   }
@@ -51,6 +55,24 @@ public final class HttpSource implements AutoCloseable {
   }
 
   private boolean browserBootstrapped;
+  private boolean capturedOnly;
+
+  public HttpSource capturedManifestsOnly() {
+    capturedOnly = true;
+    return this;
+  }
+
+  public String cookieState() throws IOException {
+    return cookies.snapshot();
+  }
+
+  private String playbackRequestType = "playback-response";
+  private long manifestEvidenceExpiresAt = Long.MAX_VALUE;
+
+  public long manifestEvidenceExpiresAt() {
+    return manifestEvidenceExpiresAt;
+  }
+
   private CookieListener cookieListener;
 
   public HttpSource onCookies(CookieListener listener) {
@@ -134,8 +156,11 @@ public final class HttpSource implements AutoCloseable {
         body,
         names,
         observation == null ? java.util.List.of() : observation.headerNames(),
-        observation != null,
-        action);
+        observation != null || action.equals("GECKO_RESPONSE_CACHE"),
+        action,
+        transport.equals("gecko-response-cache")
+            ? playbackRequestType
+            : transport.equals("gecko") ? "content-fetch" : "native-http");
   }
 
   private final Map<String, java.util.Collection<String>> lastSentNames =
@@ -606,6 +631,50 @@ public final class HttpSource implements AutoCloseable {
   }
 
   public Document document(String url, Document previous) throws Exception {
+    var playback = MediaNetworkSession.provider();
+    if (playback != null && topPage != null && topTab >= 0 && topFrame >= 0) {
+      var captured = playback.captured(url, topPage, topTab, topFrame, control);
+      if (captured != null) {
+        if (!url.equals(captured.url())
+            || captured.status() < 200
+            || captured.status() >= 300
+            || captured.body().length == 0
+            || captured.body().length > 8388608)
+          throw new DownloadError(DownloadError.Category.MANIFEST_INVALID);
+        playbackRequestType = captured.metadata().getOrDefault("request-type", "playback-response");
+        Document d = adoptManifest(captured, url);
+        try {
+          manifestEvidenceExpiresAt =
+              Math.min(
+                  manifestEvidenceExpiresAt,
+                  Long.parseLong(captured.metadata().getOrDefault("evidence-expires-at", "0")));
+        } catch (NumberFormatException invalid) {
+          throw new DownloadError(DownloadError.Category.MANIFEST_INVALID);
+        }
+        if (!java.util.Set.of("HLS", "DASH").contains(bodyKind(d.text)))
+          throw new DownloadError(DownloadError.Category.MANIFEST_INVALID);
+        record(
+            url,
+            d.status,
+            d.redirects,
+            d.mime,
+            bodyKind(d.text),
+            "gecko-response-cache",
+            "GECKO_RESPONSE_CACHE",
+            captured.requestHeaders().keySet());
+        return d;
+      }
+      record(
+          url,
+          0,
+          0,
+          "",
+          "UNKNOWN",
+          "gecko-response-cache",
+          "GECKO_CACHE_MISS",
+          java.util.List.of());
+    }
+    if (capturedOnly) throw new DownloadError(DownloadError.Category.ACCESS_BLOCKED);
     try {
       Document d = nativeDocument(url, previous);
       if (d.text
@@ -676,21 +745,8 @@ public final class HttpSource implements AutoCloseable {
             || response.body().length == 0
             || url.startsWith("https:") && !response.url().startsWith("https:"))
           throw new DownloadError(DownloadError.Category.ACCESS_BLOCKED);
-        if (!response.requestHeaders().isEmpty()) {
-          adoptContext(response.url(), response.requestHeaders());
-          persistContext(response.url(), response.requestHeaders());
-        }
+        Document d = adoptManifest(response, url);
         var fresh = MediaNetworkSession.latest(response.url(), topPage, topTab, topFrame);
-        if (fresh != null && response.requestHeaders().isEmpty()) {
-          adoptContext(response.url(), fresh.headers());
-          persistContext(response.url(), fresh.headers());
-        }
-        browserBootstrapped = true;
-        for (var entry : response.responseCookies().entrySet())
-          if (cookies.accept(
-              java.net.URI.create(entry.getKey()), Map.of("Set-Cookie", entry.getValue())))
-            persistCookies();
-        Document d = new Document(response);
         record(
             url,
             d.status,
@@ -724,10 +780,32 @@ public final class HttpSource implements AutoCloseable {
     }
   }
 
+  private Document adoptManifest(MediaNetworkSession.Bootstrap response, String requested)
+      throws Exception {
+    if (!response.requestHeaders().isEmpty()) {
+      adoptContext(response.url(), response.requestHeaders());
+      persistContext(response.url(), response.requestHeaders());
+    } else {
+      var latest = MediaNetworkSession.latest(response.url(), topPage, topTab, topFrame);
+      if (latest != null) {
+        adoptContext(response.url(), latest.headers());
+        persistContext(response.url(), latest.headers());
+      }
+    }
+    browserBootstrapped = true;
+    for (var entry : response.responseCookies().entrySet())
+      if (cookies.accept(
+          java.net.URI.create(entry.getKey()), Map.of("Set-Cookie", entry.getValue())))
+        persistCookies();
+    return new Document(response);
+  }
+
   private static String bodyKind(String text) {
     String p = text.replaceFirst("^\\uFEFF", "").stripLeading();
     if (p.startsWith("#EXTM3U")) return "HLS";
-    if (p.matches("(?s)(?:<\\?xml[^>]*>\\s*)?<MPD(?:\\s|>).*")) return "DASH";
+    if (p.matches(
+        "(?s)(?:<\\?xml[^>]*>\\s*)?(?:<!--[\\s\\S]*?-->\\s*)*<(?:[\\w.-]+:)?MPD(?:\\s|>).*"))
+      return "DASH";
     if (p.toLowerCase(java.util.Locale.ROOT).matches("(?s)<(?:!doctype|html|head|body|form).*"))
       return p.toLowerCase(java.util.Locale.ROOT)
               .matches("(?s).*(challenge|captcha|cloudflare|access.denied).*")

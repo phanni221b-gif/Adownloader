@@ -72,6 +72,15 @@ public final class DownloadJobs {
                         } catch (JSONException ignored) {
                         }
                     });
+            JSONObject metadata = new JSONObject(candidate.getMetadata());
+            JSONObject request =
+                new JSONObject()
+                    .put("url", candidate.getUrl())
+                    .put("page", candidate.getPageUrl())
+                    .put("headers", headers)
+                    .put("metadata", metadata);
+            var playback = MediaProbeService.shared().prepareCaptured(candidate);
+            if (playback != null) usePlayback(request, playback);
             String identity = candidate.getIdentityKey();
             id =
                 store.enqueue(
@@ -79,11 +88,7 @@ public final class DownloadJobs {
                     candidate.getType().name(),
                     DownloadFileName.label(candidate.getMetadata(), candidate.getUrl()),
                     android.net.Uri.parse(candidate.getUrl()).getHost(),
-                    new JSONObject()
-                        .put("url", candidate.getUrl())
-                        .put("page", candidate.getPageUrl())
-                        .put("headers", headers)
-                        .put("metadata", new JSONObject(candidate.getMetadata())));
+                    request);
           } catch (Exception failed) {
           }
           long result = id;
@@ -93,6 +98,27 @@ public final class DownloadJobs {
                 if (completed != null) completed.accept(result);
               });
         });
+  }
+
+  private static void usePlayback(JSONObject request, MediaProbeService.PlaybackPlan playback)
+      throws Exception {
+    request
+        .put("plan", PlanCodec.encode(playback.tracks()))
+        .put("cookieState", playback.cookieState())
+        .put("headers", new JSONObject(playback.headers()))
+        .put("disposition", playback.disposition());
+    JSONObject metadata = request.optJSONObject("metadata");
+    if (metadata == null) {
+      metadata = new JSONObject();
+      request.put("metadata", metadata);
+    }
+    metadata
+        .put("requestContexts", new JSONObject(playback.contexts()).toString())
+        .put("requestContextVersion", "2");
+    JSONObject origins = new JSONObject();
+    for (String url : playback.contexts().keySet()) origins.put(url, MediaHeaders.origin(url));
+    metadata.put("requestContextOrigins", origins.toString());
+    request.remove("cookieBootstrap");
   }
 
   public void attach(Host host) {
@@ -315,8 +341,16 @@ public final class DownloadJobs {
                   boolean segmented =
                       candidate.getType() == MediaCandidate.MediaType.HLS
                           || candidate.getType() == MediaCandidate.MediaType.DASH;
+                  var playback =
+                      segmented
+                          ? MediaProbeService.shared().prepareCaptured(candidate, control)
+                          : null;
                   MediaProbeResult probe =
-                      segmented ? MediaProbeService.shared().probe(candidate, control) : null;
+                      segmented
+                          ? (playback == null
+                              ? MediaProbeService.shared().probe(candidate, control)
+                              : playback.probe())
+                          : null;
                   boolean compatible = previous.has("url");
                   if (segmented) {
                     List<ManifestParser.Track> fresh = probe.tracks();
@@ -365,7 +399,8 @@ public final class DownloadJobs {
                               .put("headers", headers)
                               .put("metadata", new JSONObject(candidate.getMetadata()));
                           previous.remove("cookieState");
-                          if (probe != null) {
+                          if (playback != null) usePlayback(previous, playback);
+                          else if (probe != null) {
                             previous.put("plan", PlanCodec.encode(probe.tracks()));
                             previous.put("cookieBootstrap", probe.requiresCookieSession);
                             if (!probe.disposition.isEmpty())

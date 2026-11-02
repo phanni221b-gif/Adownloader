@@ -151,4 +151,61 @@ public class MediaProbeServiceTest {
     assertEquals(2, requests.get());
     assertEquals("request=two", cookie);
   }
+
+  @Test
+  public void sameUrlOnAnotherPageCannotReuseThePreviousPagesPlan() throws Exception {
+    String host = "http://127.0.0.1:" + server.getLocalPort();
+    var a =
+        new MediaCandidate(
+            url(),
+            MediaCandidate.MediaType.HLS,
+            "network-response",
+            host + "/a",
+            Map.of(),
+            System.currentTimeMillis(),
+            Map.of("browserTabId", "3", "frameId", "0"));
+    var b =
+        new MediaCandidate(
+            url(),
+            MediaCandidate.MediaType.HLS,
+            "network-response",
+            host + "/b",
+            Map.of(),
+            System.currentTimeMillis(),
+            Map.of("browserTabId", "3", "frameId", "0"));
+    service.preview(a);
+    part = "another-video.ts";
+    etag = "another";
+    var result = service.preview(b);
+    assertEquals(2, requests.get());
+    assertTrue(result.tracks().get(0).parts.get(0).url.endsWith("another-video.ts"));
+  }
+
+  @Test
+  public void aNewObservationOfTheSameUrlMustNotReuseAnOlderPlan() throws Exception {
+    String page = "http://127.0.0.1:" + server.getLocalPort() + "/same";
+    var a =
+        new MediaCandidate(
+            url(),
+            MediaCandidate.MediaType.HLS,
+            "network-response",
+            page,
+            Map.of(),
+            1,
+            Map.of("browserTabId", "3", "frameId", "0", "mediaObservedAt", "1"));
+    var b =
+        new MediaCandidate(
+            url(),
+            MediaCandidate.MediaType.HLS,
+            "network-response",
+            page,
+            Map.of(),
+            2,
+            Map.of("browserTabId", "3", "frameId", "0", "mediaObservedAt", "2"));
+    service.preview(a);
+    part = "new-observation.ts";
+    etag = "new";
+    assertTrue(service.preview(b).tracks().get(0).parts.get(0).url.endsWith("new-observation.ts"));
+    assertEquals(2, requests.get());
+  }
 }

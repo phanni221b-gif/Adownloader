@@ -34,6 +34,9 @@ jobs:
           node ci/test-deep-detection.cjs
           node ci/test-content-extension.cjs
           node ci/test-session-context.cjs
+          node ci/test-response-capture.cjs
+          git fetch --no-tags --depth=1 origin a13c305e91592daa8f617c09e97d29ce9640edcf
+          node ci/benchmark-response-capture.cjs
           gradle :app:testDebugUnitTest :app:lintRelease :app:assembleRelease --stacktrace
       - uses: actions/upload-artifact@v4
         if: always()
@@ -42,6 +45,7 @@ jobs:
           path: |
             app/build/test-results/testDebugUnitTest/
             app/build/reports/tests/testDebugUnitTest/
+            app/build/reports/response-capture-*.json
       - name: Check packaged engine, ABI and launcher
         run: |
           APK=app/build/outputs/apk/release/app-release-unsigned.apk
@@ -106,4 +110,3 @@ jobs:
             extension-performance.json
             process-recovery-results/
 # The fixed private release key remains off GitHub. This workflow cannot publish an unsigned APK.
-

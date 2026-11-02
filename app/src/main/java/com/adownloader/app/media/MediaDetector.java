@@ -39,9 +39,18 @@ public final class MediaDetector {
   private final LinkedHashMap<String, Map<String, String>> resourceHeaders = new LinkedHashMap<>();
 
   public synchronized void rememberContext(String url, String page, Map<String, String> headers) {
-    if (headers.isEmpty() || boundPage != null && !pageKey(boundPage).equals(pageKey(page))) return;
+    rememberContext(url, page, headers, false);
+  }
+
+  public synchronized void rememberContext(
+      String url, String page, Map<String, String> headers, boolean verified) {
+    if ((!verified && headers.isEmpty())
+        || boundPage != null && !pageKey(boundPage).equals(pageKey(page))) return;
     Map<String, String> merged =
-        new LinkedHashMap<>(resourceHeaders.getOrDefault(url, Collections.emptyMap()));
+        new LinkedHashMap<>(
+            verified
+                ? Collections.emptyMap()
+                : resourceHeaders.getOrDefault(url, Collections.emptyMap()));
     merged.putAll(headers);
     resourceHeaders.put(url, merged);
     resourcePages.put(url, page);
@@ -158,7 +167,11 @@ public final class MediaDetector {
         previous != null && networkSource(previous.getSource()) && !networkSource(source);
     if (authoritative && !previous.getUrl().equals(clean)) return;
     if (previous != null && previous.getUrl().equals(clean)) {
-      Map<String, String> merged = new LinkedHashMap<>(previous.getHeaders());
+      Map<String, String> merged =
+          new LinkedHashMap<>(
+              networkSource(source) && "true".equals(metadata.get("requestContextVerified"))
+                  ? Collections.emptyMap()
+                  : previous.getHeaders());
       merged.putAll(safe);
       Map<String, String> combined = new LinkedHashMap<>(previous.getMetadata());
       meta.forEach(

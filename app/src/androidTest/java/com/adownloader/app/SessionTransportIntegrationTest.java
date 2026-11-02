@@ -29,6 +29,7 @@ public class SessionTransportIntegrationTest {
   ExecutorService io;
   String base, mode;
   Activity activity;
+  MediaNetworkSession.Provider realProvider, cacheMissProvider;
   AtomicInteger nativeDenied = new AtomicInteger(), browserRoots = new AtomicInteger();
   final String auth = "Bearer SYNTHETIC_PRIVATE_AUTH",
       token = "SYNTHETIC_PRIVATE_TOKEN",
@@ -52,6 +53,7 @@ public class SessionTransportIntegrationTest {
 
   @After
   public void stop() throws Exception {
+    if (realProvider != null) MediaNetworkSession.install(realProvider);
     if (activity != null) ins.runOnMainSync(activity::finish);
     server.close();
     io.shutdownNow();
@@ -285,6 +287,32 @@ public class SessionTransportIntegrationTest {
   void run(String kind, boolean blocked) throws Exception {
     mode = kind;
     MediaCandidate item = discover();
+    if (kind.equals("bootstrap") || kind.equals("segmentBlocked")) {
+      // Keep the original real content.fetch fallback coverage when playback evidence is absent.
+      realProvider = MediaNetworkSession.provider();
+      cacheMissProvider =
+          new MediaNetworkSession.Provider() {
+            public MediaNetworkSession.Observation latest(String u, String p) {
+              return realProvider.latest(u, p);
+            }
+
+            public MediaNetworkSession.Observation latest(String u, String p, int t, int f) {
+              return realProvider.latest(u, p, t, f);
+            }
+
+            public MediaNetworkSession.Bootstrap manifest(
+                String u, String p, Map<String, String> h, TransferControl c) throws Exception {
+              return realProvider.manifest(u, p, h, c);
+            }
+
+            public MediaNetworkSession.Bootstrap manifest(
+                String u, String p, int t, int f, Map<String, String> h, TransferControl c)
+                throws Exception {
+              return realProvider.manifest(u, p, t, f, h, c);
+            }
+          };
+      MediaNetworkSession.install(cacheMissProvider);
+    }
     assertEquals(auth, item.getHeaders().get("Authorization"));
     assertEquals(token, item.getHeaders().get("X-Playback-Token"));
     DownloadJobs jobs = DownloadJobs.get(context);
