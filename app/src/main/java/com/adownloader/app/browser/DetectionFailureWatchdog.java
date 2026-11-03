@@ -38,6 +38,33 @@ public final class DetectionFailureWatchdog implements AutoCloseable {
     if (r != null) handler.removeCallbacks(r);
   }
 
+  public void unsupportedTransport(int tab, String url, String page) {
+    if (!Objects.equals(pages.get(tab), page) || !reported.add(tab)) return;
+    candidate(tab);
+    var diagnostic =
+        new FailureDiagnostics.Session(
+            0, "ENCRYPTED_TRANSPORT", url, page, Map.of("detectionSource", "protected-response"));
+    diagnostic.event(
+        Map.of(
+            "stage",
+            "DETECTION",
+            "transport",
+            "gecko",
+            "status",
+            200,
+            "host",
+            FailureDiagnostics.host(url),
+            "body",
+            "ENCRYPTED",
+            "action",
+            "PROTECTED_RESPONSE"));
+    diagnostic.fail(
+        new DownloadError(DownloadError.Category.UNSUPPORTED_FORMAT),
+        DownloadError.Category.UNSUPPORTED_FORMAT,
+        "ENCRYPTED_TRANSPORT_UNSUPPORTED");
+    diagnostic.complete();
+  }
+
   public void metrics(int tab, JSONObject metrics) {
     if (metrics != null && metrics.optInt("playbackObserved") > 0) playbackSeen.add(tab);
     if (metrics == null

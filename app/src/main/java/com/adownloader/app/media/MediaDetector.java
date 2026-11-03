@@ -120,7 +120,8 @@ public final class MediaDetector {
   private static boolean networkSource(String source) {
     return "network-response".equals(source)
         || "response-signature".equals(source)
-        || "redirect-observation".equals(source);
+        || "redirect-observation".equals(source)
+        || "protected-response".equals(source);
   }
 
   public synchronized void capture(
@@ -141,15 +142,22 @@ public final class MediaDetector {
     } catch (Exception invalid) {
       return;
     }
-    if (path.matches(".*[.](m4s|ts|cmfv|cmfa)$")) return;
-    MediaCandidate.MediaType type = classify(path, mime);
+    if (path.matches(".*[.](m4s|ts|cmfv|cmfa)$") && !"protected-response".equals(source)) return;
+    MediaCandidate.MediaType type =
+        "protected-response".equals(source)
+                && "encrypted-relay".equals(metadata.get("transportProtection"))
+            ? MediaCandidate.MediaType.PROTECTED
+            : classify(path, mime);
     if (type == MediaCandidate.MediaType.UNKNOWN) return;
     for (Iterator<Map.Entry<String, MediaCandidate>> iterator = groups.entrySet().iterator();
         iterator.hasNext(); ) {
       MediaCandidate prior = iterator.next().getValue();
       if (prior.getUrl().equals(clean) && prior.getType() != type) {
         if (networkSource(prior.getSource()) && !networkSource(source)) return;
-        if (networkSource(source) && !networkSource(prior.getSource())) {
+        if (networkSource(source)
+            && (!networkSource(prior.getSource())
+                || prior.getType() == MediaCandidate.MediaType.PROTECTED
+                || type == MediaCandidate.MediaType.PROTECTED)) {
           exact.remove(prior.getExactKey());
           iterator.remove();
         }

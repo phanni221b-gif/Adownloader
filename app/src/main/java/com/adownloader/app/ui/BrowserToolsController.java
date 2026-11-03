@@ -31,7 +31,9 @@ public final class BrowserToolsController implements AutoCloseable {
   private final BrowserSessionManager browser;
   private final BrowserDataStore data;
   private final Supplier<String> url;
-  private BottomSheetDialog dialog;
+  private BottomSheetDialog dialog, tabsDialog;
+  private View tabsContent;
+  private RecyclerView.Adapter<Holder> tabsAdapter;
   private final Handler handler = new Handler(Looper.getMainLooper());
   private boolean closed;
 
@@ -64,7 +66,7 @@ public final class BrowserToolsController implements AutoCloseable {
   public boolean handle(int id) {
     switch (id) {
       case TABS:
-        tabs();
+        showTabs();
         return true;
       case NEW_TAB:
         if (!browser.newTab(null)) message("탭은 최대 5개까지 열 수 있습니다.");
@@ -188,22 +190,29 @@ public final class BrowserToolsController implements AutoCloseable {
     }
   }
 
-  private void tabs() {
-    View content = activity.getLayoutInflater().inflate(R.layout.sheet_list, null);
-    ((TextView) content.findViewById(R.id.sheet_title))
-        .setText("탭 · " + browser.tabs().size() + " / 5");
-    ((TextView) content.findViewById(R.id.sheet_subtitle)).setText("길게 누르면 탭을 닫습니다.");
-    RecyclerView list = content.findViewById(R.id.sheet_list);
+  public void showTabs() {
+    if (closed) return;
+    if (dialog != null) dialog.dismiss();
+    View content = activity.getLayoutInflater().inflate(R.layout.sheet_browser_tabs, null);
+    tabsContent = content;
+    RecyclerView list = content.findViewById(R.id.tabs_list);
     list.setLayoutManager(new LinearLayoutManager(activity));
     dialog = UiSheets.show(activity, content, true);
-    content.findViewById(R.id.sheet_close).setOnClickListener(v -> dialog.dismiss());
-    list.setAdapter(
+    tabsDialog = dialog;
+    BottomSheetDialog owner = dialog;
+    content.findViewById(R.id.tabs_dismiss).setOnClickListener(v -> owner.dismiss());
+    content
+        .findViewById(R.id.tab_new)
+        .setOnClickListener(
+            v -> {
+              if (browser.newTab(null)) owner.dismiss();
+              else message("탭은 최대 5개까지 열 수 있습니다.");
+            });
+    tabsAdapter =
         new RecyclerView.Adapter<Holder>() {
           public Holder onCreateViewHolder(ViewGroup parent, int type) {
             return new Holder(
-                activity
-                    .getLayoutInflater()
-                    .inflate(android.R.layout.simple_list_item_2, parent, false));
+                activity.getLayoutInflater().inflate(R.layout.item_browser_tab, parent, false));
           }
 
           public int getItemCount() {
@@ -212,25 +221,59 @@ public final class BrowserToolsController implements AutoCloseable {
 
           public void onBindViewHolder(Holder holder, int index) {
             var tab = browser.tabs().get(index);
-            ((TextView) holder.itemView.findViewById(android.R.id.text1))
-                .setText(
-                    (tab.session == browser.getSession() ? "● " : "")
-                        + (tab.title.isEmpty() ? "새 탭" : tab.title));
-            ((TextView) holder.itemView.findViewById(android.R.id.text2))
-                .setText(Uri.parse(tab.url).getHost());
-            holder.itemView.setOnClickListener(
+            boolean selected = tab.session == browser.getSession();
+            String name = tab.title.isBlank() ? "새 탭" : tab.title;
+            ((TextView) holder.itemView.findViewById(R.id.tab_title)).setText(name);
+            ((TextView) holder.itemView.findViewById(R.id.tab_url))
+                .setText(tab.url.equals("about:blank") ? "주소를 입력해 페이지를 여세요" : tab.url);
+            ImageView thumbnail = holder.itemView.findViewById(R.id.tab_preview);
+            if (tab.preview == null) thumbnail.setImageResource(R.drawable.ic_browser);
+            else thumbnail.setImageBitmap(tab.preview);
+            var card = (com.google.android.material.card.MaterialCardView) holder.itemView;
+            card.setSelected(selected);
+            card.setStrokeWidth(dp(selected ? 2 : 1));
+            card.setStrokeColor(
+                androidx.core.content.ContextCompat.getColor(
+                    activity, selected ? R.color.brand : R.color.outline));
+            card.setCardBackgroundColor(
+                androidx.core.content.ContextCompat.getColor(
+                    activity, selected ? R.color.brand_soft : R.color.surface));
+            card.setContentDescription((selected ? "현재 탭 · " : "탭 · ") + name);
+            card.setOnClickListener(
                 v -> {
-                  dialog.dismiss();
-                  browser.selectTab(holder.getBindingAdapterPosition());
+                  int current = browser.tabs().indexOf(tab);
+                  if (current >= 0) {
+                    owner.dismiss();
+                    browser.selectTab(current);
+                  }
                 });
-            holder.itemView.setOnLongClickListener(
+            View close = holder.itemView.findViewById(R.id.tab_close);
+            close.setContentDescription(name + " 탭 닫기");
+            close.setOnClickListener(
                 v -> {
-                  browser.closeTab(holder.getBindingAdapterPosition());
-                  notifyDataSetChanged();
-                  return true;
+                  int current = browser.tabs().indexOf(tab);
+                  if (current >= 0) browser.closeTab(current);
                 });
           }
-        });
+        };
+    list.setAdapter(tabsAdapter);
+    onTabsChanged();
+    browser.capturePreview(this::onTabsChanged);
+  }
+
+  private int dp(int value) {
+    return Math.round(value * activity.getResources().getDisplayMetrics().density);
+  }
+
+  public void onTabsChanged() {
+    if (closed
+        || tabsDialog == null
+        || tabsDialog != dialog
+        || !tabsDialog.isShowing()
+        || tabsAdapter == null) return;
+    ((TextView) tabsContent.findViewById(R.id.tabs_title)).setText("열린 탭 " + browser.tabs().size());
+    tabsContent.findViewById(R.id.tab_new).setEnabled(browser.tabs().size() < 5);
+    tabsAdapter.notifyDataSetChanged();
   }
 
   private void find() {

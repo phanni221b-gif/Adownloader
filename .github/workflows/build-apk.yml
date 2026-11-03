@@ -35,6 +35,7 @@ jobs:
           node ci/test-content-extension.cjs
           node ci/test-session-context.cjs
           node ci/test-response-capture.cjs
+          node ci/test-protected-transport.cjs
           git fetch --no-tags --depth=1 origin a13c305e91592daa8f617c09e97d29ce9640edcf
           node ci/benchmark-response-capture.cjs
           gradle :app:testDebugUnitTest :app:lintRelease :app:assembleRelease --stacktrace

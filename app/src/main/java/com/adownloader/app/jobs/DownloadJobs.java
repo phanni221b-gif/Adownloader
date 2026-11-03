@@ -61,6 +61,8 @@ public final class DownloadJobs {
         () -> {
           long id = -1;
           try {
+            if (candidate.getType() == MediaCandidate.MediaType.PROTECTED)
+              throw new DownloadError(DownloadError.Category.UNSUPPORTED_FORMAT);
             JSONObject headers = new JSONObject();
             candidate
                 .getHeaders()
