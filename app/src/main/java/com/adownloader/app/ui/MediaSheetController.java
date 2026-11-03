@@ -34,6 +34,7 @@ public final class MediaSheetController {
   }
 
   public static String type(MediaCandidate item) {
+    if (item.getType() == MediaCandidate.MediaType.PROTECTED) return "보호된 전송";
     if (item.getType() == MediaCandidate.MediaType.HLS) return "HLS";
     if (item.getType() == MediaCandidate.MediaType.DASH) return "DASH";
     String path = Uri.parse(item.getUrl()).getPath();
@@ -67,6 +68,7 @@ public final class MediaSheetController {
           .setVisibility(candidates.isEmpty() ? View.VISIBLE : View.GONE);
     }
     loadPreviews(candidates, activeAdapter);
+    subtitle(candidates);
   }
 
   public void show(List<MediaCandidate> candidates) {
@@ -91,10 +93,26 @@ public final class MediaSheetController {
     dialog = UiSheets.show(activity, content, true);
     content.findViewById(R.id.sheet_close).setOnClickListener(v -> dialog.dismiss());
     loadPreviews(candidates, adapter);
+    subtitle(candidates);
+  }
+
+  private void subtitle(List<MediaCandidate> candidates) {
+    if (activeContent != null)
+      ((TextView) activeContent.findViewById(R.id.sheet_subtitle))
+          .setText(
+              !candidates.isEmpty()
+                      && candidates.stream()
+                          .allMatch(c -> c.getType() == MediaCandidate.MediaType.PROTECTED)
+                  ? "암호화된 전송 방식 · 현재 다운로드 미지원"
+                  : "최고 원본 자동 선택");
   }
 
   private void loadPreviews(List<MediaCandidate> candidates, MediaAdapter adapter) {
     for (MediaCandidate item : candidates.subList(0, Math.min(6, candidates.size()))) {
+      if (item.getType() == MediaCandidate.MediaType.PROTECTED) {
+        information.put(item.getUrl(), "플레이어가 별도로 암호화한 응답입니다. 암호화 해제와 보호 우회는 지원하지 않습니다.");
+        continue;
+      }
       String version =
           com.adownloader.app.media.MediaIdentity.hash(
               item.getPageUrl()
@@ -163,6 +181,7 @@ public final class MediaSheetController {
   }
 
   private void confirm(MediaCandidate item, int index) {
+    if (item.getType() == MediaCandidate.MediaType.PROTECTED) return;
     if (dialog != null) dialog.dismiss();
     String info = information.getOrDefault(item.getUrl(), "");
     if (info.equals("정보 분석 중")) info = "";
@@ -215,7 +234,10 @@ public final class MediaSheetController {
             if (!expanded.add(item.getUrl())) expanded.remove(item.getUrl());
             notifyItemChanged(position);
           });
-      holder.download.setOnClickListener(v -> confirm(item, position));
+      boolean supported = item.getType() != MediaCandidate.MediaType.PROTECTED;
+      holder.download.setEnabled(supported);
+      ((TextView) holder.download).setText(supported ? "다운로드" : "미지원");
+      holder.download.setOnClickListener(supported ? v -> confirm(item, position) : null);
     }
   }
 

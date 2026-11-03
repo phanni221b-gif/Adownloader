@@ -93,6 +93,8 @@ public final class DownloadEngine {
 
   public Result download(String url, MediaCandidate.MediaType type, Map<String, String> headers)
       throws Exception {
+    if (type == MediaCandidate.MediaType.PROTECTED)
+      throw new DownloadError(DownloadError.Category.UNSUPPORTED_FORMAT);
     FailureDiagnostics.phase(
         type == MediaCandidate.MediaType.HLS
             ? FailureDiagnostics.Stage.ROOT_MANIFEST

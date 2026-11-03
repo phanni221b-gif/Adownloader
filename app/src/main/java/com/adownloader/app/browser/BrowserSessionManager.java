@@ -25,6 +25,8 @@ public final class BrowserSessionManager {
     default void onTabSelected(MediaDetector detector, String url) {}
 
     default void onContextLink(String url) {}
+
+    default void onTabsChanged() {}
   }
 
   public static final class Tab {
@@ -35,6 +37,8 @@ public final class BrowserSessionManager {
     private String state;
     private boolean back, forward;
     private int progress = 100;
+    public android.graphics.Bitmap preview;
+    private long previewGeneration;
 
     private Tab(MediaDetector.Listener listener) {
       detector = new MediaDetector(listener);
@@ -47,6 +51,7 @@ public final class BrowserSessionManager {
   private final List<Tab> tabs = new ArrayList<>();
   private Tab active;
   private boolean visible = true, constructing = true;
+  private boolean previewPending;
   private BiConsumer<GeckoSession, Boolean> observer;
 
   public BrowserSessionManager(Context context, GeckoView view, Listener listener) {
@@ -97,6 +102,8 @@ public final class BrowserSessionManager {
               List<GeckoSession.PermissionDelegate.ContentPermission> permissions,
               Boolean gesture) {
             tab.url = value == null ? "about:blank" : value;
+            tab.preview = null;
+            tab.previewGeneration++;
             tab.detector.pageChanged(tab.url);
             tab.state = SafeSessionState.visit(tab.state, tab.url, tab.title);
             tab.policy.committed(tab.url);
@@ -183,6 +190,7 @@ public final class BrowserSessionManager {
           public void onTitleChange(GeckoSession source, String title) {
             tab.title = title == null ? "" : title.substring(0, Math.min(300, title.length()));
             tab.state = SafeSessionState.visit(tab.state, tab.url, tab.title);
+            if (listener != null && !constructing) listener.onTabsChanged();
           }
 
           @Override
@@ -206,7 +214,49 @@ public final class BrowserSessionManager {
     if (observer != null) observer.accept(tab.session, true);
     selectTab(tabs.size() - 1);
     if (url != null) load(url);
+    if (listener != null && !constructing) listener.onTabsChanged();
     return true;
+  }
+
+  /** Small memory-only thumbnails. Never persist browsing screenshots or block tab switching. */
+  public void capturePreview(Runnable changed) {
+    Tab owner = active;
+    if (owner == null
+        || previewPending
+        || !visible
+        || view.getWidth() <= 0
+        || view.getHeight() <= 0) return;
+    long generation = ++owner.previewGeneration;
+    previewPending = true;
+    try {
+      view.capturePixels()
+          .accept(
+              bitmap -> {
+                previewPending = false;
+                if (bitmap == null) return;
+                if (!tabs.contains(owner) || generation != owner.previewGeneration) {
+                  bitmap.recycle();
+                  return;
+                }
+                float scale =
+                    Math.min(1f, Math.min(240f / bitmap.getWidth(), 160f / bitmap.getHeight()));
+                android.graphics.Bitmap small =
+                    android.graphics.Bitmap.createScaledBitmap(
+                        bitmap,
+                        Math.max(1, Math.round(bitmap.getWidth() * scale)),
+                        Math.max(1, Math.round(bitmap.getHeight() * scale)),
+                        true);
+                owner.preview = small;
+                if (small != bitmap) bitmap.recycle();
+                if (changed != null) changed.run();
+              },
+              unavailable -> {
+                previewPending = false;
+              });
+    } catch (IllegalStateException unavailable) {
+      previewPending = false;
+      /* A display may be detaching. */
+    }
   }
 
   public void selectTab(int index) {
@@ -214,6 +264,7 @@ public final class BrowserSessionManager {
     Tab next = tabs.get(index);
     if (active == next) return;
     if (active != null) {
+      capturePreview(null);
       active.session.setActive(false);
       runtime.getWebExtensionController().setTabActive(active.session, false);
       view.releaseSession();
@@ -228,6 +279,7 @@ public final class BrowserSessionManager {
       listener.onPageProgress(next.progress);
     }
     emitNavigation();
+    if (listener != null && !constructing) listener.onTabsChanged();
   }
 
   public void closeTab(int index) {
@@ -242,8 +294,11 @@ public final class BrowserSessionManager {
     if (observer != null) observer.accept(tab.session, false);
     tab.session.close();
     tab.detector.reset();
+    tab.previewGeneration++;
+    tab.preview = null;
     if (tabs.isEmpty()) newTab(null);
     else if (wasActive) selectTab(Math.min(index, tabs.size() - 1));
+    if (listener != null && !constructing) listener.onTabsChanged();
   }
 
   public GeckoRuntime getRuntime() {

@@ -209,6 +209,8 @@ public final class MainActivity extends AppCompatActivity
     back.setOnClickListener(v -> browser.goBack());
     forward.setOnClickListener(v -> browser.goForward());
     findViewById(R.id.browser_refresh).setOnClickListener(v -> browser.reload());
+    findViewById(R.id.browser_tabs).setOnClickListener(v -> browserTools.showTabs());
+    onTabsChanged();
     findViewById(R.id.browser_menu)
         .setOnClickListener(
             v -> {
@@ -363,6 +365,20 @@ public final class MainActivity extends AppCompatActivity
   private void updateMediaBadge() {
     media.setText(mediaCount == 0 ? "" : Integer.toString(mediaCount));
     media.setContentDescription(mediaCount == 0 ? "감지된 미디어" : "감지된 미디어 " + mediaCount + "개");
+  }
+
+  @Override
+  public void onTabsChanged() {
+    runOnUiThread(
+        () -> {
+          if (browser == null || isDestroyed()) return;
+          TextView counter = findViewById(R.id.browser_tabs);
+          if (counter != null) {
+            counter.setText(Integer.toString(browser.tabs().size()));
+            counter.setContentDescription("열린 탭 " + browser.tabs().size() + "개");
+          }
+          if (browserTools != null) browserTools.onTabsChanged();
+        });
   }
 
   private void notice(String text) {

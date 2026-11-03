@@ -223,6 +223,7 @@ public final class MediaExtensionManager implements AutoCloseable {
               "mediaObservedAt",
               "frameScore",
               "frameHost",
+              "transportProtection",
               "frameId")) {
         String value = meta.optString(key);
         if (!value.isBlank() && value.length() <= 4096) metadata.put(key, value);
@@ -230,6 +231,9 @@ public final class MediaExtensionManager implements AutoCloseable {
     if (json.optBoolean("mediaSuccess")) metadata.put("requestContextVerified", "true");
     metadata.put("browserTabId", String.valueOf(json.optInt("tabId", -1)));
     detector.capture(url, contentType, source, pageUrl, headers, metadata);
+    if ("protected-response".equals(source)
+        && "encrypted-relay".equals(metadata.get("transportProtection")))
+      detectionWatchdog.unsupportedTransport(diagnosticTab, url, pageUrl);
     if (!detector.snapshot().isEmpty()) detectionWatchdog.candidate(diagnosticTab);
   }
 

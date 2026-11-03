@@ -1,0 +1,10 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:paddingTop="12dp">
+    <View android:layout_width="32dp" android:layout_height="4dp" android:layout_gravity="center_horizontal" android:background="@color/outline"/>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:paddingHorizontal="20dp" android:layout_marginTop="12dp" android:gravity="center_vertical">
+        <TextView android:id="@+id/tabs_title" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="열린 탭" android:textAppearance="@style/UiTitle"/>
+        <com.google.android.material.button.MaterialButton android:id="@+id/tab_new" style="@style/UiTextAction" android:layout_width="wrap_content" android:layout_height="48dp" android:text="＋ 새 탭"/>
+        <ImageButton android:id="@+id/tabs_dismiss" style="@style/UiIconButton" android:src="@drawable/ic_close" android:contentDescription="탭 목록 닫기"/>
+    </LinearLayout>
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginHorizontal="24dp" android:layout_marginBottom="12dp" android:text="탭을 눌러 전환 · X를 눌러 닫기" android:textAppearance="@style/UiBody"/>
+    <androidx.recyclerview.widget.RecyclerView android:id="@+id/tabs_list" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_weight="1" android:paddingHorizontal="12dp" android:clipToPadding="false"/>
+</LinearLayout>

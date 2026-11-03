@@ -117,12 +117,14 @@ public final class FailureDiagnostics {
   }
 
   private static final Set<String> TYPES =
-      Set.of("HLS", "DASH", "DIRECT_VIDEO", "DIRECT_AUDIO", "MSE", "UNKNOWN");
+      Set.of(
+          "HLS", "DASH", "DIRECT_VIDEO", "DIRECT_AUDIO", "MSE", "ENCRYPTED_TRANSPORT", "UNKNOWN");
   private static final Set<String> SOURCES =
       Set.of(
           "network-response",
           "response-signature",
           "redirect-observation",
+          "protected-response",
           "dom-media",
           "dom-video",
           "performance-resource",
@@ -146,9 +148,10 @@ public final class FailureDiagnostics {
           "CONTEXT_UPDATE",
           "RESUME",
           "PAUSE",
-          "FAILURE");
+          "FAILURE",
+          "PROTECTED_RESPONSE");
   private static final Set<String> BODIES =
-      Set.of("HLS", "DASH", "HTML", "HTML_CHALLENGE", "MEDIA", "UNKNOWN");
+      Set.of("HLS", "DASH", "HTML", "HTML_CHALLENGE", "MEDIA", "ENCRYPTED", "UNKNOWN");
   private static final Set<String> REASONS =
       Set.of(
           "DOWNLOAD_FAILURE",
@@ -157,6 +160,7 @@ public final class FailureDiagnostics {
           "MSE_MANIFEST_NOT_FOUND",
           "BRIDGE_INSTALL_FAILED",
           "BRIDGE_DISCONNECTED",
+          "ENCRYPTED_TRANSPORT_UNSUPPORTED",
           "MANIFEST_PARSE",
           "UNKNOWN");
   private static final Set<String> MIME =

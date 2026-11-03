@@ -11,6 +11,7 @@ public final class MediaCandidate {
     DASH,
     VIDEO,
     AUDIO,
+    PROTECTED,
     UNKNOWN
   }
 
