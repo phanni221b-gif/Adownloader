@@ -289,15 +289,14 @@ public class TabsAndTransportIntegrationTest {
     title("Three");
     assertTrue(device.wait(Until.hasObject(By.text("열린 탭 1")), 3000));
     device.findObject(By.desc("Three 탭 닫기")).click();
-    long end = System.currentTimeMillis() + 3000;
-    while (!"about:blank".equals(manager.tabs().get(0).url) && System.currentTimeMillis() < end)
-      Thread.sleep(100);
-    assertEquals(1, manager.tabs().size());
-    assertEquals("about:blank", manager.tabs().get(0).url);
+    assertTrue(device.wait(Until.hasObject(By.text("열린 탭 1")), 3000));
     ins.runOnMainSync(
-        () ->
-            assertEquals(
-                "1", ((TextView) activity.findViewById(R.id.browser_tabs)).getText().toString()));
+        () -> {
+          assertEquals(1, manager.tabs().size());
+          assertEquals("about:blank", manager.tabs().get(0).url);
+          assertEquals(
+              "1", ((TextView) activity.findViewById(R.id.browser_tabs)).getText().toString());
+        });
     for (var tab : manager.tabs())
       if (tab.preview != null)
         assertTrue(tab.preview.getWidth() <= 240 && tab.preview.getHeight() <= 160);
