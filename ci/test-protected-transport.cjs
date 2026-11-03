@@ -29,5 +29,8 @@ const drain=()=>new Promise(resolve=>setImmediate(resolve));
  r=setup();r.fire('message',{kind:'candidate',url:hinted,source:'dom-media',pageUrl:r.sender.tab.url},r.sender);d=r.request('magic',hinted,'application/octet-stream');r.data('magic',Buffer.from('EMR1'+ 'opaque-ciphertext'.repeat(30)));await drain();
  assert(r.sent.some(m=>m.source==='protected-response'));assert(!r.sent.some(m=>m.kind==='manifest-capture-start'));
  assert(Buffer.concat(r.filters.get('magic').written).equals(Buffer.from('EMR1'+ 'opaque-ciphertext'.repeat(30))),'Encrypted player response must remain byte-identical');
+ r=setup();d={requestId:'old-encrypted',tabId:6,frameId:0,type:'xmlhttprequest',url:hinted,statusCode:200,requestHeaders:[],responseHeaders:[{name:'X-Relay-Envelope',value:'emr2'}]};r.fire('before',d);
+ r.fire('before',{requestId:'navigation',tabId:6,frameId:0,type:'main_frame',url:'https://page.test/next',requestHeaders:[]});r.fire('response',d);
+ assert(!r.sent.some(m=>m.source==='protected-response'),'An old encrypted response must not bind to a new page');
  console.log('Hinted plain HLS capture and opaque protected transport recognition passed; no decryption/session export.');
 })().catch(e=>{console.error(e);process.exitCode=1;});
