@@ -468,7 +468,20 @@ public class RelaySessionIntegrationTest {
     }
     assertEquals("error=" + job.error, DownloadJobStore.State.COMPLETED, job.state);
     published.add(Uri.parse(job.uri));
-    assertFalse(jobs.store.request(id.get()).toString().contains("SESSION_synthetic"));
+    try (var remaining =
+        jobs.store
+            .getReadableDatabase()
+            .rawQuery("SELECT secret FROM jobs WHERE id=?", new String[] {"" + id.get()})) {
+      assertTrue(remaining.moveToFirst());
+      assertTrue("Completed jobs must discard temporary credentials", remaining.isNull(0));
+    }
+    try (var remaining =
+        jobs.store
+            .getReadableDatabase()
+            .rawQuery("SELECT COUNT(*) FROM contexts WHERE job=?", new String[] {"" + id.get()})) {
+      assertTrue(remaining.moveToFirst());
+      assertEquals(0, remaining.getInt(0));
+    }
     assertEquals(0, low.get());
     device.pressBack();
     ins.runOnMainSync(
