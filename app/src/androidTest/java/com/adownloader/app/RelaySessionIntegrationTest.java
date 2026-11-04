@@ -285,14 +285,32 @@ public class RelaySessionIntegrationTest {
           } else if (path.endsWith(".m3u8")) {
             if (path.contains("low")) low.incrementAndGet();
             String playlist = new String(asset("playlist.m3u8"), StandardCharsets.UTF_8);
+            playlist =
+                playlist.replace(
+                    "#EXTM3U",
+                    "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\""
+                        + base
+                        + "/media/"
+                        + id
+                        + "/key.bin\",IV=0x1");
             for (int n = 0; n < 3; n++)
               playlist =
                   playlist.replace(
                       "playlist" + n + ".ts", base + "/media/" + id + "/playlist" + n + ".ts");
             clear = text(playlist);
+          } else if (path.endsWith("/key.bin")) {
+            clear = new byte[16];
           } else {
             segments.incrementAndGet();
             clear = asset(path.substring(path.lastIndexOf('/') + 1));
+            Cipher standardHls = Cipher.getInstance("AES/CBC/PKCS5Padding");
+            byte[] iv = new byte[16];
+            iv[15] = 1;
+            standardHls.init(
+                Cipher.ENCRYPT_MODE,
+                new SecretKeySpec(new byte[16], "AES"),
+                new IvParameterSpec(iv));
+            clear = standardHls.doFinal(clear);
           }
           bytes = status == 200 ? encrypt(id, path, clear, protocol) : clear;
         }
