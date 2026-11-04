@@ -96,6 +96,7 @@ public final class HttpSource implements AutoCloseable {
 
   @Override
   public void close() {
+    if (relay != null) relay.close();
     cookies.close();
     captured.close();
     cookieListener = null;
@@ -229,6 +230,15 @@ public final class HttpSource implements AutoCloseable {
   }
 
   private final TransferControl control;
+  private RelayTransport relay;
+
+  public HttpSource relay(boolean enabled) {
+    if (enabled && relay == null) {
+      relay = new RelayTransport(rootUrl, context.forUrl(rootUrl), control);
+      relay.page(topPage);
+    }
+    return this;
+  }
 
   public HttpSource(String source, Map<String, String> headers) {
     this(source, headers, new TransferControl());
@@ -263,6 +273,7 @@ public final class HttpSource implements AutoCloseable {
   private HttpURLConnection request(
       String url, long offset, long length, String validator, boolean resume, Document previous)
       throws Exception {
+    if (relay != null) return relay.open(url, offset, length);
     try {
       return nativeRequest(url, offset, length, validator, resume, previous);
     } catch (Exception first) {
@@ -681,6 +692,7 @@ public final class HttpSource implements AutoCloseable {
   }
 
   public Document document(String url, Document previous) throws Exception {
+    if (relay != null) return nativeDocument(url, null);
     var playback = MediaNetworkSession.provider();
     if (playback != null && topPage != null && topTab >= 0 && topFrame >= 0) {
       var captured = playback.captured(url, topPage, topTab, topFrame, control);

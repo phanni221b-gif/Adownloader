@@ -8,6 +8,25 @@ import org.junit.Test;
 
 public class MediaDetectorPriorityTest {
   @Test
+  public void onlyRecognizedRelayRootGetsSessionHlsAndVerifiedPlainResponseCanReplaceIt() {
+    var d = new MediaDetector(null);
+    String url = "https://cdn.test/media/" + "A".repeat(40), page = "https://page.test/watch";
+    d.capture(
+        url,
+        "application/x-adownloader-protected",
+        "protected-response",
+        page,
+        Map.of(),
+        Map.of("transportProtection", "encrypted-relay"));
+    assertEquals(MediaCandidate.MediaType.RELAY_HLS, d.snapshot().get(0).getType());
+    d.capture(url, "application/vnd.apple.mpegurl", "dom-media", page, Map.of());
+    assertEquals(MediaCandidate.MediaType.RELAY_HLS, d.snapshot().get(0).getType());
+    d.capture(url, "application/vnd.apple.mpegurl", "response-signature", page, Map.of());
+    assertEquals(1, d.snapshot().size());
+    assertEquals(MediaCandidate.MediaType.HLS, d.snapshot().get(0).getType());
+  }
+
+  @Test
   public void encryptedEnvelopeIsRecognizedWithoutPretendingItIsDownloadableHls() {
     var d = new MediaDetector(null);
     String url = "https://cdn.test/media/opaque", page = "https://page.test/watch";

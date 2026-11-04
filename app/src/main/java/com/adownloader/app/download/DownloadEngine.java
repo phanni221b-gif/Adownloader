@@ -96,7 +96,7 @@ public final class DownloadEngine {
     if (type == MediaCandidate.MediaType.PROTECTED)
       throw new DownloadError(DownloadError.Category.UNSUPPORTED_FORMAT);
     FailureDiagnostics.phase(
-        type == MediaCandidate.MediaType.HLS
+        type == MediaCandidate.MediaType.HLS || type == MediaCandidate.MediaType.RELAY_HLS
             ? FailureDiagnostics.Stage.ROOT_MANIFEST
             : type == MediaCandidate.MediaType.DASH
                 ? FailureDiagnostics.Stage.DASH_MPD
@@ -121,9 +121,14 @@ public final class DownloadEngine {
         source.onContext(checkpoint::requestContext);
         source.browserScope(checkpoint.browserTabId(), checkpoint.browserFrameId());
       }
-      if (type == MediaCandidate.MediaType.HLS || type == MediaCandidate.MediaType.DASH) {
+      source.relay(type == MediaCandidate.MediaType.RELAY_HLS);
+      if (type == MediaCandidate.MediaType.HLS
+          || type == MediaCandidate.MediaType.RELAY_HLS
+          || type == MediaCandidate.MediaType.DASH) {
         List<ManifestParser.Track> tracks = checkpoint == null ? null : checkpoint.loadPlan();
-        if (tracks != null && checkpoint != null && checkpoint.cookieBootstrap()) {
+        if (tracks != null
+            && checkpoint != null
+            && (checkpoint.cookieBootstrap() || type == MediaCandidate.MediaType.RELAY_HLS)) {
           var fresh =
               MediaProbeService.shared().forTransfer(source, url, type, headers, control).tracks();
           if (!RefreshPlanMatcher.compatible(tracks, fresh))

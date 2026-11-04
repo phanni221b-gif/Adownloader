@@ -232,7 +232,8 @@ public final class MediaExtensionManager implements AutoCloseable {
     metadata.put("browserTabId", String.valueOf(json.optInt("tabId", -1)));
     detector.capture(url, contentType, source, pageUrl, headers, metadata);
     if ("protected-response".equals(source)
-        && "encrypted-relay".equals(metadata.get("transportProtection")))
+        && "encrypted-relay".equals(metadata.get("transportProtection"))
+        && !com.adownloader.app.download.RelayTransport.supportedRoot(url))
       detectionWatchdog.unsupportedTransport(diagnosticTab, url, pageUrl);
     if (!detector.snapshot().isEmpty()) detectionWatchdog.candidate(diagnosticTab);
   }

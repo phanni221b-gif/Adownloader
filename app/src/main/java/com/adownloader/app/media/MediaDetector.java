@@ -146,7 +146,9 @@ public final class MediaDetector {
     MediaCandidate.MediaType type =
         "protected-response".equals(source)
                 && "encrypted-relay".equals(metadata.get("transportProtection"))
-            ? MediaCandidate.MediaType.PROTECTED
+            ? com.adownloader.app.download.RelayTransport.supportedRoot(clean)
+                ? MediaCandidate.MediaType.RELAY_HLS
+                : MediaCandidate.MediaType.PROTECTED
             : classify(path, mime);
     if (type == MediaCandidate.MediaType.UNKNOWN) return;
     for (Iterator<Map.Entry<String, MediaCandidate>> iterator = groups.entrySet().iterator();
@@ -157,7 +159,9 @@ public final class MediaDetector {
         if (networkSource(source)
             && (!networkSource(prior.getSource())
                 || prior.getType() == MediaCandidate.MediaType.PROTECTED
-                || type == MediaCandidate.MediaType.PROTECTED)) {
+                || prior.getType() == MediaCandidate.MediaType.RELAY_HLS
+                || type == MediaCandidate.MediaType.PROTECTED
+                || type == MediaCandidate.MediaType.RELAY_HLS)) {
           exact.remove(prior.getExactKey());
           iterator.remove();
         }
