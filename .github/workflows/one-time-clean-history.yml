@@ -1,0 +1,72 @@
+name: One-time Actions history cleanup
+on:
+  push:
+    branches:
+      - cleanup-actions-history-20261105
+    paths:
+      - .github/workflows/one-time-clean-history.yml
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Preserve two newest app runs and delete older completed runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          THIS_RUN: ${{ github.run_id }}
+        run: |
+          python3 - <<'PY'
+          import json, os, time
+          from urllib.request import Request, urlopen
+          from urllib.error import HTTPError
+          repo = os.environ['GH_REPO']
+          token = os.environ['GH_TOKEN']
+          current_id = int(os.environ['THIS_RUN'])
+          base = 'https://api.github.com/repos/' + repo
+          headers = {
+              'Authorization': 'Bearer ' + token,
+              'Accept': 'application/vnd.github+json',
+              'X-GitHub-Api-Version': '2022-11-28',
+              'User-Agent': 'gallery-workflow-maintenance',
+          }
+          def call(url, method='GET'):
+              request = Request(url, headers=headers, method=method)
+              with urlopen(request, timeout=50) as response:
+                  return json.load(response) if method == 'GET' else response.status
+          runs = []
+          for page in range(1, 30):
+              data = call(base + f'/actions/runs?per_page=100&page={page}')
+              batch = data.get('workflow_runs', [])
+              if not batch:
+                  break
+              runs.extend(batch)
+              if len(batch) < 100:
+                  break
+          original = [r for r in runs if r['id'] != current_id
+                      and not r.get('path', '').endswith('one-time-clean-history.yml')]
+          original.sort(key=lambda r: (r['created_at'], r['id']), reverse=True)
+          retain = {r['id'] for r in original[:2]}
+          print('PRESERVING', [(r['id'], r['name']) for r in original[:2]], flush=True)
+          removed = 0
+          skipped = 0
+          for r in original[2:]:
+              if r['status'] != 'completed':
+                  skipped += 1
+                  continue
+              try:
+                  call(base + f'/actions/runs/{r["id"]}', method='DELETE')
+                  removed += 1
+                  print('DELETED', r['id'], r['name'], flush=True)
+              except HTTPError as exc:
+                  print('FAILED', r['id'], exc.code, exc.reason, flush=True)
+                  if exc.code == 403:
+                      raise
+                  skipped += 1
+              time.sleep(0.9)
+          print(f'FINISHED removed={removed} skipped={skipped} preserved={len(retain)}', flush=True)
+          PY
