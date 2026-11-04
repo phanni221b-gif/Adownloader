@@ -35,6 +35,7 @@ public final class MediaSheetController {
 
   public static String type(MediaCandidate item) {
     if (item.getType() == MediaCandidate.MediaType.PROTECTED) return "보호된 전송";
+    if (item.getType() == MediaCandidate.MediaType.RELAY_HLS) return "세션 HLS";
     if (item.getType() == MediaCandidate.MediaType.HLS) return "HLS";
     if (item.getType() == MediaCandidate.MediaType.DASH) return "DASH";
     String path = Uri.parse(item.getUrl()).getPath();
@@ -145,6 +146,7 @@ public final class MediaSheetController {
 
   private String preview(MediaCandidate item) {
     if (item.getType() != MediaCandidate.MediaType.HLS
+        && item.getType() != MediaCandidate.MediaType.RELAY_HLS
         && item.getType() != MediaCandidate.MediaType.DASH) return "원본 파일 그대로 저장";
     try {
       return MediaProbeService.shared().preview(item).description;

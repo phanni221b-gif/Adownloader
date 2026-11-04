@@ -8,6 +8,7 @@ import java.util.Map;
 public final class MediaCandidate {
   public enum MediaType {
     HLS,
+    RELAY_HLS,
     DASH,
     VIDEO,
     AUDIO,
@@ -103,6 +104,7 @@ public final class MediaCandidate {
     String label;
     switch (type) {
       case HLS:
+      case RELAY_HLS:
         label = "HLS";
         break;
       case DASH:

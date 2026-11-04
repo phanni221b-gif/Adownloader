@@ -430,6 +430,7 @@ public final class RecordsController {
                 ? "MP4"
                 : row.optString("mime").contains("webm") ? "WEBM" : "동영상";
       else if (type.equals("AUDIO")) type = "오디오";
+      else if (type.equals("RELAY_HLS")) type = "세션 HLS";
       String state =
           row.optString("state") + (row.has("queue") ? " · " + row.optInt("queue") + "번째" : "");
       holder.subtitle.setText(

@@ -118,7 +118,14 @@ public final class FailureDiagnostics {
 
   private static final Set<String> TYPES =
       Set.of(
-          "HLS", "DASH", "DIRECT_VIDEO", "DIRECT_AUDIO", "MSE", "ENCRYPTED_TRANSPORT", "UNKNOWN");
+          "HLS",
+          "RELAY_HLS",
+          "DASH",
+          "DIRECT_VIDEO",
+          "DIRECT_AUDIO",
+          "MSE",
+          "ENCRYPTED_TRANSPORT",
+          "UNKNOWN");
   private static final Set<String> SOURCES =
       Set.of(
           "network-response",

@@ -355,6 +355,7 @@ public final class DownloadJobs {
                   control.check();
                   boolean segmented =
                       candidate.getType() == MediaCandidate.MediaType.HLS
+                          || candidate.getType() == MediaCandidate.MediaType.RELAY_HLS
                           || candidate.getType() == MediaCandidate.MediaType.DASH;
                   var playback =
                       segmented

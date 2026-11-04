@@ -204,6 +204,8 @@ public final class MediaProbeService implements AutoCloseable {
       Map<String, String> headers,
       TransferControl control)
       throws Exception {
+    // Child URLs belong to the session owned by this HttpSource, never a closed preview session.
+    if (type == MediaCandidate.MediaType.RELAY_HLS) return fetchWithSource(source, url, type, null);
     TreeMap<String, String> canonical = new TreeMap<>();
     headers.forEach((k, v) -> canonical.put(k.toLowerCase(Locale.ROOT), v));
     Entry found;
@@ -377,7 +379,8 @@ public final class MediaProbeService implements AutoCloseable {
         new HttpSource(url, headers, control)
             .pageContext(page)
             .resourceContexts(contexts)
-            .browserScope(tab, frame)) {
+            .browserScope(tab, frame)
+            .relay(type == MediaCandidate.MediaType.RELAY_HLS)) {
       return fetchWithSource(
           source, url, type, previous != null && previous.requiresCookieSession ? null : previous);
     }
@@ -389,7 +392,7 @@ public final class MediaProbeService implements AutoCloseable {
     Map<String, HttpSource.Document> documents = new LinkedHashMap<>();
     HttpSource.Document root = document(source, url, previous, documents);
     List<ManifestParser.Track> tracks;
-    if (type == MediaCandidate.MediaType.HLS) {
+    if (type == MediaCandidate.MediaType.HLS || type == MediaCandidate.MediaType.RELAY_HLS) {
       String rootText = HlsDiagnostic.body(root, "root");
       ManifestParser.HlsSelection selection;
       try {

@@ -76,7 +76,8 @@ public final class JobRunner {
       if (!store.transition(
           job.id, DownloadJobStore.State.PREPARING, DownloadJobStore.State.DOWNLOADING)) return;
 
-      boolean segmented = "HLS".equals(job.type) || "DASH".equals(job.type);
+      boolean segmented =
+          "HLS".equals(job.type) || "RELAY_HLS".equals(job.type) || "DASH".equals(job.type);
       Uri pending =
           ensurePending(job.id, job.name, "AUDIO".equals(job.type) ? "audio/mp4" : "video/mp4");
       destination =
