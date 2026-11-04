@@ -452,6 +452,13 @@ public class RelaySessionIntegrationTest {
     published.add(Uri.parse(job.uri));
     assertFalse(jobs.store.request(id.get()).toString().contains("SESSION_synthetic"));
     assertEquals(0, low.get());
+    device.pressBack();
+    ins.runOnMainSync(
+        () ->
+            ((com.google.android.material.bottomnavigation.BottomNavigationView)
+                    activity.findViewById(R.id.main_navigation))
+                .setSelectedItemId(R.id.nav_downloads));
+    assertTrue(device.wait(Until.hasObject(By.textContains("완료 · 세션 HLS")), 5000));
     File proof = new File("/sdcard/Download/Adownloader-ui-proof/relay-session-download.png");
     proof.getParentFile().mkdirs();
     var screenshot = ins.getUiAutomation().takeScreenshot();
