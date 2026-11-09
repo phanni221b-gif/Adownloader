@@ -36,6 +36,7 @@ public final class BrowserSessionManager {
     public String url = "about:blank", title = "";
     private String state;
     private boolean back, forward;
+    private MediaSession playback;
     private int progress = 100;
     public android.graphics.Bitmap preview;
     private long previewGeneration;
@@ -52,6 +53,7 @@ public final class BrowserSessionManager {
   private Tab active;
   private boolean visible = true, constructing = true;
   private boolean previewPending;
+  private boolean appForeground;
   private BiConsumer<GeckoSession, Boolean> observer;
 
   public BrowserSessionManager(Context context, GeckoView view, Listener listener) {
@@ -93,6 +95,24 @@ public final class BrowserSessionManager {
             });
     owner[0] = tab;
     tabs.add(tab);
+    tab.session.setMediaSessionDelegate(
+        new MediaSession.Delegate() {
+          @Override
+          public void onActivated(GeckoSession session, MediaSession media) {
+            tab.playback = media;
+            if (!appForeground) media.pause();
+          }
+
+          @Override
+          public void onPlay(GeckoSession session, MediaSession media) {
+            if (!appForeground) media.pause();
+          }
+
+          @Override
+          public void onDeactivated(GeckoSession session, MediaSession media) {
+            if (tab.playback == media) tab.playback = null;
+          }
+        });
     tab.session.setNavigationDelegate(
         new GeckoSession.NavigationDelegate() {
           @Override
@@ -398,6 +418,13 @@ public final class BrowserSessionManager {
       tab.session.close();
     }
     tabs.clear();
+  }
+
+  public void setAppForeground(boolean value) {
+    appForeground = value;
+    if (!value) {
+      for (Tab tab : tabs) if (tab.playback != null) tab.playback.pause();
+    }
   }
 
   public void setActive(boolean value) {

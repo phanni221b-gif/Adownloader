@@ -16,6 +16,7 @@ public final class DownloadJobs {
     void wake();
   }
 
+  public static final int MAX_PARALLEL = 3;
   private static DownloadJobs instance;
 
   public static synchronized DownloadJobs get(Context context) {
@@ -26,7 +27,7 @@ public final class DownloadJobs {
   private final Context context;
   public final DownloadJobStore store;
   private final ExecutorService commands = Executors.newSingleThreadExecutor(),
-      workers = Executors.newFixedThreadPool(1);
+      workers = Executors.newFixedThreadPool(MAX_PARALLEL);
   private final java.util.Set<Long> deferredResume =
       java.util.concurrent.ConcurrentHashMap.newKeySet();
 
@@ -41,8 +42,7 @@ public final class DownloadJobs {
   private final Handler main = new Handler(Looper.getMainLooper());
   private final ConcurrentMap<Long, TransferControl> active = new ConcurrentHashMap<>();
   private Host host;
-  private boolean draining, wakeRequested;
-  private volatile boolean permitted;
+  private boolean permitted;
   private Runnable onIdle;
 
   private DownloadJobs(Context context) {
@@ -126,15 +126,16 @@ public final class DownloadJobs {
     request.remove("cookieBootstrap");
   }
 
-  public void attach(Host host) {
+  public synchronized void attach(Host host) {
     this.host = host;
     permitted = true;
   }
 
-  public void detach(Host owner) {
+  public synchronized void detach(Host owner) {
     if (host == owner) {
       host = null;
       permitted = false;
+      onIdle = null;
       stop();
     }
   }
@@ -181,78 +182,68 @@ public final class DownloadJobs {
     }
   }
 
+  public int parallelLimit() {
+    int value = context.getSharedPreferences("downloads", 0).getInt("parallel_limit", 1);
+    return Math.max(1, Math.min(MAX_PARALLEL, value));
+  }
+
+  public void setParallelLimit(int value) {
+    if (value < 1 || value > MAX_PARALLEL) throw new IllegalArgumentException("Parallel limit");
+    context.getSharedPreferences("downloads", 0).edit().putInt("parallel_limit", value).apply();
+    if (host != null) host.wake();
+  }
+
   public synchronized void drain(Runnable finished) {
     onIdle = finished;
-    wakeRequested = true;
-    if (draining) return;
-    draining = true;
-    workers.execute(this::pump);
+    commands.execute(this::dispatch);
   }
 
-  private Runnable idleLocked() {
-    draining = false;
-    Runnable callback = onIdle;
-    onIdle = null;
-    return callback;
-  }
-
-  private void postIdle(Runnable callback) {
-    if (callback != null) main.post(callback);
-  }
-
-  private void pump() {
-    try {
-      while (permitted) {
-        DownloadJobStore.Job job = store.claim();
-        if (job == null) {
-          Runnable callback;
-          synchronized (this) {
-            if (wakeRequested) {
-              wakeRequested = false;
-              continue;
-            }
-            callback = idleLocked();
-          }
-          postIdle(callback);
-          return;
+  private synchronized void dispatch() {
+    while (active.size() < parallelLimit()) {
+      DownloadJobStore.Job job = permitted ? store.claim() : null;
+      if (job == null) {
+        if (active.isEmpty() && onIdle != null) {
+          main.post(onIdle);
+          onIdle = null;
         }
-        TransferControl control = new TransferControl();
-        active.put(job.id, control);
-        try {
-          new JobRunner(context, store).run(job, control);
-        } catch (RuntimeException unexpected) {
-          store.state(job.id, DownloadJobStore.State.FAILED, "UNKNOWN");
-        } finally {
-          commands
-              .submit(
-                  () -> {
-                    active.remove(job.id);
-                    if (deferredResume.remove(job.id)) {
-                      DownloadJobStore.Job current = store.get(job.id);
-                      if (current != null
-                          && (current.state == DownloadJobStore.State.PAUSED
-                              || current.state == DownloadJobStore.State.FAILED)) {
-                        try {
-                          prepareRetry(current);
-                          store.state(job.id, DownloadJobStore.State.QUEUED, "");
-                        } catch (Exception failure) {
-                          store.state(job.id, DownloadJobStore.State.FAILED, "STORAGE");
-                        }
-                      }
-                    }
-                    finishHistoryCleanup(job.id);
-                  })
-              .get();
+        return;
+      }
+      TransferControl control = new TransferControl();
+      active.put(job.id, control);
+      workers.execute(() -> run(job, control));
+    }
+  }
+
+  private void run(DownloadJobStore.Job job, TransferControl control) {
+    try {
+      new JobRunner(context, store).run(job, control);
+    } catch (RuntimeException unexpected) {
+      store.state(job.id, DownloadJobStore.State.FAILED, "UNKNOWN");
+    } finally {
+      commands.execute(() -> finish(job.id));
+    }
+  }
+
+  private void finish(long id) {
+    try {
+      active.remove(id);
+      if (deferredResume.remove(id)) {
+        DownloadJobStore.Job current = store.get(id);
+        if (current != null
+            && (current.state == DownloadJobStore.State.PAUSED
+                || current.state == DownloadJobStore.State.FAILED)) {
+          try {
+            prepareRetry(current);
+            store.state(id, DownloadJobStore.State.QUEUED, "");
+          } catch (Exception failure) {
+            store.state(id, DownloadJobStore.State.FAILED, "STORAGE");
+          }
         }
       }
-    } catch (Exception unavailable) {
-      /* DB remains authoritative; never report unfinished jobs as complete. */
+      finishHistoryCleanup(id);
+    } finally {
+      dispatch();
     }
-    Runnable callback;
-    synchronized (this) {
-      callback = idleLocked();
-    }
-    postIdle(callback);
   }
 
   public void stop() {

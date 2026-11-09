@@ -11,6 +11,7 @@ import androidx.appcompat.app.AppCompatDelegate;
 import androidx.appcompat.widget.PopupMenu;
 import androidx.recyclerview.widget.*;
 import com.adownloader.app.R;
+import com.adownloader.app.jobs.DownloadJobs;
 import com.google.android.material.bottomsheet.BottomSheetDialog;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.snackbar.Snackbar;
@@ -45,6 +46,7 @@ public final class SettingsController {
                     },
                     null,
                     null));
+    activity.findViewById(R.id.setting_parallel_downloads).setOnClickListener(this::parallelMenu);
     activity.findViewById(R.id.setting_theme).setOnClickListener(this::themeMenu);
     activity
         .findViewById(R.id.setting_background)
@@ -80,6 +82,8 @@ public final class SettingsController {
   }
 
   public void refresh() {
+    ((MaterialButton) activity.findViewById(R.id.setting_parallel_downloads))
+        .setText("동시 다운로드 · " + DownloadJobs.get(activity).parallelLimit() + "개");
     int mode = theme(activity);
     ((MaterialButton) activity.findViewById(R.id.setting_theme))
         .setText(
@@ -90,7 +94,25 @@ public final class SettingsController {
     boolean notifications =
         activity.getSystemService(NotificationManager.class).areNotificationsEnabled();
     ((TextView) activity.findViewById(R.id.background_state))
-        .setText("화면을 닫아도 다운로드가 계속됩니다.\n완료 알림 " + (notifications ? "켜짐" : "꺼짐 · 탭해서 설정"));
+        .setText(
+            "앱을 벗어나면 브라우저 재생은 멈추고 다운로드는 계속됩니다.\n완료 알림 " + (notifications ? "켜짐" : "꺼짐 · 탭해서 설정"));
+  }
+
+  private void parallelMenu(View anchor) {
+    DownloadJobs jobs = DownloadJobs.get(activity);
+    PopupMenu menu = new PopupMenu(activity, anchor);
+    for (int count = 1; count <= DownloadJobs.MAX_PARALLEL; count++)
+      menu.getMenu()
+          .add(0, count, count, count + "개")
+          .setCheckable(true)
+          .setChecked(count == jobs.parallelLimit());
+    menu.setOnMenuItemClickListener(
+        item -> {
+          jobs.setParallelLimit(item.getItemId());
+          refresh();
+          return true;
+        });
+    menu.show();
   }
 
   private void themeMenu(View anchor) {
