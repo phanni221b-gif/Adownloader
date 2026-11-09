@@ -297,7 +297,10 @@ public final class MainActivity extends AppCompatActivity
         .setVisibility(id == R.id.nav_library ? View.VISIBLE : View.GONE);
     findViewById(R.id.settings_page)
         .setVisibility(id == R.id.nav_settings ? View.VISIBLE : View.GONE);
-    if (browser != null) browser.setActive(started && id == R.id.nav_browser);
+    if (browser != null) {
+      browser.setAppForeground(started);
+      browser.setActive(started && id == R.id.nav_browser);
+    }
     if (id == R.id.nav_downloads || id == R.id.nav_library) records.refresh(false);
     if (id == R.id.nav_settings) settings.refresh();
   }
@@ -579,7 +582,10 @@ public final class MainActivity extends AppCompatActivity
     super.onResume();
     handleJobIntent();
     started = true;
-    if (browser != null) browser.setActive(selected == R.id.nav_browser);
+    if (browser != null) {
+      browser.setAppForeground(true);
+      browser.setActive(selected == R.id.nav_browser);
+    }
     if (records != null) records.refresh(false);
     if (settings != null) settings.refresh();
   }
@@ -588,6 +594,7 @@ public final class MainActivity extends AppCompatActivity
   protected void onPause() {
     started = false;
     if (browser != null) {
+      browser.setAppForeground(false);
       browser.setActive(false);
       browserData.saveTabs(browser.snapshotTabs(true));
     }
