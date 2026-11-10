@@ -6,8 +6,8 @@
         <com.google.android.material.button.MaterialButton android:id="@+id/setting_reset_popups" style="@style/UiSetting" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="팝업 허용 기록 초기화" />
 
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="24dp" android:text="다운로드" android:textAppearance="@style/UiSection" />
-        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:text="최고 원본 화질 자동 선택" android:textColor="@color/ink" android:textSize="16sp" />
-        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:text="Movies / Adownloader\nMusic / Adownloader" android:textAppearance="@style/UiBody" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:text="최고 원본 화질로 저장" android:textColor="@color/ink" android:textSize="15sp" android:fontFamily="sans-serif-medium" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="2dp" android:layout_marginBottom="8dp" android:text="재인코딩 없이 원본 그대로 · 영상은 Movies/Adownloader, 음악은 Music/Adownloader" android:textAppearance="@style/UiBody" />
         <com.google.android.material.button.MaterialButton android:id="@+id/setting_parallel_downloads" style="@style/UiSetting" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="동시 다운로드" />
         <com.google.android.material.button.MaterialButton android:id="@+id/setting_background" style="@style/UiSetting" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="백그라운드 다운로드 상태" />
         <TextView android:id="@+id/background_state" android:layout_width="match_parent" android:layout_height="wrap_content" android:textAppearance="@style/UiBody" android:layout_marginBottom="20dp" />
@@ -26,10 +26,10 @@
             </LinearLayout>
         </LinearLayout>
 
-        <com.google.android.material.button.MaterialButton android:id="@+id/setting_diagnostics" style="@style/UiSetting" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:text="기기 진단 정보" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="28dp" android:text="문제 해결" android:textAppearance="@style/UiSection" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/setting_diagnostics" style="@style/UiSetting" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:text="기기 진단 정보" />
         <com.google.android.material.button.MaterialButton android:id="@+id/setting_failure_share" style="@style/UiSetting" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="최근 실패 보고서 공유" />
         <com.google.android.material.button.MaterialButton android:id="@+id/setting_failure_clear" style="@style/UiSetting" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="진단 기록 모두 삭제" />
-        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="실패 진단은 기기에만 저장됩니다. 공유를 누를 때만 JSON 파일로 내보냅니다." android:textAppearance="@style/UiBody" />
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:text="DRM 우회 기능 없음" android:textAppearance="@style/UiBody" />
     </LinearLayout>
 </ScrollView>

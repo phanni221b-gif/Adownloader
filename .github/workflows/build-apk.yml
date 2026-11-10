@@ -52,6 +52,7 @@ jobs:
           path: |
             app/build/test-results/testDebugUnitTest/
             app/build/reports/tests/testDebugUnitTest/
+            app/build/ui-render/
             app/build/reports/response-capture-*.json
       - name: Check packaged engine, ABI and launcher
         run: |

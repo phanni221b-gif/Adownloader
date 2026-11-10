@@ -171,13 +171,18 @@ public final class MainActivity extends AppCompatActivity
           return WindowInsets.CONSUMED;
         });
     address = findViewById(R.id.address_bar);
-    address.setText(currentUrl);
+    address.setText(displayUrl(currentUrl));
     address.setOnFocusChangeListener(
         (view, editing) -> {
           // Native address editing owns input until the user submits or touches the page.
           // A resized Gecko surface must not take focus back while the IME is opening.
           geckoView.setFocusable(!editing);
           geckoView.setFocusableInTouchMode(!editing);
+          // Browsing shows a short host/path; editing shows the full address, selected.
+          if (editing) {
+            address.setText(currentUrl.equals("about:blank") ? "" : currentUrl);
+            address.selectAll();
+          } else address.setText(displayUrl(currentUrl));
         });
     geckoView.setOnTouchListener(
         (view, event) -> {
@@ -208,6 +213,7 @@ public final class MainActivity extends AppCompatActivity
     forward.setEnabled(canForward);
     back.setOnClickListener(v -> browser.goBack());
     forward.setOnClickListener(v -> browser.goForward());
+    updateToolbarWidth();
     findViewById(R.id.browser_refresh).setOnClickListener(v -> browser.reload());
     findViewById(R.id.browser_tabs).setOnClickListener(v -> browserTools.showTabs());
     onTabsChanged();
@@ -216,13 +222,18 @@ public final class MainActivity extends AppCompatActivity
             v -> {
               PopupMenu menu = new PopupMenu(this, v);
               menu.inflate(R.menu.browser_menu);
+              // On compact widths the toolbar has no back/forward buttons (system back covers
+              // back); forward lives here instead.
+              MenuItem forwardItem = menu.getMenu().findItem(R.id.menu_forward);
+              forwardItem.setVisible(compactToolbar());
+              forwardItem.setEnabled(canForward);
               if (browserTools != null) browserTools.addMenu(menu);
               menu.setOnMenuItemClickListener(
                   item -> {
                     int id = item.getItemId();
                     if (browserTools != null && browserTools.handle(id)) return true;
                     if (id == R.id.menu_home) browser.load("https://www.google.com");
-                    else if (id == R.id.menu_reload) browser.reload();
+                    else if (id == R.id.menu_forward) browser.goForward();
                     else if (id == R.id.menu_clear_media) detector.reset();
                     else selectPage(R.id.nav_settings);
                     return true;
@@ -250,6 +261,29 @@ public final class MainActivity extends AppCompatActivity
     if (folds != null) folds.refresh();
   }
 
+  private boolean compactToolbar() {
+    return getResources().getConfiguration().screenWidthDp < 600;
+  }
+
+  /** Phones get the address field the space of back/forward; folds and tablets keep them. */
+  private void updateToolbarWidth() {
+    if (back == null) return;
+    int visibility = compactToolbar() ? View.GONE : View.VISIBLE;
+    back.setVisibility(visibility);
+    forward.setVisibility(visibility);
+  }
+
+  /** Short form for the idle address bar: no https:// or www., no trailing slash. */
+  static String displayUrl(String url) {
+    if (url == null || url.isEmpty() || url.equals("about:blank")) return "";
+    String value = url;
+    if (value.startsWith("https://")) value = value.substring(8);
+    if (value.startsWith("www.")) value = value.substring(4);
+    if (value.endsWith("/") && value.indexOf('/') == value.length() - 1)
+      value = value.substring(0, value.length() - 1);
+    return value;
+  }
+
   private void navigate(String raw) {
     String value = raw == null ? "" : raw.trim();
     if (value.isEmpty()) return;
@@ -267,7 +301,7 @@ public final class MainActivity extends AppCompatActivity
     geckoView.requestFocus();
     ((InputMethodManager) getSystemService(INPUT_METHOD_SERVICE))
         .hideSoftInputFromWindow(address.getWindowToken(), 0);
-    if (input.trim().isEmpty()) address.setText(currentUrl);
+    if (input.trim().isEmpty()) address.setText(displayUrl(currentUrl));
     else navigate(input);
   }
 
@@ -315,7 +349,9 @@ public final class MainActivity extends AppCompatActivity
               if (isDestroyed()) return;
               Snackbar.make(
                       root,
-                      id > 0 ? "다운로드 작업을 저장했습니다." : "작업을 저장하지 못했습니다. 저장 공간을 확인해 주세요.",
+                      id > 0
+                          ? "다운로드를 시작했습니다."
+                          : "다운로드를 시작하지 못했습니다. 보호된 영상이거나 저장 공간이 부족할 수 있습니다.",
                       Snackbar.LENGTH_SHORT)
                   .setAnchorView(findViewById(R.id.main_navigation))
                   .setAction("보기", v -> selectPage(R.id.nav_downloads))
@@ -344,6 +380,15 @@ public final class MainActivity extends AppCompatActivity
   }
 
   private void handleJobIntent() {
+    if (LinkReceiverActivity.ACTION_OPEN_URL.equals(getIntent().getAction())
+        && getIntent().getData() != null) {
+      String url = getIntent().getData().toString();
+      getIntent().setAction(Intent.ACTION_MAIN);
+      selectPage(R.id.nav_browser);
+      // Before the first page loads, loadInitialPage() opens the intent's data itself.
+      if (initialLoaded && browser != null && !browser.newTab(url)) browser.load(url);
+      return;
+    }
     if ("OPEN_DOWNLOADS".equals(getIntent().getAction())) {
       getIntent().setAction(Intent.ACTION_MAIN);
       selectPage(R.id.nav_downloads);
@@ -428,7 +473,7 @@ public final class MainActivity extends AppCompatActivity
                   .build()
                   .equals(Uri.parse(url).buildUpon().fragment(null).build())) detector.reset();
           currentUrl = url;
-          if (!address.hasFocus()) address.setText(url);
+          if (!address.hasFocus()) address.setText(displayUrl(url));
         });
   }
 
@@ -572,6 +617,7 @@ public final class MainActivity extends AppCompatActivity
             || shellFontScale != getResources().getConfiguration().fontScale)) bindShell();
     else if (records != null) {
       records.resize();
+      updateToolbarWidth();
       root.requestApplyInsets();
     }
   }
