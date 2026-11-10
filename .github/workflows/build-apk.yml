@@ -114,4 +114,4 @@ jobs:
             ui-logcat.txt
             extension-performance.json
             process-recovery-results/
-# The fixed private release key remains off GitHub. This workflow cannot publish an unsigned APK.
+# This workflow never publishes. Signed releases come from release.yml (existing key, certificate-pinned).
