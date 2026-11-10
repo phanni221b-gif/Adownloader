@@ -260,7 +260,8 @@ public class UiFlowTest {
     Thread.sleep(3500);
     assertTrue(
         "Search input navigates to Google",
-        view("address_bar").getText().startsWith("https://www.google.com/"));
+        // The idle address bar shows the short form (no https://www.).
+        view("address_bar").getText().startsWith("google.com/"));
     snapshot("public-search");
   }
 
