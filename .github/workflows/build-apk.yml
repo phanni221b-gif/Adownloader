@@ -54,7 +54,7 @@ jobs:
             echo "BEGIN-PNG $(basename "$f")"; base64 -w 0 "$f"; echo; echo "END-PNG"
             echo "::endgroup::"
           done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         continue-on-error: true  # private-repo artifact quota must not fail verification
         with:
@@ -75,7 +75,7 @@ jobs:
           grep "launchable-activity: name='com.adownloader.app.MainActivity'" apk-badging.txt
           if grep -R -E 'import android.webkit|androidx.webkit|class (BrowserActivity|StableBrowserActivity|GeckoBrowserActivity)' app/src/main app/build.gradle.kts; then exit 1; fi
           sha256sum "$APK" > unsigned.sha256
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         # ~200 MB per run: only keep the unsigned APK for main; releases are built by release.yml.
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         continue-on-error: true
@@ -125,7 +125,7 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: bash ci/run-android-tests.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         continue-on-error: true
         with:
