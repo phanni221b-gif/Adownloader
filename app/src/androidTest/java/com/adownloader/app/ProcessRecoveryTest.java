@@ -139,7 +139,7 @@ public class ProcessRecoveryTest {
     if (!direct) {
       List<ManifestParser.Track> plan =
           PlanCodec.decode(jobs.store.request(id).getJSONArray("plan"));
-      firstPart = Uri.parse(plan.get(0).parts.get(kind.equals("dash") ? 1 : 0).url).getPath();
+      firstPart = committedPartPath(jobs, id, plan, kind.equals("dash"));
     }
     if (jobs.store.get(id).state == DownloadJobStore.State.PAUSED)
       instrumentation.runOnMainSync(() -> jobs.action(id, "RESUME", null));
@@ -415,6 +415,29 @@ public class ProcessRecoveryTest {
     return id[0];
   }
 
+  /**
+   * A media part that is actually committed. Segments are fetched concurrently, so the first
+   * committed part is not necessarily part 0 (which may still have been in flight when stopped).
+   */
+  private String committedPartPath(
+      DownloadJobs jobs, long id, List<ManifestParser.Track> plan, boolean skipInit)
+      throws Exception {
+    try (android.database.Cursor c =
+        jobs.store
+            .getReadableDatabase()
+            .rawQuery(
+                "SELECT track,part FROM parts WHERE job=? ORDER BY track,part",
+                new String[] {"" + id})) {
+      while (c.moveToNext()) {
+        ManifestParser.Part part = plan.get(c.getInt(0)).parts.get(c.getInt(1));
+        if (skipInit && part.initialization) continue;
+        return Uri.parse(part.url).getPath();
+      }
+    }
+    fail("No committed media part");
+    return null;
+  }
+
   private void parts(DownloadJobs jobs, long id, int count) throws Exception {
     long until = System.currentTimeMillis() + 15000;
     while (System.currentTimeMillis() < until) {
@@ -448,9 +471,7 @@ public class ProcessRecoveryTest {
     if (!direct) {
       List<ManifestParser.Track> plan =
           PlanCodec.decode(jobs.store.request(id).getJSONArray("plan"));
-      reusedPart =
-          Uri.parse(plan.get(0).parts.get(type == MediaCandidate.MediaType.DASH ? 1 : 0).url)
-              .getPath();
+      reusedPart = committedPartPath(jobs, id, plan, type == MediaCandidate.MediaType.DASH);
     }
     get(changed ? "/change" : "/expire");
     action(jobs, id, "RESUME");
