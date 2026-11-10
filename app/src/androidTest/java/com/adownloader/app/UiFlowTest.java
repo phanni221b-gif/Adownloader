@@ -138,7 +138,7 @@ public class UiFlowTest {
     device.pressEnter();
     long deadline = System.currentTimeMillis() + 15000;
     while (System.currentTimeMillis() < deadline) {
-      if (view("address_bar").getText().equals(url) && view("browser_back").isEnabled()) {
+      if (view("address_bar").getText().equals(MainActivity.displayUrl(url)) && canGoBack()) {
         Thread.sleep(250);
         return;
       }
@@ -153,7 +153,34 @@ public class UiFlowTest {
             + ", actual="
             + location.get(activity)
             + ", back="
-            + view("browser_back").isEnabled());
+            + canGoBack());
+  }
+
+  /** Phone widths have no back/forward buttons: system back and the menu replace them. */
+  private boolean canGoBack() throws Exception {
+    Field field = MainActivity.class.getDeclaredField("canBack");
+    field.setAccessible(true);
+    boolean[] value = new boolean[1];
+    instrumentation.runOnMainSync(
+        () -> {
+          try {
+            value[0] = field.getBoolean(activity);
+          } catch (IllegalAccessException e) {
+            throw new AssertionError(e);
+          }
+        });
+    return value[0];
+  }
+
+  private void goBack() {
+    device.pressBack();
+  }
+
+  private void goForward() {
+    view("browser_menu").click();
+    UiObject2 item = device.wait(Until.findObject(By.text("앞으로")), 5000);
+    assertNotNull("Forward is in the browser menu on compact widths", item);
+    item.click();
   }
 
   private void snapshot(String name) throws Exception {
@@ -209,12 +236,12 @@ public class UiFlowTest {
   @Test
   public void addressEntryNavigationAndPublicSearch() throws Exception {
     navigate(base + "second.html");
-    assertTrue(view("browser_back").isEnabled());
-    view("browser_back").click();
+    assertTrue(canGoBack());
+    goBack();
     device.waitForIdle();
     Thread.sleep(500);
     assertEquals(base + "index.html", view("address_bar").getText());
-    view("browser_forward").click();
+    goForward();
     device.waitForIdle();
     Thread.sleep(500);
     assertEquals(base + "second.html", view("address_bar").getText());
@@ -381,7 +408,7 @@ public class UiFlowTest {
         view(action == 1 ? "action_confirm" : "action_extra").click();
         Thread.sleep(500);
         assertEquals(base + "popup.html", view("address_bar").getText());
-        view("browser_back").click();
+        goBack();
         Thread.sleep(500);
       }
     }
