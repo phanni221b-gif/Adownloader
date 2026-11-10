@@ -99,6 +99,20 @@ public class ProcessRecoveryTest {
         }
       if (committed) {
         assertNotEquals(DownloadJobStore.State.COMPLETED, job.state);
+        if (type != MediaCandidate.MediaType.VIDEO)
+          // Recorded before the force-stop: after relaunch the job resumes by itself and its
+          // plan and part rows are cleaned up once it completes.
+          context
+              .getSharedPreferences("recovery-test", 0)
+              .edit()
+              .putString(
+                  kind + "-part",
+                  committedPartPath(
+                      jobs,
+                      id[0],
+                      PlanCodec.decode(jobs.store.request(id[0]).getJSONArray("plan")),
+                      type == MediaCandidate.MediaType.DASH))
+              .commit();
         return;
       }
       Thread.sleep(25);
@@ -130,23 +144,29 @@ public class ProcessRecoveryTest {
             : recovered.state == DownloadJobStore.State.QUEUED
                 || recovered.state == DownloadJobStore.State.PAUSED
                 || recovered.state == DownloadJobStore.State.COMPLETED);
-    assertTrue(
-        jobs.store
-            .request(id)
-            .getJSONObject("headers")
-            .getString("Cookie")
-            .contains("PRIVATE_REQUEST_CONTEXT"));
-    if (kind.equals("cookie-hls")) {
-      var savedHeaders = jobs.store.request(id).getJSONObject("headers");
-      assertEquals("Bearer PRIVATE_RECOVERY_AUTH", savedHeaders.getString("Authorization"));
-      assertEquals("PRIVATE_RECOVERY_TOKEN", savedHeaders.getString("X-Playback-Token"));
+    // The encrypted context survives the restart. A job that already finished by itself has
+    // discarded it by design; its authenticated completion below proves it was intact.
+    JSONObject saved = null;
+    try {
+      saved = jobs.store.request(id);
+    } catch (java.security.GeneralSecurityException discarded) {
+      assertEquals(
+          "Only a completed job may have discarded its context",
+          DownloadJobStore.State.COMPLETED,
+          jobs.store.get(id).state);
     }
-    String firstPart = null;
-    if (!direct) {
-      List<ManifestParser.Track> plan =
-          PlanCodec.decode(jobs.store.request(id).getJSONArray("plan"));
-      firstPart = committedPartPath(jobs, id, plan, kind.equals("dash"));
+    if (saved != null) {
+      assertTrue(
+          saved.getJSONObject("headers").getString("Cookie").contains("PRIVATE_REQUEST_CONTEXT"));
+      if (kind.equals("cookie-hls")) {
+        var savedHeaders = saved.getJSONObject("headers");
+        assertEquals("Bearer PRIVATE_RECOVERY_AUTH", savedHeaders.getString("Authorization"));
+        assertEquals("PRIVATE_RECOVERY_TOKEN", savedHeaders.getString("X-Playback-Token"));
+      }
     }
+    String firstPart =
+        direct ? null : context.getSharedPreferences("recovery-test", 0).getString(kind + "-part", null);
+    if (!direct) assertNotNull("prepare must record a committed part", firstPart);
     if (jobs.store.get(id).state == DownloadJobStore.State.PAUSED)
       instrumentation.runOnMainSync(() -> jobs.action(id, "RESUME", null));
     long deadline = System.currentTimeMillis() + 60000;
