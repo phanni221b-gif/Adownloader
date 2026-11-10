@@ -146,7 +146,7 @@ public final class JobRunner {
       }
 
       store.cleanup(job.id);
-      AutoResume.reset(context, job.id);
+      AutoResume.reset(context, store, job.id);
       JobNotifications.status(context, completed);
     } catch (Exception error) {
       try {
@@ -172,7 +172,7 @@ public final class JobRunner {
           // The OS stopped the transfer job (network change, quota, restriction). Queue it again
           // so the rescheduled job continues by itself; only a user pause stays paused.
           if (!control.userRequested()
-              && AutoResume.take(context, job.id, progressed(current, startBytes, startSegment))) {
+              && AutoResume.take(context, store, job.id, progressed(current, startBytes, startSegment))) {
             store.state(job.id, DownloadJobStore.State.QUEUED, "");
             JobNotifications.clear(context, job.id);
             return;
@@ -210,7 +210,7 @@ public final class JobRunner {
               .apply();
         if ((category == DownloadError.Category.NETWORK
                 || category == DownloadError.Category.SERVER)
-            && AutoResume.take(context, job.id, progressed(current, startBytes, startSegment))) {
+            && AutoResume.take(context, store, job.id, progressed(current, startBytes, startSegment))) {
           // Transient: wait briefly (still cancellable), then queue again from the checkpoint.
           try {
             for (int waited = 0; waited < 50; waited++) {

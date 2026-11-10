@@ -389,13 +389,13 @@ public class HlsHttpIntegrationTest {
     }
     // GeckoWebExecutor computes the Referer itself (origin-only for a request without a page), so a
     // server demanding the exact page path rejects the browser-transport attempt while Gecko's own
-    // cookie is present. The transfer then switches to the captured context for good; at most one
-    // such attempt per concurrent segment worker is expected. Any other rejection is a failure.
+    // cookie is present. The first request decides the transport for the whole transfer, so at
+    // most one such attempt is expected. Any other rejection is a failure.
     long referrerOnly =
         deniedReasons.stream()
             .filter("SEGMENT_CONTEXT cookie=true referrer=false"::equals)
             .count();
-    assertTrue("Browser-transport fallback must stick: " + deniedReasons, referrerOnly <= 4);
+    assertTrue("Browser-transport fallback must stick: " + deniedReasons, referrerOnly <= 1);
     assertEquals(
         "No unauthenticated preview or transfer requests: "
             + deniedReasons

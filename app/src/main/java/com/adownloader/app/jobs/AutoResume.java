@@ -19,16 +19,21 @@ final class AutoResume {
   }
 
   /** Consumes one attempt; returns false when the budget is exhausted. */
-  static synchronized boolean take(Context context, long id, boolean progressed) {
+  static synchronized boolean take(
+      Context context, DownloadJobStore store, long id, boolean progressed) {
     SharedPreferences prefs = prefs(context);
-    String key = Long.toString(id);
+    String key = key(store, id);
     int used = progressed ? 0 : prefs.getInt(key, 0);
     if (used >= LIMIT) return false;
     prefs.edit().putInt(key, used + 1).commit();
     return true;
   }
 
-  static synchronized void reset(Context context, long id) {
-    prefs(context).edit().remove(Long.toString(id)).commit();
+  static synchronized void reset(Context context, DownloadJobStore store, long id) {
+    prefs(context).edit().remove(key(store, id)).commit();
+  }
+
+  private static String key(DownloadJobStore store, long id) {
+    return store.getDatabaseName() + ":" + id;
   }
 }

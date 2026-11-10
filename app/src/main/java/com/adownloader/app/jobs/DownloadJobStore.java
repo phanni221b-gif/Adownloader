@@ -194,6 +194,7 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
       values.put("created", now);
       values.put("updated", now);
       long id = db.insertOrThrow("jobs", null, values);
+      AutoResume.reset(context, this, id);
       writeContext(id, request);
       db.setTransactionSuccessful();
       return id;
@@ -798,7 +799,7 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
           new JobJournal(this, j.id).verifyAll();
           // The process died mid-transfer (often the OS reclaiming memory in the background).
           // Verified checkpoints are intact, so continue automatically within the retry budget.
-          state(j.id, AutoResume.take(context, j.id, false) ? State.QUEUED : State.PAUSED, "");
+          state(j.id, AutoResume.take(context, this, j.id, false) ? State.QUEUED : State.PAUSED, "");
         } catch (DownloadError damaged) {
           state(j.id, State.FAILED, damaged.category.name());
         } catch (Exception unreadable) {
