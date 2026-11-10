@@ -313,10 +313,9 @@ public class ProcessRecoveryTest {
         context.getContentResolver().query(pending, null, null, null, null)) {
       assertTrue(cursor == null || !cursor.moveToFirst());
     }
+    // v0.7: a transient server failure (HTTP 500 once) is retried automatically from the
+    // checkpoint instead of waiting for the user to press retry.
     long retry = enqueue(jobs, "/process/fail-once");
-    DownloadJobStore.Job failed = await(jobs, retry, DownloadJobStore.State.FAILED);
-    assertEquals("SERVER", failed.error);
-    action(jobs, retry, "RETRY");
     DownloadJobStore.Job retried = await(jobs, retry, DownloadJobStore.State.COMPLETED);
     context.getContentResolver().delete(Uri.parse(retried.uri), null, null);
     assertEquals(2, get("/stats").getJSONObject("counts").getInt("/process/fail-once"));
