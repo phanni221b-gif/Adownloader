@@ -250,7 +250,28 @@ public class ProcessRecoveryTest {
         fail("Unexpected failure: " + job.error);
       Thread.sleep(25);
     }
-    throw new AssertionError("State timeout: " + jobs.store.get(id).state);
+    throw new AssertionError(
+        "State timeout: "
+            + jobs.store.get(id).state
+            + " executing="
+            + jobs.isExecuting(id)
+            + appThreads());
+  }
+
+  /** The test shares the app process: show where app code is waiting when a job hangs. */
+  private static String appThreads() {
+    StringBuilder out = new StringBuilder();
+    for (var entry : Thread.getAllStackTraces().entrySet()) {
+      StackTraceElement[] stack = entry.getValue();
+      boolean app = false;
+      for (StackTraceElement frame : stack)
+        app |= frame.getClassName().startsWith("com.adownloader.app.")
+            && !frame.getClassName().contains("Test");
+      if (!app) continue;
+      out.append("\n--- ").append(entry.getKey().getName()).append(' ').append(entry.getKey().getState());
+      for (int i = 0; i < Math.min(stack.length, 25); i++) out.append("\n    at ").append(stack[i]);
+    }
+    return out.toString();
   }
 
   private void checkpoint(DownloadJobs jobs, long id) throws Exception {
