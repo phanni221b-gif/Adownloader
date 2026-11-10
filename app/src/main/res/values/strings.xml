@@ -1,3 +1,6 @@
 <resources>
     <string name="app_name">Adownloader</string>
+    <plurals name="active_downloads">
+        <item quantity="other">진행 중인 다운로드 %d개</item>
+    </plurals>
 </resources>

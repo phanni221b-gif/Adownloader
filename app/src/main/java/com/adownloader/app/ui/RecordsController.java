@@ -325,6 +325,16 @@ public final class RecordsController {
           || (filter == R.id.filter_done && done)
           || (filter == R.id.filter_failed && failure)) visible.add(row);
     }
+    // Visible from every tab: how many downloads are still running or waiting.
+    View navigation = activity.findViewById(R.id.main_navigation);
+    if (navigation instanceof com.google.android.material.bottomnavigation.BottomNavigationView) {
+      var badge =
+          ((com.google.android.material.bottomnavigation.BottomNavigationView) navigation)
+              .getOrCreateBadge(R.id.nav_downloads);
+      badge.setNumber(active);
+      badge.setVisible(active > 0);
+      badge.setContentDescriptionQuantityStringsResource(R.plurals.active_downloads);
+    }
     downloadAdapter.rows = visible;
     libraryAdapter.rows = videos;
     downloadAdapter.notifyDataSetChanged();
@@ -523,24 +533,46 @@ public final class RecordsController {
                     com.adownloader.app.jobs.DownloadJobs.get(activity).action(id, "CANCEL", null),
                 null,
                 null));
-    if (!state.equals("COMPLETED")) {
-      String description =
-          state.equals("FAILED") || state.equals("NEEDS_REFRESH")
-              ? com.adownloader.app.jobs.JobNotifications.message(
-                  row.optString("error"),
-                  com.adownloader.app.jobs.DownloadJobStore.State.valueOf(state))
-              : row.optString("phase");
-      if (row.optLong("bytes") > 0)
-        description +=
-            (description.isEmpty() ? "" : " · ")
-                + DownloadHistory.size(activity, row.optLong("bytes"))
-                + (row.optLong("total", -1) > 0
-                    ? " / " + DownloadHistory.size(activity, row.optLong("total"))
-                    : "");
-      if (row.optInt("segments") > 0)
-        description += " · 조각 " + row.optInt("segment") + "/" + row.optInt("segments");
-      holder.detail.setText(description.isEmpty() ? row.optString("state") : description);
-    }
+    if (!state.equals("COMPLETED")) holder.detail.setText(detail(row, state, id));
+  }
+
+  private final TransferRate rates = new TransferRate();
+
+  /**
+   * Stage on the first line; for a running transfer the numbers a person checks on the second:
+   * percent, size, speed and time remaining (each only when it is actually known).
+   */
+  private String detail(JSONObject row, String state, long id) {
+    boolean running =
+        state.equals("PREPARING") || state.equals("DOWNLOADING") || state.equals("FINALIZING");
+    long bytes = row.optLong("bytes"), total = row.optLong("total", -1);
+    String stage =
+        state.equals("FAILED") || state.equals("NEEDS_REFRESH") || state.equals("PAUSED")
+            ? com.adownloader.app.jobs.JobNotifications.message(
+                row.optString("error"),
+                com.adownloader.app.jobs.DownloadJobStore.State.valueOf(state))
+            : row.optString("phase");
+    List<String> numbers = new ArrayList<>();
+    if (running && row.has("percent") && (total > 0 || row.optInt("segments") > 0))
+      numbers.add(row.optInt("percent") + "%");
+    if (bytes > 0)
+      numbers.add(
+          DownloadHistory.size(activity, bytes)
+              + (total > 0 ? " / " + DownloadHistory.size(activity, total) : ""));
+    if (running && state.equals("DOWNLOADING")) {
+      double rate = rates.update(id, bytes, android.os.SystemClock.elapsedRealtime());
+      if (rate > 0) {
+        numbers.add(DownloadHistory.size(activity, Math.round(rate)) + "/s");
+        String eta =
+            TransferRate.eta(
+                TransferRate.remaining(bytes, total, row.optInt("segment"), row.optInt("segments")),
+                rate);
+        if (!eta.isEmpty()) numbers.add(eta);
+      }
+    } else rates.forget(id);
+    String figures = android.text.TextUtils.join(" · ", numbers);
+    if (stage.isEmpty()) stage = row.optString("state");
+    return figures.isEmpty() ? stage : stage + "\n" + figures;
   }
 
   private static final class DownloadHolder extends RecyclerView.ViewHolder {

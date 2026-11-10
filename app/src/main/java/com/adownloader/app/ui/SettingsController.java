@@ -82,20 +82,54 @@ public final class SettingsController {
   }
 
   public void refresh() {
-    ((MaterialButton) activity.findViewById(R.id.setting_parallel_downloads))
-        .setText("동시 다운로드 · " + DownloadJobs.get(activity).parallelLimit() + "개");
+    row(
+        R.id.setting_popups,
+        "팝업 허용 사이트",
+        "새 창을 열 수 있도록 허용한 사이트를 관리합니다");
+    row(R.id.setting_reset_popups, "팝업 허용 기록 초기화", "모든 사이트에서 새 창을 다시 차단합니다");
+    row(
+        R.id.setting_parallel_downloads,
+        "동시 다운로드",
+        DownloadJobs.get(activity).parallelLimit() + "개까지 함께 받기");
     int mode = theme(activity);
-    ((MaterialButton) activity.findViewById(R.id.setting_theme))
-        .setText(
-            "테마 · "
-                + (mode == AppCompatDelegate.MODE_NIGHT_YES
-                    ? "다크"
-                    : mode == AppCompatDelegate.MODE_NIGHT_NO ? "라이트" : "시스템 설정"));
+    row(
+        R.id.setting_theme,
+        "테마",
+        mode == AppCompatDelegate.MODE_NIGHT_YES
+            ? "다크"
+            : mode == AppCompatDelegate.MODE_NIGHT_NO ? "라이트" : "시스템 설정 따르기");
     boolean notifications =
         activity.getSystemService(NotificationManager.class).areNotificationsEnabled();
-    ((TextView) activity.findViewById(R.id.background_state))
-        .setText(
-            "앱을 벗어나면 브라우저 재생은 멈추고 다운로드는 계속됩니다.\n완료 알림 " + (notifications ? "켜짐" : "꺼짐 · 탭해서 설정"));
+    row(
+        R.id.setting_background,
+        "알림",
+        notifications
+            ? "켜짐 · 앱을 닫아도 다운로드는 계속되고 진행 상황을 알려 줍니다"
+            : "꺼짐 · 탭해서 켜면 진행 상황과 완료를 알려 줍니다");
+    activity.findViewById(R.id.background_state).setVisibility(View.GONE);
+    row(R.id.setting_diagnostics, "기기 진단 정보", "버전·화면 정보만 담습니다. 주소·쿠키는 포함하지 않습니다");
+    row(R.id.setting_failure_share, "최근 실패 보고서 공유", "기기에만 저장된 실패 기록을 직접 보낼 때만 내보냅니다");
+    row(R.id.setting_failure_clear, "진단 기록 모두 삭제", "기기에 저장된 실패 기록을 지웁니다");
+  }
+
+  /** Two-line setting: the title, and below it the current value or what the row does. */
+  private void row(int id, String title, String summary) {
+    MaterialButton button = activity.findViewById(id);
+    android.text.SpannableStringBuilder text = new android.text.SpannableStringBuilder(title);
+    int start = text.length();
+    text.append('\n').append(summary);
+    text.setSpan(
+        new android.text.style.RelativeSizeSpan(0.86f),
+        start,
+        text.length(),
+        android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+    text.setSpan(
+        new android.text.style.ForegroundColorSpan(activity.getColor(R.color.ink_muted)),
+        start,
+        text.length(),
+        android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+    button.setText(text);
+    button.setContentDescription(title + ", " + summary);
   }
 
   private void parallelMenu(View anchor) {

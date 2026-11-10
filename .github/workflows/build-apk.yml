@@ -43,6 +43,17 @@ jobs:
           git fetch --no-tags --depth=1 origin a13c305e91592daa8f617c09e97d29ce9640edcf
           node ci/benchmark-response-capture.cjs
           gradle :app:testDebugUnitTest :app:lintRelease :app:assembleRelease --stacktrace
+      - name: Print rendered UI for review (pull requests)
+        if: always() && github.event_name == 'pull_request'
+        run: |
+          # Robolectric renders key layouts (LayoutRenderTest). Artifacts need a browser to view,
+          # so the PNGs are also printed base64-encoded inside a collapsed group.
+          for f in app/build/ui-render/*.png; do
+            [ -f "$f" ] || continue
+            echo "::group::UI-RENDER $(basename "$f")"
+            echo "BEGIN-PNG $(basename "$f")"; base64 -w 0 "$f"; echo; echo "END-PNG"
+            echo "::endgroup::"
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         continue-on-error: true  # private-repo artifact quota must not fail verification
@@ -52,6 +63,7 @@ jobs:
           path: |
             app/build/test-results/testDebugUnitTest/
             app/build/reports/tests/testDebugUnitTest/
+            app/build/ui-render/
             app/build/reports/response-capture-*.json
       - name: Check packaged engine, ABI and launcher
         run: |
