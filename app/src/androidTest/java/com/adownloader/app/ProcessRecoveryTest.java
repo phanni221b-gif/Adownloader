@@ -118,7 +118,13 @@ public class ProcessRecoveryTest {
             || recovered.state == DownloadJobStore.State.DOWNLOADING
             || recovered.state == DownloadJobStore.State.FINALIZING;
     assertTrue(
-        "A dead worker must never appear active: " + recovered.state,
+        "A dead worker must never appear active: "
+            + recovered.state
+            + " error="
+            + recovered.error
+            + " phase="
+            + recovered.phase
+            + workspace(jobs, id),
         active
             ? DownloadJobStore.ownedHere(recovered)
             : recovered.state == DownloadJobStore.State.QUEUED
@@ -256,6 +262,31 @@ public class ProcessRecoveryTest {
             + " executing="
             + jobs.isExecuting(id)
             + appThreads());
+  }
+
+  /** Committed part rows versus the files actually present in the job workspace. */
+  private static String workspace(DownloadJobs jobs, long id) {
+    StringBuilder out = new StringBuilder("\nparts:");
+    try (android.database.Cursor c =
+        jobs.store
+            .getReadableDatabase()
+            .rawQuery(
+                "SELECT track,part,bytes FROM parts WHERE job=? ORDER BY track,part",
+                new String[] {"" + id})) {
+      while (c.moveToNext())
+        out.append(' ').append(c.getInt(0)).append('-').append(c.getInt(1)).append('=').append(c.getLong(2));
+    } catch (Exception e) {
+      out.append(" <").append(e).append('>');
+    }
+    out.append("\nfiles:");
+    try {
+      File[] files = jobs.store.directory(id).listFiles();
+      if (files != null)
+        for (File f : files) out.append(' ').append(f.getName()).append('=').append(f.length());
+    } catch (Exception e) {
+      out.append(" <").append(e).append('>');
+    }
+    return out.toString();
   }
 
   /** The test shares the app process: show where app code is waiting when a job hangs. */
