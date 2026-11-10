@@ -41,7 +41,9 @@ jobs:
           gradle :app:testDebugUnitTest :app:lintRelease :app:assembleRelease --stacktrace
       - uses: actions/upload-artifact@v4
         if: always()
+        continue-on-error: true  # private-repo artifact quota must not fail verification
         with:
+          retention-days: 3
           name: host-test-results
           path: |
             app/build/test-results/testDebugUnitTest/
@@ -58,7 +60,11 @@ jobs:
           if grep -R -E 'import android.webkit|androidx.webkit|class (BrowserActivity|StableBrowserActivity|GeckoBrowserActivity)' app/src/main app/build.gradle.kts; then exit 1; fi
           sha256sum "$APK" > unsigned.sha256
       - uses: actions/upload-artifact@v4
+        # ~200 MB per run: only keep the unsigned APK for main; releases are built by release.yml.
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        continue-on-error: true
         with:
+          retention-days: 3
           name: Adownloader-unsigned-arm64
           path: |
             app/build/outputs/apk/release/app-release-unsigned.apk
@@ -105,7 +111,9 @@ jobs:
           script: bash ci/run-android-tests.sh
       - uses: actions/upload-artifact@v4
         if: always()
+        continue-on-error: true
         with:
+          retention-days: 3
           name: android-integration-results
           path: |
             app/build/reports/androidTests/
