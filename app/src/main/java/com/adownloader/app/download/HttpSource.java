@@ -175,7 +175,7 @@ public final class HttpSource implements AutoCloseable {
   private final Map<String, java.util.Collection<String>> lastSentNames =
       new java.util.concurrent.ConcurrentHashMap<>();
 
-  private boolean refreshContext(String url) throws Exception {
+  private synchronized boolean refreshContext(String url) throws Exception {
     var latest = MediaNetworkSession.latest(url, topPage, topTab, topFrame);
     if (latest == null || contextRetried.size() >= 128 || !contextRetried.add(url)) return false;
     Map<String, String> values = MediaHeaders.select(latest.headers());
@@ -212,12 +212,14 @@ public final class HttpSource implements AutoCloseable {
     }
   }
 
-  private RequestContext context;
+  private volatile RequestContext context;
+  private volatile boolean preferDirect;
   private final String rootUrl;
   private volatile String responseDisposition = "";
   private boolean acceptedResource;
   private int lastRedirects;
-  private volatile String lastRequestUrl;
+  // Per worker thread: segments are fetched concurrently and each refresh must target its own URL.
+  private final ThreadLocal<String> lastRequestUrl = new ThreadLocal<>();
   private String documentRole = "";
 
   public HttpSource previouslyAccepted(boolean accepted) {
@@ -275,12 +277,27 @@ public final class HttpSource implements AutoCloseable {
       throws Exception {
     if (relay != null) return relay.open(url, offset, length);
     try {
-      return nativeRequest(url, offset, length, validator, resume, previous);
+      if (HttpConnections.browserAvailable() && !preferDirect) {
+        if (!transportDecided)
+          // The first request decides which stack serves this transfer; concurrent segment
+          // workers wait for it instead of each sending a request the server may reject.
+          synchronized (transportLock) {
+            if (!transportDecided && !preferDirect) {
+              HttpURLConnection decided =
+                  browserThenDirect(url, offset, length, validator, resume, previous);
+              transportDecided = true;
+              return decided;
+            }
+          }
+        if (!preferDirect)
+          return browserThenDirect(url, offset, length, validator, resume, previous);
+      }
+      return nativeRequest(url, offset, length, validator, resume, previous, false);
     } catch (Exception first) {
       if (!access(first)) throw first;
-      if (refreshContext(lastRequestUrl == null ? url : lastRequestUrl))
+      if (refreshContext(lastRequestUrl.get() == null ? url : lastRequestUrl.get()))
         try {
-          return nativeRequest(url, offset, length, validator, resume, previous);
+          return nativeRequest(url, offset, length, validator, resume, previous, false);
         } catch (Exception retry) {
           if (!access(retry)) throw retry;
           first = retry;
@@ -301,8 +318,44 @@ public final class HttpSource implements AutoCloseable {
     }
   }
 
-  private HttpURLConnection nativeRequest(
+  private final Object transportLock = new Object();
+  private volatile boolean transportDecided;
+
+  private HttpURLConnection browserThenDirect(
       String url, long offset, long length, String validator, boolean resume, Document previous)
+      throws Exception {
+    try {
+      return nativeRequest(url, offset, length, validator, resume, previous, true);
+    } catch (Exception browserFailure) {
+      // Only access and transport failures may differ between the stacks; anything else
+      // (404, range mismatch, storage) is a property of the resource itself.
+      if (!access(browserFailure) && !transport(browserFailure)) throw browserFailure;
+      FailureDiagnostics.event(
+          diagnosticSession, Map.of("action", "BROWSER_TRANSPORT_FALLBACK", "stage", stage(url)));
+    }
+    HttpURLConnection direct =
+        nativeRequest(url, offset, length, validator, resume, previous, false);
+    // The captured context works where the browser's did not (for example a partitioned
+    // third-party cookie or a path-exact Referer): keep using it for this transfer.
+    preferDirect = true;
+    return direct;
+  }
+
+  private static boolean transport(Exception e) {
+    if (e instanceof TransferControl.Stopped) return false;
+    if (e instanceof DownloadError)
+      return ((DownloadError) e).category == DownloadError.Category.NETWORK;
+    return e instanceof java.io.IOException;
+  }
+
+  private HttpURLConnection nativeRequest(
+      String url,
+      long offset,
+      long length,
+      String validator,
+      boolean resume,
+      Document previous,
+      boolean viaBrowser)
       throws Exception {
     control.check();
     String current = url;
@@ -317,10 +370,11 @@ public final class HttpSource implements AutoCloseable {
           headers.keySet().removeIf(k -> k.equalsIgnoreCase(e.getKey()));
           headers.put(e.getKey(), e.getValue());
         }
-      String cookie = cookies.header(URI.create(current), observedCookie);
+      // The browser transport sends Gecko's own live cookies; a replayed snapshot would be stale.
+      String cookie = viaBrowser ? "" : cookies.header(URI.create(current), observedCookie);
       if (!cookie.isEmpty()) headers.put("Cookie", cookie);
-      lastRequestUrl = current;
-      HttpURLConnection connection = (HttpURLConnection) new URL(current).openConnection();
+      lastRequestUrl.set(current);
+      HttpURLConnection connection = HttpConnections.open(current, viaBrowser);
       control.attach(connection);
       connection.setInstanceFollowRedirects(false);
       connection.setConnectTimeout(20_000);

@@ -8,7 +8,7 @@ ROOT=Path('app/src/androidTest/assets/fixtures')
 PREFIX=(ROOT/'direct.mp4').read_bytes();SIZE=32*1024*1024
 HEAD=PREFIX+struct.pack('>I4sQ',1,b'free',SIZE-len(PREFIX))
 ETAG='"fixture-'+hashlib.sha256(HEAD).hexdigest()+'"'
-LOCK=threading.Lock();COUNTS={};RANGES=[];VERSION=1;EXPIRED=False
+LOCK=threading.Lock();COUNTS={};RANGES=[];VERSION=1;EXPIRED=False;SERVED=0
 def block(offset,length,version=None):
  end=min(offset+length,len(HEAD));front=HEAD[offset:end] if offset<len(HEAD) else b''
  data=front+b'\0'*(length-len(front))
@@ -23,10 +23,10 @@ class Handler(BaseHTTPRequestHandler):
  protocol_version='HTTP/1.1'
  def log_message(self,*args):pass
  def do_GET(self):
-  global VERSION,EXPIRED
+  global VERSION,EXPIRED,SERVED
   parsed=urlsplit(self.path);path=parsed.path;token=parse_qs(parsed.query).get('token',[''])[0]
   if path=='/reset':
-   with LOCK:COUNTS.clear();RANGES.clear();VERSION=1;EXPIRED=False
+   with LOCK:COUNTS.clear();RANGES.clear();VERSION=1;EXPIRED=False;SERVED=0
    return self.reply(b'{}','application/json')
   if path in ('/expire','/change'):
    with LOCK:EXPIRED=True;VERSION=2 if path=='/change' else 1
@@ -77,7 +77,11 @@ class Handler(BaseHTTPRequestHandler):
   name=path.rsplit('/',1)[-1]
   if path.startswith('/process/') and name in {p.name for p in ROOT.iterdir()}:
    data=(ROOT/name).read_bytes()
-   if name.endswith(('.ts','.m4s')):time.sleep(.7)
+   if name.endswith(('.ts','.m4s')):
+    # The app fetches several segments at once. Keep the first two after /reset fast and the
+    # rest slow, so a pause right after the first commit still leaves segments to fetch.
+    with LOCK:SERVED+=1;order=SERVED
+    time.sleep(.7 if order<=2 else 4)
    mime='application/vnd.apple.mpegurl' if name.endswith('.m3u8') else 'application/dash+xml' if name.endswith('.mpd') else 'application/octet-stream'
    return self.reply(data,mime)
   self.send_error(404)

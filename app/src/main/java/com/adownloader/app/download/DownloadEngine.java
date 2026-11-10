@@ -3,6 +3,8 @@ package com.adownloader.app.download;
 import com.adownloader.app.MediaCandidate;
 import java.io.*;
 import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.*;
 import javax.crypto.Cipher;
 import javax.crypto.spec.*;
 
@@ -91,6 +93,135 @@ public final class DownloadEngine {
     return iv;
   }
 
+  private static boolean refreshable(DownloadError.Category category) {
+    return category == DownloadError.Category.AUTH
+        || category == DownloadError.Category.EXPIRED_URL
+        || category == DownloadError.Category.ACCESS_BLOCKED;
+  }
+
+  /** Concurrent segment requests per track; the plan order is kept for the mux. */
+  static final int SEGMENT_PARALLELISM = 4;
+
+  private static void closeAll(List<List<android.media.MediaDataSource>> inputs) {
+    for (var groups : inputs)
+      for (var input : groups)
+        try {
+          input.close();
+        } catch (IOException ignored) {
+        }
+  }
+
+  /**
+   * Fetches every part of one track with bounded concurrency. Each part is still staged, synced,
+   * renamed and checkpointed individually, so recovery semantics are unchanged; only the network
+   * wait is overlapped. The first failure stops the remaining workers and is rethrown.
+   */
+  private List<File> fetchSegments(
+      HttpSource source, ManifestParser.Track track, int trackIndex, int parallelism)
+      throws Exception {
+    int count = track.parts.size();
+    File[] files = new File[count];
+    for (int i = 0; i < count; i++) {
+      files[i] = new File(directory, "part-" + trackIndex + "-" + i);
+      if (checkpoint == null) {
+        temporary.add(files[i]);
+        temporary.add(new File(directory, files[i].getName() + ".partial"));
+      }
+    }
+    Map<String, byte[]> keys = new HashMap<>();
+    AtomicInteger next = new AtomicInteger(), finished = new AtomicInteger();
+    AtomicReference<Exception> failure = new AtomicReference<>();
+    FailureDiagnostics.Session diagnostics = FailureDiagnostics.current();
+    int workers = Math.max(1, Math.min(parallelism, count));
+    ExecutorService pool = Executors.newFixedThreadPool(workers);
+    try {
+      List<Future<?>> running = new ArrayList<>();
+      for (int w = 0; w < workers; w++)
+        running.add(
+            pool.submit(
+                () -> {
+                  try (FailureDiagnostics.Scope scope = FailureDiagnostics.activate(diagnostics)) {
+                    int i;
+                    while (failure.get() == null && (i = next.getAndIncrement()) < count) {
+                      control.check();
+                      fetchSegment(source, track, trackIndex, i, files[i], keys);
+                      int done = finished.incrementAndGet();
+                      progress.update(
+                          (track.audio ? "오디오" : "영상") + " 조각 " + done + "/" + count,
+                          done * 100 / count);
+                    }
+                  } catch (Exception error) {
+                    failure.compareAndSet(null, error);
+                  }
+                  return null;
+                }));
+      for (Future<?> worker : running) worker.get();
+    } finally {
+      pool.shutdownNow();
+      synchronized (keys) {
+        for (byte[] key : keys.values()) Arrays.fill(key, (byte) 0);
+        keys.clear();
+      }
+    }
+    control.check();
+    if (failure.get() != null) throw failure.get();
+    return new ArrayList<>(Arrays.asList(files));
+  }
+
+  private byte[] key(HttpSource source, String url, Map<String, byte[]> keys) throws Exception {
+    synchronized (keys) {
+      byte[] key = keys.get(url);
+      if (key == null) {
+        FailureDiagnostics.phase(FailureDiagnostics.Stage.AES_KEY);
+        key = source.bytes(url, 0, -1, 1024);
+        if (key.length != 16) throw new DownloadError(DownloadError.Category.MANIFEST_INVALID);
+        keys.put(url, key);
+      }
+      return key.clone();
+    }
+  }
+
+  private void fetchSegment(
+      HttpSource source,
+      ManifestParser.Track track,
+      int trackIndex,
+      int i,
+      File segment,
+      Map<String, byte[]> keys)
+      throws Exception {
+    ManifestParser.Part part = track.parts.get(i);
+    FailureDiagnostics.event(
+        Map.of(
+            "action",
+            "PHASE",
+            "stage",
+            part.initialization ? "INIT_SEGMENT" : track.audio ? "AUDIO_SEGMENT" : "VIDEO_SEGMENT",
+            "segmentIndex",
+            i));
+    if (checkpoint != null && checkpoint.verified(segment, trackIndex, i)) return;
+    HttpSource.Decoder decoder = null;
+    byte[] secret = null;
+    if (part.keyUrl != null) {
+      secret = key(source, part.keyUrl, keys);
+      final byte[] key = secret, iv = segmentIv(part);
+      decoder =
+          input -> {
+            Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+            cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(key, "AES"), new IvParameterSpec(iv));
+            return new javax.crypto.CipherInputStream(input, cipher);
+          };
+    }
+    File staging = new File(directory, segment.getName() + ".partial");
+    try {
+      source.stream(part.url, part.offset, part.length, staging, decoder);
+    } finally {
+      if (secret != null) Arrays.fill(secret, (byte) 0);
+    }
+    control.check();
+    if (!staging.renameTo(segment)) throw new DownloadError(DownloadError.Category.STORAGE);
+    if (checkpoint != null) checkpoint.saved(segment, trackIndex, i);
+  }
+
   public Result download(String url, MediaCandidate.MediaType type, Map<String, String> headers)
       throws Exception {
     if (type == MediaCandidate.MediaType.PROTECTED)
@@ -143,7 +274,9 @@ public final class DownloadEngine {
           if (checkpoint != null) checkpoint.sourceMetadata(probe.disposition);
           if (checkpoint != null) checkpoint.savePlan(tracks);
         }
+        tracks = new ArrayList<>(tracks);
         source.registerTracks(tracks);
+        boolean planRefreshed = false;
         StorageBudget.Estimate budget =
             StorageBudget.estimate(
                 tracks, checkpoint == null ? 0 : checkpoint.committedSegmentBytes());
@@ -154,7 +287,7 @@ public final class DownloadEngine {
           try (DescriptorChannel target = new DescriptorChannel(destination)) {
             target.reserve(Math.max(0, budget.additional - StorageBudget.SAFETY));
           }
-        List<android.media.MediaDataSource> inputs = new ArrayList<>();
+        List<List<android.media.MediaDataSource>> inputs = new ArrayList<>();
         double duration = 0;
         boolean video = false, audio = false;
         try {
@@ -173,80 +306,50 @@ public final class DownloadEngine {
                 && track.parts.get(0).keyUrl == null) {
               if (direct == null) direct = temp(".media");
               copy(source, track.parts.get(0).url, direct);
-              inputs.add(new JoinedMediaDataSource(Collections.singletonList(direct)));
+              inputs.add(
+                  new ArrayList<>(
+                      List.of(new JoinedMediaDataSource(Collections.singletonList(direct)))));
               continue;
             }
-            List<File> parts = new ArrayList<>();
-            byte[] keyBytes = null;
-            String lastKey = null;
+            int parallelism =
+                type == MediaCandidate.MediaType.RELAY_HLS ? 1 : SEGMENT_PARALLELISM;
+            List<File> parts;
             try {
-              for (int i = 0; i < track.parts.size(); i++) {
-                control.check();
-                ManifestParser.Part part = track.parts.get(i);
-                FailureDiagnostics.event(
-                    Map.of(
-                        "action",
-                        "PHASE",
-                        "stage",
-                        part.initialization
-                            ? "INIT_SEGMENT"
-                            : track.audio ? "AUDIO_SEGMENT" : "VIDEO_SEGMENT",
-                        "segmentIndex",
-                        i));
-                File segment = new File(directory, "part-" + trackIndex + "-" + i);
-                if (checkpoint == null || !checkpoint.verified(segment, trackIndex, i)) {
-                  HttpSource.Decoder decoder = null;
-                  byte[] secret = null;
-                  if (part.keyUrl != null) {
-                    if (!part.keyUrl.equals(lastKey)) {
-                      if (keyBytes != null) Arrays.fill(keyBytes, (byte) 0);
-                      FailureDiagnostics.phase(FailureDiagnostics.Stage.AES_KEY);
-                      keyBytes = source.bytes(part.keyUrl, 0, -1, 1024);
-                      lastKey = part.keyUrl;
-                    }
-                    if (keyBytes.length != 16)
-                      throw new DownloadError(DownloadError.Category.MANIFEST_INVALID);
-                    secret = keyBytes.clone();
-                    final byte[] key = secret, iv = segmentIv(part);
-                    decoder =
-                        input -> {
-                          Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
-                          cipher.init(
-                              Cipher.DECRYPT_MODE,
-                              new SecretKeySpec(key, "AES"),
-                              new IvParameterSpec(iv));
-                          return new javax.crypto.CipherInputStream(input, cipher);
-                        };
-                  }
-                  File staging = new File(directory, segment.getName() + ".partial");
-                  if (checkpoint == null) {
-                    temporary.add(segment);
-                    temporary.add(staging);
-                  }
-                  try {
-                    source.stream(part.url, part.offset, part.length, staging, decoder);
-                  } finally {
-                    if (secret != null) Arrays.fill(secret, (byte) 0);
-                  }
-                  control.check();
-                  if (!staging.renameTo(segment))
-                    throw new DownloadError(DownloadError.Category.STORAGE);
-                  if (checkpoint != null) checkpoint.saved(segment, trackIndex, i);
-                }
-                parts.add(segment);
-                progress.update(
-                    (track.audio ? "오디오" : "영상") + " 조각 " + (i + 1) + "/" + track.parts.size(),
-                    (i + 1) * 100 / track.parts.size());
+              parts = fetchSegments(source, track, trackIndex, parallelism);
+            } catch (DownloadError expired) {
+              // Signed segment addresses often expire during long background transfers. Fetch the
+              // playlist again (through the browser's network stack) and continue only if it
+              // describes exactly the same media and quality; otherwise report as before.
+              if (planRefreshed
+                  || type == MediaCandidate.MediaType.RELAY_HLS
+                  || !refreshable(expired.category)) throw expired;
+              planRefreshed = true;
+              List<ManifestParser.Track> fresh;
+              try {
+                fresh = MediaProbeService.shared().fresh(source, url, type).tracks();
+              } catch (TransferControl.Stopped stopped) {
+                throw stopped;
+              } catch (Exception unavailable) {
+                throw expired;
               }
-            } finally {
-              if (keyBytes != null) Arrays.fill(keyBytes, (byte) 0);
+              if (!RefreshPlanMatcher.compatible(tracks, fresh)) throw expired;
+              FailureDiagnostics.event(Map.of("action", "PLAN_REFRESHED", "trackIndex", trackIndex));
+              tracks = new ArrayList<>(fresh);
+              if (checkpoint != null) checkpoint.savePlan(tracks);
+              source.registerTracks(tracks);
+              track = tracks.get(trackIndex);
+              parts = fetchSegments(source, track, trackIndex, parallelism);
             }
-            inputs.add(new JoinedMediaDataSource(parts));
+            List<android.media.MediaDataSource> groups = new ArrayList<>();
+            inputs.add(groups);
+            for (List<File> group : SegmentGroups.split(track.parts, parts))
+              groups.add(new JoinedMediaDataSource(group));
           }
           File output = destination == null ? temp(".mp4") : null;
           if (destination != null) {
             long estimate = 0;
-            for (var input : inputs) estimate = Math.addExact(estimate, input.getSize());
+            for (var groups : inputs)
+              for (var input : groups) estimate = Math.addExact(estimate, input.getSize());
             try (DescriptorChannel target = new DescriptorChannel(destination)) {
               target.reserve(Math.addExact(estimate, estimate / 10));
             }
@@ -261,16 +364,12 @@ public final class DownloadEngine {
           if (destination == null) PostProcessor.inspect(output, duration, video, audio);
           else PostProcessor.inspect(destination, duration, video, audio);
           if (checkpoint != null && destination != null) {
-            for (var input : inputs) input.close();
+            closeAll(inputs);
             checkpoint.saveDestinationFinal(destination, "video/mp4", ".mp4", control);
           }
           return new Result(output, "video/mp4", ".mp4");
         } finally {
-          for (var input : inputs)
-            try {
-              input.close();
-            } catch (IOException ignored) {
-            }
+          closeAll(inputs);
         }
       }
       if (destination != null) {

@@ -15,3 +15,17 @@ ffmpeg -y -v error -f lavfi -i 'color=c=pink:size=64x64:rate=1' -t 1000 -an -c:v
 
 mkdir -p "$DEST/fmp4"
 ffmpeg -y -v error -i "$DEST/direct.mp4" -map 0 -c copy -hls_time 1 -hls_playlist_type vod -hls_segment_type fmp4 "$DEST/fmp4/playlist.m3u8"
+
+# HLS discontinuity: two independently encoded clips with identical codec settings (their
+# timestamps restart), joined by #EXT-X-DISCONTINUITY. A third clip with another resolution must be
+# refused rather than produce a broken file.
+mkdir -p "$DEST/disc"
+ffmpeg -y -v error -f lavfi -i 'testsrc=size=160x90:rate=24' -f lavfi -i 'sine=frequency=660:sample_rate=48000' -t 2 -c:v libx264 -preset ultrafast -g 24 -bf 0 -pix_fmt yuv420p -c:a aac -b:a 64k "$DEST/disc/second.mp4"
+ffmpeg -y -v error -f lavfi -i 'testsrc=size=320x180:rate=24' -f lavfi -i 'sine=frequency=880:sample_rate=48000' -t 2 -c:v libx264 -preset ultrafast -g 24 -bf 0 -pix_fmt yuv420p -c:a aac -b:a 64k "$DEST/disc/other.mp4"
+ffmpeg -y -v error -i "$DEST/direct.mp4" -map 0 -c copy -hls_time 1 -hls_playlist_type vod -hls_segment_filename "$DEST/disc/a%d.ts" "$DEST/disc/a.m3u8"
+ffmpeg -y -v error -i "$DEST/disc/second.mp4" -map 0 -c copy -hls_time 1 -hls_playlist_type vod -hls_segment_filename "$DEST/disc/b%d.ts" "$DEST/disc/b.m3u8"
+ffmpeg -y -v error -i "$DEST/disc/other.mp4" -map 0 -c copy -hls_time 1 -hls_playlist_type vod -hls_segment_filename "$DEST/disc/c%d.ts" "$DEST/disc/c.m3u8"
+media_lines() { grep -E '^(#EXTINF|[^#])' "$1"; }
+{ printf '#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-PLAYLIST-TYPE:VOD\n'; media_lines "$DEST/disc/a.m3u8"; echo '#EXT-X-DISCONTINUITY'; media_lines "$DEST/disc/b.m3u8"; echo '#EXT-X-ENDLIST'; } > "$DEST/disc/joined.m3u8"
+{ printf '#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-PLAYLIST-TYPE:VOD\n'; media_lines "$DEST/disc/a.m3u8"; echo '#EXT-X-DISCONTINUITY'; media_lines "$DEST/disc/c.m3u8"; echo '#EXT-X-ENDLIST'; } > "$DEST/disc/mismatch.m3u8"
+rm -f "$DEST/disc/second.mp4" "$DEST/disc/other.mp4"

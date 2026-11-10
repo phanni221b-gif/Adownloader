@@ -197,6 +197,12 @@ public final class MediaProbeService implements AutoCloseable {
     }
   }
 
+  /** Re-reads the playlist for a running transfer, bypassing every shared cache. */
+  public MediaProbeResult fresh(HttpSource source, String url, MediaCandidate.MediaType type)
+      throws Exception {
+    return fetchWithSource(source, url, type, null);
+  }
+
   public MediaProbeResult forTransfer(
       HttpSource source,
       String url,

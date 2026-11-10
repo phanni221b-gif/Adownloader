@@ -166,6 +166,36 @@ public class DownloadIntegrationTest {
   }
 
   @Test
+  public void hlsDiscontinuityJoinsTimelinesLosslessly() throws Exception {
+    // Before v0.7 any #EXT-X-DISCONTINUITY failed the whole download.
+    DownloadEngine engine = engine();
+    try {
+      DownloadEngine.Result result =
+          engine.download(
+              base + "disc/joined.m3u8", MediaCandidate.MediaType.HLS, Collections.emptyMap());
+      // 3 s + 2 s: the second clip's restarted timestamps are shifted, not overlapped.
+      PostProcessor.Inspection inspection = PostProcessor.inspect(result.file, 5, true, true);
+      assertTrue(inspection.durationUs > 4_500_000);
+    } finally {
+      engine.cleanup();
+    }
+  }
+
+  @Test
+  public void hlsDiscontinuityWithDifferentFormatFailsClearly() throws Exception {
+    DownloadEngine engine = engine();
+    try {
+      engine.download(
+          base + "disc/mismatch.m3u8", MediaCandidate.MediaType.HLS, Collections.emptyMap());
+      fail("A resolution change must not be stitched into one track");
+    } catch (DownloadError expected) {
+      assertEquals(DownloadError.Category.HLS_DISCONTINUITY, expected.category);
+    } finally {
+      engine.cleanup();
+    }
+  }
+
+  @Test
   public void dashSeparateTracksMuxAndSeek() throws Exception {
     DownloadEngine engine = engine();
     try {

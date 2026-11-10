@@ -12,8 +12,6 @@ public class FormatSafetyTest {
     failure(root, DownloadError.Category.LIVE_UNSUPPORTED);
     failure(root + "#EXT-X-GAP\n#EXT-X-ENDLIST", DownloadError.Category.HLS_GAP);
     failure(
-        root + "#EXT-X-DISCONTINUITY\n#EXT-X-ENDLIST", DownloadError.Category.HLS_DISCONTINUITY);
-    failure(
         "#EXTM3U\n#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"key\"\n#EXTINF:1,\none.ts\n#EXT-X-ENDLIST",
         DownloadError.Category.DRM);
     try {

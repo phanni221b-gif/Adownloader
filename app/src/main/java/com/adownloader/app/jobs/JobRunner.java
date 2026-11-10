@@ -26,6 +26,9 @@ public final class JobRunner {
     ParcelFileDescriptor destination = null;
     FailureDiagnostics.Session diagnostics = null;
     FailureDiagnostics.Scope diagnosticScope = null;
+    DownloadJobStore.Job before = store.get(job.id);
+    long startBytes = before == null ? 0 : before.bytes;
+    int startSegment = before == null ? 0 : before.segment;
     try {
       JSONObject request = store.request(job.id);
       Map<String, String> diagnosticMetadata = new LinkedHashMap<>();
@@ -100,12 +103,7 @@ public final class JobRunner {
                     current.total,
                     current.segment,
                     current.segments);
-
-                context
-                    .getSystemService(android.app.NotificationManager.class)
-                    .notify(
-                        JobNotifications.SUMMARY,
-                        JobNotifications.running(context, store.get(job.id)));
+                JobNotifications.progress(context, store, job.id);
               },
               new JobJournal(store, job.id),
               control,
@@ -143,10 +141,12 @@ public final class JobRunner {
       DownloadJobStore.Job completed = store.get(job.id);
       if (completed.state != DownloadJobStore.State.COMPLETED) {
         store.cleanup(job.id);
+        JobNotifications.clear(context, job.id);
         return;
       }
 
       store.cleanup(job.id);
+      AutoResume.reset(context, store, job.id);
       JobNotifications.status(context, completed);
     } catch (Exception error) {
       try {
@@ -158,17 +158,28 @@ public final class JobRunner {
       if (current == null) return;
       if (current.state == DownloadJobStore.State.CANCELED) {
         store.cleanup(job.id);
+        JobNotifications.clear(context, job.id);
         return;
       }
       if (error instanceof TransferControl.Stopped) {
         if (((TransferControl.Stopped) error).reason == TransferControl.Stop.CANCEL) {
           store.state(job.id, DownloadJobStore.State.CANCELED, "");
           store.cleanup(job.id);
+          JobNotifications.clear(context, job.id);
           return;
         }
-        if (current.state != DownloadJobStore.State.PAUSED)
+        if (current.state != DownloadJobStore.State.PAUSED) {
+          // The OS stopped the transfer job (network change, quota, restriction). Queue it again
+          // so the rescheduled job continues by itself; only a user pause stays paused.
+          if (!control.userRequested()
+              && AutoResume.take(context, store, job.id, progressed(current, startBytes, startSegment))) {
+            store.state(job.id, DownloadJobStore.State.QUEUED, "");
+            JobNotifications.clear(context, job.id);
+            return;
+          }
           store.state(
               job.id, DownloadJobStore.State.PAUSED, control.userRequested() ? "" : "OS_STOP");
+        }
 
       } else if (current.state != DownloadJobStore.State.PAUSED) {
         DownloadError.Category category =
@@ -197,6 +208,22 @@ public final class JobRunner {
               .putString(
                   "hls", new JSONObject(((DownloadError) error).diagnostic.safeFields()).toString())
               .apply();
+        if ((category == DownloadError.Category.NETWORK
+                || category == DownloadError.Category.SERVER)
+            && AutoResume.take(context, store, job.id, progressed(current, startBytes, startSegment))) {
+          // Transient: wait briefly (still cancellable), then queue again from the checkpoint.
+          try {
+            for (int waited = 0; waited < 50; waited++) {
+              control.check();
+              Thread.sleep(100);
+            }
+            store.state(job.id, DownloadJobStore.State.QUEUED, "");
+            JobNotifications.clear(context, job.id);
+            return;
+          } catch (TransferControl.Stopped | InterruptedException stopped) {
+            // Fall through to the regular failure state; the user decides.
+          }
+        }
         store.state(
             job.id,
             category == DownloadError.Category.AUTH
@@ -216,6 +243,10 @@ public final class JobRunner {
         } catch (IOException ignored) {
         }
     }
+  }
+
+  private static boolean progressed(DownloadJobStore.Job now, long startBytes, int startSegment) {
+    return now != null && (now.bytes > startBytes || now.segment > startSegment);
   }
 
   private String displayName(Uri uri, String fallback) {

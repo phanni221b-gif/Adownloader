@@ -84,7 +84,7 @@ public class JobStoreIntegrationTest {
   }
 
   @Test
-  public void previousProcessRecoversToPausedWithoutLosingContext() throws Exception {
+  public void previousProcessRecoversToQueuedWithoutLosingContext() throws Exception {
     long id = job();
     assertEquals(id, store.claim().id);
     store
@@ -93,7 +93,8 @@ public class JobStoreIntegrationTest {
     store.close();
     store = new DownloadJobStore(context, "store-tests.db");
     store.reconcile();
-    assertEquals(DownloadJobStore.State.PAUSED, store.get(id).state);
+    // v0.7: a verified interrupted transfer continues by itself (bounded retry budget).
+    assertEquals(DownloadJobStore.State.QUEUED, store.get(id).state);
     assertEquals(4294967297L, new JobJournal(store, id).browserFrameId());
     assertTrue(store.request(id).getString("url").contains("TOP_SECRET"));
   }
@@ -148,6 +149,21 @@ public class JobStoreIntegrationTest {
   }
 
   @Test
+  public void repeatedRecoveryWithoutProgressStopsAsPaused() throws Exception {
+    long id = job();
+    for (int attempt = 0; attempt <= 4; attempt++) {
+      assertEquals(id, store.claim().id);
+      store
+          .getWritableDatabase()
+          .execSQL("UPDATE jobs SET pid=-123,state='DOWNLOADING' WHERE id=" + id);
+      store.reconcile();
+      assertEquals(
+          attempt < 4 ? DownloadJobStore.State.QUEUED : DownloadJobStore.State.PAUSED,
+          store.get(id).state);
+    }
+  }
+
+  @Test
   public void queuePriorityAndOwnershipAreDurable() throws Exception {
     long first = job(), second = job(), third = job();
     store.prioritize(third);
@@ -160,7 +176,7 @@ public class JobStoreIntegrationTest {
         .getWritableDatabase()
         .execSQL("UPDATE jobs SET owner='previous-process-same-pid' WHERE id=" + first);
     store.reconcile();
-    assertEquals(DownloadJobStore.State.PAUSED, store.get(first).state);
+    assertEquals(DownloadJobStore.State.QUEUED, store.get(first).state);
     assertEquals(DownloadJobStore.State.PREPARING, store.get(second).state);
     assertFalse(
         store.transition(

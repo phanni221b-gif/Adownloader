@@ -6,6 +6,10 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+# A new push to the same PR supersedes the running verification (saves private-repo minutes).
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -41,7 +45,9 @@ jobs:
           gradle :app:testDebugUnitTest :app:lintRelease :app:assembleRelease --stacktrace
       - uses: actions/upload-artifact@v4
         if: always()
+        continue-on-error: true  # private-repo artifact quota must not fail verification
         with:
+          retention-days: 3
           name: host-test-results
           path: |
             app/build/test-results/testDebugUnitTest/
@@ -58,7 +64,11 @@ jobs:
           if grep -R -E 'import android.webkit|androidx.webkit|class (BrowserActivity|StableBrowserActivity|GeckoBrowserActivity)' app/src/main app/build.gradle.kts; then exit 1; fi
           sha256sum "$APK" > unsigned.sha256
       - uses: actions/upload-artifact@v4
+        # ~200 MB per run: only keep the unsigned APK for main; releases are built by release.yml.
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        continue-on-error: true
         with:
+          retention-days: 3
           name: Adownloader-unsigned-arm64
           path: |
             app/build/outputs/apk/release/app-release-unsigned.apk
@@ -83,7 +93,7 @@ jobs:
         with:
           gradle-version: '9.6.0'
       - name: Generate synthetic test media
-        timeout-minutes: 5
+        timeout-minutes: 12
         run: |
           if ! command -v ffmpeg; then
             sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
@@ -105,7 +115,9 @@ jobs:
           script: bash ci/run-android-tests.sh
       - uses: actions/upload-artifact@v4
         if: always()
+        continue-on-error: true
         with:
+          retention-days: 3
           name: android-integration-results
           path: |
             app/build/reports/androidTests/
@@ -114,4 +126,4 @@ jobs:
             ui-logcat.txt
             extension-performance.json
             process-recovery-results/
-# The fixed private release key remains off GitHub. This workflow cannot publish an unsigned APK.
+# This workflow never publishes. Signed releases come from release.yml (existing key, certificate-pinned).

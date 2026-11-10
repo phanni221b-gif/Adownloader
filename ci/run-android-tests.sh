@@ -1,8 +1,22 @@
 #!/usr/bin/env bash
 set +e
+# Print failing instrumentation tests into the job log; the HTML report is only in the artifact.
+report_failures() {
+  find app/build/outputs/androidTest-results -name '*.xml' 2>/dev/null | while read -r f; do
+    python3 - "$f" <<'PY'
+import sys, xml.etree.ElementTree as ET
+for case in ET.parse(sys.argv[1]).iter('testcase'):
+    for bad in list(case.findall('failure')) + list(case.findall('error')):
+        print('::group::FAILED ' + case.get('classname', '') + '.' + case.get('name', ''))
+        print((bad.text or bad.get('message') or '')[:4000])
+        print('::endgroup::')
+PY
+  done
+}
 # Fail fast on the new real playback boundary, then retain the complete regression suite.
-gradle -PtestAbi=x86_64 -Pandroid.testInstrumentationRunnerArguments.class=com.adownloader.app.DownloadCapacityIntegrationTest,com.adownloader.app.RelaySessionIntegrationTest,com.adownloader.app.TabsAndTransportIntegrationTest,com.adownloader.app.HlsHttpIntegrationTest#mseExtensionlessTsUsesJobCookiesScopedSegmentRefererAndLiveSheetTitle,com.adownloader.app.SuccessfulResponseIntegrationTest#originalRedirectHintReusesSuccessfulFinalResponseWithoutNativeReplay,com.adownloader.app.SuccessfulResponseIntegrationTest#oneTimeActualPlaybackResponseWorksWhenNativeAndContentFetchBothFail :app:connectedDebugAndroidTest --stacktrace
+gradle -PtestAbi=x86_64 -Pandroid.testInstrumentationRunnerArguments.class=com.adownloader.app.GeckoTransportIntegrationTest,com.adownloader.app.DownloadIntegrationTest,com.adownloader.app.DownloadCapacityIntegrationTest,com.adownloader.app.RelaySessionIntegrationTest,com.adownloader.app.TabsAndTransportIntegrationTest,com.adownloader.app.HlsHttpIntegrationTest#mseExtensionlessTsUsesJobCookiesScopedSegmentRefererAndLiveSheetTitle,com.adownloader.app.SuccessfulResponseIntegrationTest#originalRedirectHintReusesSuccessfulFinalResponseWithoutNativeReplay,com.adownloader.app.SuccessfulResponseIntegrationTest#oneTimeActualPlaybackResponseWorksWhenNativeAndContentFetchBothFail :app:connectedDebugAndroidTest --stacktrace
 FOCUSED=$?
+[ "$FOCUSED" -ne 0 ] && report_failures
 if [ "$FOCUSED" -eq 0 ]; then
 # connectedDebugAndroidTest reinstalls the app. Android scoped storage does not
 # allow the new install to overwrite Download files owned by the focused install.
@@ -10,6 +24,7 @@ if [ "$FOCUSED" -eq 0 ]; then
 adb shell rm -f /sdcard/Download/Adownloader-ui-proof/tab-overview.png /sdcard/Download/Adownloader-ui-proof/unsupported-transport.png /sdcard/Download/Adownloader-ui-proof/unsupported-transport-example.json /sdcard/Download/Adownloader-ui-proof/relay-session-download.png
 gradle -PtestAbi=x86_64 -Pandroid.testInstrumentationRunnerArguments.notClass=com.adownloader.app.ProcessRecoveryTest :app:connectedDebugAndroidTest --stacktrace
 RESULT=$?
+[ "$RESULT" -ne 0 ] && report_failures
 else RESULT=$FOCUSED; fi
 if [ "$RESULT" -eq 0 ]; then bash ci/run-process-recovery.sh; RESULT=$?; fi
 adb pull /sdcard/Download/Adownloader-ui-proof ui-proof

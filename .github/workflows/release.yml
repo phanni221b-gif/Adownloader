@@ -1,0 +1,113 @@
+name: Release signed APK
+# Started on main after CI is green. The signing key is NEVER committed: it comes from the
+# repository secrets ADOWNLOADER_KEYSTORE_BASE64 (base64 of the .jks/.p12 file) and
+# ADOWNLOADER_KEYSTORE_PASSWORD (store and key password, alias "adownloader").
+# Only the owner's known release certificates are accepted.
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: release
+  cancel-in-progress: false
+env:
+  # The existing ADownloader key (all releases up to v0.6.9): updates install in place.
+  EXISTING_CERT_SHA256: 7b75bc818dad7ed1baa8433845fe4c2dfde32990bf4e1ea84fe8cb4d861d32ba
+  # Replacement key generated 2026-11-10, used only if the owner registers it instead.
+  ROTATED_CERT_SHA256: 1cdd1a930f4ec0a02204696d0b3c14a24c7437a4758db2ac6a0c348bcd9c9255
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Only main is released
+        run: test "$GITHUB_REF" = "refs/heads/main" || { echo "::error::Run this workflow on main"; exit 1; }
+      - name: Read version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          name=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts)
+          code=$(sed -n 's/.*versionCode = \([0-9]*\).*/\1/p' app/build.gradle.kts)
+          test -n "$name" && test -n "$code"
+          if gh release view "v$name" >/dev/null 2>&1; then echo "::error::v$name is already released; bump versionName/versionCode"; exit 1; fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+      - name: Signing secrets present
+        env:
+          KEYSTORE_B64: ${{ secrets.ADOWNLOADER_KEYSTORE_BASE64 }}
+          KEY_PASSWORD: ${{ secrets.ADOWNLOADER_KEYSTORE_PASSWORD }}
+        run: |
+          test -n "$KEYSTORE_B64" || { echo "::error::Repository secret ADOWNLOADER_KEYSTORE_BASE64 is not set"; exit 1; }
+          test -n "$KEY_PASSWORD" || { echo "::error::Repository secret ADOWNLOADER_KEYSTORE_PASSWORD is not set"; exit 1; }
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: '13114758'
+          packages: 'platform-tools build-tools;36.0.0 platforms;android-37.2'
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.0'
+      - name: Unit tests, lint, ARM64 release
+        run: gradle :app:testDebugUnitTest :app:lintRelease :app:assembleRelease --stacktrace
+      - name: Sign and verify with the release key from secrets
+        env:
+          NAME: ${{ steps.version.outputs.name }}
+          KEYSTORE_B64: ${{ secrets.ADOWNLOADER_KEYSTORE_BASE64 }}
+          KEY_PASSWORD: ${{ secrets.ADOWNLOADER_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          KS="$RUNNER_TEMP/release.keystore"
+          trap 'rm -f "$KS" "$RUNNER_TEMP/aligned.apk"' EXIT
+          printf '%s' "$KEYSTORE_B64" | tr -d '\r\n ' | base64 -d > "$KS"
+          OUT="Adownloader-v$NAME-arm64.apk"
+          "$BT/zipalign" -P 16 -f 4 app/build/outputs/apk/release/app-release-unsigned.apk "$RUNNER_TEMP/aligned.apk"
+          "$BT/apksigner" sign --ks "$KS" --ks-key-alias adownloader --ks-pass env:KEY_PASSWORD --key-pass env:KEY_PASSWORD \
+            --v1-signing-enabled false --v2-signing-enabled true --v3-signing-enabled true --v4-signing-enabled false \
+            --out "$OUT" "$RUNNER_TEMP/aligned.apk"
+          "$BT/apksigner" verify --verbose --print-certs "$OUT" | tee certs.txt
+          # minSdk 30: v3 is the effective scheme (apksigner reports v2 as not required).
+          grep -q "Verified using v3 scheme (APK Signature Scheme v3): true" certs.txt
+          grep -q "^Verifies" certs.txt
+          cert=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' certs.txt | tr -d ' ')
+          if [ "$cert" = "$EXISTING_CERT_SHA256" ]; then echo "KEY_KIND=existing" >> "$GITHUB_ENV"
+          elif [ "$cert" = "$ROTATED_CERT_SHA256" ]; then echo "KEY_KIND=rotated" >> "$GITHUB_ENV"
+          else
+            echo "::error::Signing certificate $cert is not a known ADownloader release certificate; refusing to publish."
+            exit 1
+          fi
+          "$BT/zipalign" -c -P 16 -v 4 "$OUT" | tail -1
+          unzip -l "$OUT" | grep 'lib/arm64-v8a/libxul.so'
+          if unzip -l "$OUT" | grep -E 'lib/(x86|armeabi)'; then exit 1; fi
+          sha256sum "$OUT" > SHA256SUMS.txt
+          echo "$cert" > CERTIFICATE-SHA256.txt
+          echo "APK=$OUT" >> "$GITHUB_ENV"
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NAME: ${{ steps.version.outputs.name }}
+          CODE: ${{ steps.version.outputs.code }}
+        run: |
+          set -euo pipefail
+          notes="docs/release-notes/v$NAME.md"
+          test -f "$notes" || { echo "::error::Missing $notes"; exit 1; }
+          {
+            if [ "$KEY_KIND" = rotated ]; then
+              echo '> **설치 전 꼭 읽어 주세요:** 이번 버전부터 서명키가 바뀌었습니다. 기존 Adownloader를 **삭제한 뒤** 설치해 주세요. 방문 기록·북마크·다운로드 기록은 지워지지만 이미 받은 영상 파일은 남습니다.'
+              echo
+            fi
+            cat "$notes"
+            echo
+            echo "Galaxy Fold8용 ARM64 APK · 버전 코드 $CODE · $( [ "$KEY_KIND" = existing ] && echo '기존' || echo '교체된') RSA-4096 릴리즈 키로 서명, APK v3 서명 검증 완료."
+            echo
+            echo "- APK SHA-256 \`$(cut -d' ' -f1 SHA256SUMS.txt)\`"
+            echo "- 인증서 SHA-256 \`$(cat CERTIFICATE-SHA256.txt)\`"
+            echo "- 소스 커밋 \`$GITHUB_SHA\`"
+          } > body.md
+          gh release create "v$NAME" "$APK" SHA256SUMS.txt CERTIFICATE-SHA256.txt \
+            --target "$GITHUB_SHA" --title "Adownloader v$NAME" --notes-file body.md

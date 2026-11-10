@@ -99,6 +99,20 @@ public class ProcessRecoveryTest {
         }
       if (committed) {
         assertNotEquals(DownloadJobStore.State.COMPLETED, job.state);
+        if (type != MediaCandidate.MediaType.VIDEO)
+          // Recorded before the force-stop: after relaunch the job resumes by itself and its
+          // plan and part rows are cleaned up once it completes.
+          context
+              .getSharedPreferences("recovery-test", 0)
+              .edit()
+              .putString(
+                  kind + "-part",
+                  committedPartPath(
+                      jobs,
+                      id[0],
+                      PlanCodec.decode(jobs.store.request(id[0]).getJSONArray("plan")),
+                      type == MediaCandidate.MediaType.DASH))
+              .commit();
         return;
       }
       Thread.sleep(25);
@@ -111,26 +125,50 @@ public class ProcessRecoveryTest {
     long id = context.getSharedPreferences("recovery-test", 0).getLong(kind, -1);
     DownloadJobStore.Job recovered = jobs.store.get(id);
     assertNotNull(recovered);
-    assertEquals(
-        "A dead worker must never appear active", DownloadJobStore.State.PAUSED, recovered.state);
+    // v0.7: a verified interrupted job is re-queued and may already be running again, but only in
+    // this process; a worker of the dead process must never appear active.
+    boolean active =
+        recovered.state == DownloadJobStore.State.PREPARING
+            || recovered.state == DownloadJobStore.State.DOWNLOADING
+            || recovered.state == DownloadJobStore.State.FINALIZING;
     assertTrue(
-        jobs.store
-            .request(id)
-            .getJSONObject("headers")
-            .getString("Cookie")
-            .contains("PRIVATE_REQUEST_CONTEXT"));
-    if (kind.equals("cookie-hls")) {
-      var savedHeaders = jobs.store.request(id).getJSONObject("headers");
-      assertEquals("Bearer PRIVATE_RECOVERY_AUTH", savedHeaders.getString("Authorization"));
-      assertEquals("PRIVATE_RECOVERY_TOKEN", savedHeaders.getString("X-Playback-Token"));
+        "A dead worker must never appear active: "
+            + recovered.state
+            + " error="
+            + recovered.error
+            + " phase="
+            + recovered.phase
+            + workspace(jobs, id),
+        active
+            ? DownloadJobStore.ownedHere(recovered)
+            : recovered.state == DownloadJobStore.State.QUEUED
+                || recovered.state == DownloadJobStore.State.PAUSED
+                || recovered.state == DownloadJobStore.State.COMPLETED);
+    // The encrypted context survives the restart. A job that already finished by itself has
+    // discarded it by design; its authenticated completion below proves it was intact.
+    JSONObject saved = null;
+    try {
+      saved = jobs.store.request(id);
+    } catch (java.security.GeneralSecurityException discarded) {
+      assertEquals(
+          "Only a completed job may have discarded its context",
+          DownloadJobStore.State.COMPLETED,
+          jobs.store.get(id).state);
     }
-    String firstPart = null;
-    if (!direct) {
-      List<ManifestParser.Track> plan =
-          PlanCodec.decode(jobs.store.request(id).getJSONArray("plan"));
-      firstPart = Uri.parse(plan.get(0).parts.get(kind.equals("dash") ? 1 : 0).url).getPath();
+    if (saved != null) {
+      assertTrue(
+          saved.getJSONObject("headers").getString("Cookie").contains("PRIVATE_REQUEST_CONTEXT"));
+      if (kind.equals("cookie-hls")) {
+        var savedHeaders = saved.getJSONObject("headers");
+        assertEquals("Bearer PRIVATE_RECOVERY_AUTH", savedHeaders.getString("Authorization"));
+        assertEquals("PRIVATE_RECOVERY_TOKEN", savedHeaders.getString("X-Playback-Token"));
+      }
     }
-    instrumentation.runOnMainSync(() -> jobs.action(id, "RESUME", null));
+    String firstPart =
+        direct ? null : context.getSharedPreferences("recovery-test", 0).getString(kind + "-part", null);
+    if (!direct) assertNotNull("prepare must record a committed part", firstPart);
+    if (jobs.store.get(id).state == DownloadJobStore.State.PAUSED)
+      instrumentation.runOnMainSync(() -> jobs.action(id, "RESUME", null));
     long deadline = System.currentTimeMillis() + 60000;
     DownloadJobStore.Job complete = null;
     while (System.currentTimeMillis() < deadline) {
@@ -238,7 +276,53 @@ public class ProcessRecoveryTest {
         fail("Unexpected failure: " + job.error);
       Thread.sleep(25);
     }
-    throw new AssertionError("State timeout: " + jobs.store.get(id).state);
+    throw new AssertionError(
+        "State timeout: "
+            + jobs.store.get(id).state
+            + " executing="
+            + jobs.isExecuting(id)
+            + appThreads());
+  }
+
+  /** Committed part rows versus the files actually present in the job workspace. */
+  private static String workspace(DownloadJobs jobs, long id) {
+    StringBuilder out = new StringBuilder("\nparts:");
+    try (android.database.Cursor c =
+        jobs.store
+            .getReadableDatabase()
+            .rawQuery(
+                "SELECT track,part,bytes FROM parts WHERE job=? ORDER BY track,part",
+                new String[] {"" + id})) {
+      while (c.moveToNext())
+        out.append(' ').append(c.getInt(0)).append('-').append(c.getInt(1)).append('=').append(c.getLong(2));
+    } catch (Exception e) {
+      out.append(" <").append(e).append('>');
+    }
+    out.append("\nfiles:");
+    try {
+      File[] files = jobs.store.directory(id).listFiles();
+      if (files != null)
+        for (File f : files) out.append(' ').append(f.getName()).append('=').append(f.length());
+    } catch (Exception e) {
+      out.append(" <").append(e).append('>');
+    }
+    return out.toString();
+  }
+
+  /** The test shares the app process: show where app code is waiting when a job hangs. */
+  private static String appThreads() {
+    StringBuilder out = new StringBuilder();
+    for (var entry : Thread.getAllStackTraces().entrySet()) {
+      StackTraceElement[] stack = entry.getValue();
+      boolean app = false;
+      for (StackTraceElement frame : stack)
+        app |= frame.getClassName().startsWith("com.adownloader.app.")
+            && !frame.getClassName().contains("Test");
+      if (!app) continue;
+      out.append("\n--- ").append(entry.getKey().getName()).append(' ').append(entry.getKey().getState());
+      for (int i = 0; i < Math.min(stack.length, 25); i++) out.append("\n    at ").append(stack[i]);
+    }
+    return out.toString();
   }
 
   private void checkpoint(DownloadJobs jobs, long id) throws Exception {
@@ -301,10 +385,9 @@ public class ProcessRecoveryTest {
         context.getContentResolver().query(pending, null, null, null, null)) {
       assertTrue(cursor == null || !cursor.moveToFirst());
     }
+    // v0.7: a transient server failure (HTTP 500 once) is retried automatically from the
+    // checkpoint instead of waiting for the user to press retry.
     long retry = enqueue(jobs, "/process/fail-once");
-    DownloadJobStore.Job failed = await(jobs, retry, DownloadJobStore.State.FAILED);
-    assertEquals("SERVER", failed.error);
-    action(jobs, retry, "RETRY");
     DownloadJobStore.Job retried = await(jobs, retry, DownloadJobStore.State.COMPLETED);
     context.getContentResolver().delete(Uri.parse(retried.uri), null, null);
     assertEquals(2, get("/stats").getJSONObject("counts").getInt("/process/fail-once"));
@@ -404,6 +487,29 @@ public class ProcessRecoveryTest {
     return id[0];
   }
 
+  /**
+   * A media part that is actually committed. Segments are fetched concurrently, so the first
+   * committed part is not necessarily part 0 (which may still have been in flight when stopped).
+   */
+  private String committedPartPath(
+      DownloadJobs jobs, long id, List<ManifestParser.Track> plan, boolean skipInit)
+      throws Exception {
+    try (android.database.Cursor c =
+        jobs.store
+            .getReadableDatabase()
+            .rawQuery(
+                "SELECT track,part FROM parts WHERE job=? ORDER BY track,part",
+                new String[] {"" + id})) {
+      while (c.moveToNext()) {
+        ManifestParser.Part part = plan.get(c.getInt(0)).parts.get(c.getInt(1));
+        if (skipInit && part.initialization) continue;
+        return Uri.parse(part.url).getPath();
+      }
+    }
+    fail("No committed media part");
+    return null;
+  }
+
   private void parts(DownloadJobs jobs, long id, int count) throws Exception {
     long until = System.currentTimeMillis() + 15000;
     while (System.currentTimeMillis() < until) {
@@ -437,9 +543,7 @@ public class ProcessRecoveryTest {
     if (!direct) {
       List<ManifestParser.Track> plan =
           PlanCodec.decode(jobs.store.request(id).getJSONArray("plan"));
-      reusedPart =
-          Uri.parse(plan.get(0).parts.get(type == MediaCandidate.MediaType.DASH ? 1 : 0).url)
-              .getPath();
+      reusedPart = committedPartPath(jobs, id, plan, type == MediaCandidate.MediaType.DASH);
     }
     get(changed ? "/change" : "/expire");
     action(jobs, id, "RESUME");
@@ -544,9 +648,19 @@ public class ProcessRecoveryTest {
   public void recoverFinalized() throws Exception {
     DownloadJobs jobs = launch();
     long id = context.getSharedPreferences("recovery-test", 0).getLong("finalized", -1);
-    assertEquals(DownloadJobStore.State.PAUSED, jobs.store.get(id).state);
-    assertNotNull(jobs.store.finalizedMedia(id));
-    instrumentation.runOnMainSync(() -> jobs.action(id, "RESUME", null));
+    DownloadJobStore.Job recovered = jobs.store.get(id);
+    // v0.7: the verified finalized job is re-queued automatically; it must not look active from
+    // the dead process, and it must finish from its checkpoint (the old source now fails).
+    assertTrue(
+        "A dead worker must never appear active: " + recovered.state,
+        recovered.state == DownloadJobStore.State.QUEUED
+            || recovered.state == DownloadJobStore.State.PAUSED
+            || recovered.state == DownloadJobStore.State.COMPLETED
+            || DownloadJobStore.ownedHere(recovered));
+    if (recovered.state == DownloadJobStore.State.PAUSED) {
+      assertNotNull(jobs.store.finalizedMedia(id));
+      instrumentation.runOnMainSync(() -> jobs.action(id, "RESUME", null));
+    }
     var completed = await(jobs, id, DownloadJobStore.State.COMPLETED);
     try (var fd = context.getContentResolver().openFileDescriptor(Uri.parse(completed.uri), "r")) {
       PostProcessor.inspect(fd.getFileDescriptor(), 3, true, true);
@@ -677,15 +791,27 @@ public class ProcessRecoveryTest {
     prepare("cookie-hls", "/cookie/playlist.m3u8", MediaCandidate.MediaType.HLS);
     long id = context.getSharedPreferences("recovery-test", 0).getLong("cookie-hls", -1);
     assertFalse(DownloadJobs.get(context).store.request(id).optString("cookieState").isEmpty());
+    // Root requests before the force-stop: the transfer's single browser-transport attempt (which
+    // this fixture rejects, since only the captured context carries its cookie) plus the
+    // captured-context request. Recovery must not add any.
+    context
+        .getSharedPreferences("recovery-test", 0)
+        .edit()
+        .putInt(
+            "cookie-hls-root",
+            get("/stats").getJSONObject("counts").getInt("/cookie/playlist.m3u8"))
+        .commit();
   }
 
   @Test
   public void recoverCookieHls() throws Exception {
     recover("cookie-hls", false);
     JSONObject stats = get("/stats").getJSONObject("counts");
+    int before = context.getSharedPreferences("recovery-test", 0).getInt("cookie-hls-root", -1);
+    assertTrue("prepare must record root requests", before > 0 && before <= 2);
     assertEquals(
         "Saved plan and encrypted response-cookie jar must resume without root refetch",
-        1,
+        before,
         stats.getInt("/cookie/playlist.m3u8"));
     assertEquals(0, stats.optInt("cookie-denied"));
     for (File f :

@@ -344,6 +344,11 @@ public final class MainActivity extends AppCompatActivity
   }
 
   private void handleJobIntent() {
+    if ("OPEN_DOWNLOADS".equals(getIntent().getAction())) {
+      getIntent().setAction(Intent.ACTION_MAIN);
+      selectPage(R.id.nav_downloads);
+      return;
+    }
     if ("RESUME_JOB".equals(getIntent().getAction())
         || "OPEN_JOB_PAGE".equals(getIntent().getAction())) {
       long id = getIntent().getLongExtra("job", -1);
@@ -581,6 +586,7 @@ public final class MainActivity extends AppCompatActivity
   protected void onResume() {
     super.onResume();
     handleJobIntent();
+    com.adownloader.app.jobs.DownloadJobs.get(this).resumeQueued();
     started = true;
     if (browser != null) {
       browser.setAppForeground(true);

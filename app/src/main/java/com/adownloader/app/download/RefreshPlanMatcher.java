@@ -60,6 +60,7 @@ public final class RefreshPlanMatcher {
         if (x.offset != y.offset
             || x.length != y.length
             || x.sequence != y.sequence
+            || x.discontinuity != y.discontinuity
             || !Objects.equals(x.iv, y.iv)
             || !canonical(x.url).equals(canonical(y.url))
             || !canonical(x.keyUrl).equals(canonical(y.keyUrl))) return false;

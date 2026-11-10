@@ -38,28 +38,105 @@ public final class JobNotifications {
         PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
   }
 
-  public static Notification running(Context context, DownloadJobStore.Job job) {
+  /**
+   * The foreground/user-initiated-job notification. It summarizes all transfers and carries no
+   * per-job buttons, so a control can never target a different download than the one shown.
+   */
+  public static Notification running(Context context, DownloadJobStore.Job ignored) {
+    return summary(context, 0, -1);
+  }
+
+  private static Notification summary(Context context, int active, int percent) {
     channel(context);
     Notification.Builder builder =
         new Notification.Builder(context, CHANNEL)
             .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle(job == null ? "Adownloader" : job.name)
-            .setContentText(job == null ? "작업 준비 중" : job.phase)
+            .setContentTitle("Adownloader")
+            .setContentText(active <= 0 ? "다운로드 준비 중" : "다운로드 " + active + "개 진행 중")
             .setOnlyAlertOnce(true)
             .setOngoing(true)
-            .setGroup("downloads")
-            .setGroupSummary(true);
-    if (job != null) {
-      builder
-          .setProgress(100, job.percent, job.total < 0 && job.percent == 0)
-          .addAction(
-              new Notification.Action.Builder(null, "일시정지", action(context, job.id, "PAUSE"))
-                  .build())
-          .addAction(
-              new Notification.Action.Builder(null, "취소", action(context, job.id, "CANCEL"))
-                  .build());
-    }
+            .setShowWhen(false)
+            .setGroup(GROUP)
+            .setGroupSummary(true)
+            .setContentIntent(open(context));
+    if (active > 0) builder.setProgress(100, Math.max(0, percent), percent < 0);
     return builder.build();
+  }
+
+  private static final String GROUP = "downloads";
+  private static final java.util.Map<Long, Long> lastPosted =
+      new java.util.concurrent.ConcurrentHashMap<>();
+  private static volatile long lastSummary;
+
+  /** Per-download progress with its own pause/cancel buttons. Rate limited to ~1/s per job. */
+  public static void progress(Context context, DownloadJobStore store, long id) {
+    long now = android.os.SystemClock.elapsedRealtime();
+    Long previous = lastPosted.get(id);
+    if (previous != null && now - previous < 1000) return;
+    lastPosted.put(id, now);
+    DownloadJobStore.Job job = store.get(id);
+    if (job == null || !transferring(job.state)) return;
+    channel(context);
+    boolean unknown = job.total <= 0 && job.segments <= 0 && job.percent == 0;
+    Notification notification =
+        new Notification.Builder(context, CHANNEL)
+            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setContentTitle(job.name)
+            .setContentText(job.phase)
+            .setOnlyAlertOnce(true)
+            .setOngoing(true)
+            .setShowWhen(false)
+            .setGroup(GROUP)
+            // A process death leaves no owner to clear it; the next update renews the timeout.
+            .setTimeoutAfter(120_000)
+            .setProgress(100, job.percent, unknown)
+            .setContentIntent(open(context))
+            .addAction(
+                new Notification.Action.Builder(null, "일시정지", action(context, job.id, "PAUSE"))
+                    .build())
+            .addAction(
+                new Notification.Action.Builder(null, "취소", action(context, job.id, "CANCEL"))
+                    .build())
+            .build();
+    NotificationManager manager = context.getSystemService(NotificationManager.class);
+    manager.notify(tag(id), 0, notification);
+    if (now - lastSummary >= 1000) {
+      lastSummary = now;
+      int active = 0, sum = 0;
+      boolean known = true;
+      for (DownloadJobStore.Job item : store.list())
+        if (transferring(item.state)) {
+          active++;
+          sum += item.percent;
+          known &= !(item.total <= 0 && item.segments <= 0 && item.percent == 0);
+        }
+      manager.notify(SUMMARY, summary(context, active, known && active > 0 ? sum / active : -1));
+    }
+  }
+
+  private static boolean transferring(DownloadJobStore.State state) {
+    return state == DownloadJobStore.State.PREPARING
+        || state == DownloadJobStore.State.DOWNLOADING
+        || state == DownloadJobStore.State.FINALIZING;
+  }
+
+  public static void clear(Context context, long id) {
+    lastPosted.remove(id);
+    context.getSystemService(NotificationManager.class).cancel(tag(id), 0);
+  }
+
+  private static String tag(long id) {
+    return "job:" + id;
+  }
+
+  private static PendingIntent open(Context context) {
+    return PendingIntent.getActivity(
+        context,
+        0,
+        new Intent(context, MainActivity.class)
+            .setAction("OPEN_DOWNLOADS")
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP),
+        PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
   }
 
   public static void status(Context context, DownloadJobStore.Job job) {
@@ -71,7 +148,7 @@ public final class JobNotifications {
             .setContentTitle(job.name)
             .setOnlyAlertOnce(true)
             .setAutoCancel(true)
-            .setGroup("downloads");
+            .setGroup(GROUP);
     if (job.state == DownloadJobStore.State.COMPLETED) {
       builder.setContentText("다운로드 완료");
       builder.setContentIntent(
@@ -97,7 +174,8 @@ public final class JobNotifications {
               new Notification.Action.Builder(null, "취소", action(context, job.id, "CANCEL"))
                   .build());
     }
-    context.getSystemService(NotificationManager.class).notify("job:" + job.id, 0, builder.build());
+    lastPosted.remove(job.id);
+    context.getSystemService(NotificationManager.class).notify(tag(job.id), 0, builder.build());
   }
 
   private static String mime(Context context, DownloadJobStore.Job job) {
@@ -126,7 +204,7 @@ public final class JobNotifications {
       case "HLS_GAP":
         return "영상 조각이 누락되어 완전한 파일로 저장할 수 없습니다.";
       case "HLS_DISCONTINUITY":
-        return "시간 정보가 불연속인 HLS의 안전한 병합은 지원하지 않습니다.";
+        return "중간에 해상도나 코덱이 다른 구간(광고 등)이 섞여 있어 화질 손실 없이 하나의 파일로 이어 붙일 수 없습니다.";
       case "DASH_MULTIPERIOD":
         return "여러 구간으로 나뉜 DASH의 안전한 연결은 지원하지 않습니다.";
       case "LIVE_UNSUPPORTED":

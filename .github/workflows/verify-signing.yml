@@ -1,0 +1,49 @@
+name: Verify signing secrets
+# Proves the release secrets work without publishing anything: decodes the keystore into the
+# runner's temp directory, opens it with the password, prints only the certificate fingerprint
+# and deletes the file. Secrets are not available to pull requests from forks.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - '.github/workflows/verify-signing.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  EXISTING_CERT_SHA256: 7b75bc818dad7ed1baa8433845fe4c2dfde32990bf4e1ea84fe8cb4d861d32ba
+  ROTATED_CERT_SHA256: 1cdd1a930f4ec0a02204696d0b3c14a24c7437a4758db2ac6a0c348bcd9c9255
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Open the keystore from secrets and check its certificate
+        env:
+          KEYSTORE_B64: ${{ secrets.ADOWNLOADER_KEYSTORE_BASE64 }}
+          KEY_PASSWORD: ${{ secrets.ADOWNLOADER_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$KEYSTORE_B64" || { echo "::error::Secret ADOWNLOADER_KEYSTORE_BASE64 is not set"; exit 1; }
+          test -n "$KEY_PASSWORD" || { echo "::error::Secret ADOWNLOADER_KEYSTORE_PASSWORD is not set"; exit 1; }
+          KS="$RUNNER_TEMP/release.keystore"
+          trap 'rm -f "$KS" "$RUNNER_TEMP/list.txt"' EXIT
+          if ! printf '%s' "$KEYSTORE_B64" | tr -d '\r\n ' | base64 -d > "$KS"; then
+            echo "::error::ADOWNLOADER_KEYSTORE_BASE64 is not valid Base64 (copy the whole PowerShell output)"; exit 1
+          fi
+          if ! keytool -list -v -keystore "$KS" -storepass:env KEY_PASSWORD -alias adownloader > "$RUNNER_TEMP/list.txt" 2>&1; then
+            echo "::error::The keystore could not be opened: wrong password, or no key named 'adownloader'"; exit 1
+          fi
+          cert=$(sed -n 's/^[[:space:]]*SHA256: //p' "$RUNNER_TEMP/list.txt" | head -1 | tr -d ':' | tr 'A-F' 'a-f')
+          rm -f "$RUNNER_TEMP/list.txt"
+          echo "Certificate SHA-256: $cert"
+          if [ "$cert" = "$EXISTING_CERT_SHA256" ]; then
+            echo "::notice::Secrets OK: existing ADownloader key. Releases update the installed app in place."
+          elif [ "$cert" = "$ROTATED_CERT_SHA256" ]; then
+            echo "::notice::Secrets OK: replacement key generated 2026-11-10. Installed v0.6.x must be removed once."
+          else
+            echo "::error::Keystore opens, but its certificate is not a known ADownloader release certificate"; exit 1
+          fi

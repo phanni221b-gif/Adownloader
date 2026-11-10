@@ -3,7 +3,7 @@ package com.adownloader.app.download;
 import java.io.InterruptedIOException;
 import java.net.HttpURLConnection;
 
-/** A cancellation signal owns at most one active HTTP exchange per worker. */
+/** A cancellation signal for every active HTTP exchange of one job (segments run in parallel). */
 public final class TransferControl {
   public enum Stop {
     NONE,
@@ -40,12 +40,12 @@ public final class TransferControl {
     stop(reason);
   }
 
-  private volatile HttpURLConnection active;
+  private final java.util.Set<HttpURLConnection> active =
+      java.util.concurrent.ConcurrentHashMap.newKeySet();
 
   public void stop(Stop reason) {
     stop = reason;
-    HttpURLConnection connection = active;
-    if (connection != null) aborts.execute(connection::disconnect);
+    for (HttpURLConnection connection : active) aborts.execute(connection::disconnect);
   }
 
   public void check() throws Stopped {
@@ -55,7 +55,7 @@ public final class TransferControl {
 
   public void attach(HttpURLConnection connection) throws Stopped {
     check();
-    active = connection;
+    active.add(connection);
     if (stop != Stop.NONE) {
       connection.disconnect();
       check();
@@ -63,6 +63,6 @@ public final class TransferControl {
   }
 
   public void detach(HttpURLConnection connection) {
-    if (active == connection) active = null;
+    active.remove(connection);
   }
 }
