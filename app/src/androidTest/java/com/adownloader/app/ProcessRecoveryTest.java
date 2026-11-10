@@ -791,15 +791,27 @@ public class ProcessRecoveryTest {
     prepare("cookie-hls", "/cookie/playlist.m3u8", MediaCandidate.MediaType.HLS);
     long id = context.getSharedPreferences("recovery-test", 0).getLong("cookie-hls", -1);
     assertFalse(DownloadJobs.get(context).store.request(id).optString("cookieState").isEmpty());
+    // Root requests before the force-stop: the transfer's single browser-transport attempt (which
+    // this fixture rejects, since only the captured context carries its cookie) plus the
+    // captured-context request. Recovery must not add any.
+    context
+        .getSharedPreferences("recovery-test", 0)
+        .edit()
+        .putInt(
+            "cookie-hls-root",
+            get("/stats").getJSONObject("counts").getInt("/cookie/playlist.m3u8"))
+        .commit();
   }
 
   @Test
   public void recoverCookieHls() throws Exception {
     recover("cookie-hls", false);
     JSONObject stats = get("/stats").getJSONObject("counts");
+    int before = context.getSharedPreferences("recovery-test", 0).getInt("cookie-hls-root", -1);
+    assertTrue("prepare must record root requests", before > 0 && before <= 2);
     assertEquals(
         "Saved plan and encrypted response-cookie jar must resume without root refetch",
-        1,
+        before,
         stats.getInt("/cookie/playlist.m3u8"));
     assertEquals(0, stats.optInt("cookie-denied"));
     for (File f :
