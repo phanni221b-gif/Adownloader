@@ -111,8 +111,19 @@ public class ProcessRecoveryTest {
     long id = context.getSharedPreferences("recovery-test", 0).getLong(kind, -1);
     DownloadJobStore.Job recovered = jobs.store.get(id);
     assertNotNull(recovered);
-    assertEquals(
-        "A dead worker must never appear active", DownloadJobStore.State.PAUSED, recovered.state);
+    // v0.7: a verified interrupted job is re-queued and may already be running again, but only in
+    // this process; a worker of the dead process must never appear active.
+    boolean active =
+        recovered.state == DownloadJobStore.State.PREPARING
+            || recovered.state == DownloadJobStore.State.DOWNLOADING
+            || recovered.state == DownloadJobStore.State.FINALIZING;
+    assertTrue(
+        "A dead worker must never appear active: " + recovered.state,
+        active
+            ? DownloadJobStore.ownedHere(recovered)
+            : recovered.state == DownloadJobStore.State.QUEUED
+                || recovered.state == DownloadJobStore.State.PAUSED
+                || recovered.state == DownloadJobStore.State.COMPLETED);
     assertTrue(
         jobs.store
             .request(id)
@@ -130,7 +141,8 @@ public class ProcessRecoveryTest {
           PlanCodec.decode(jobs.store.request(id).getJSONArray("plan"));
       firstPart = Uri.parse(plan.get(0).parts.get(kind.equals("dash") ? 1 : 0).url).getPath();
     }
-    instrumentation.runOnMainSync(() -> jobs.action(id, "RESUME", null));
+    if (jobs.store.get(id).state == DownloadJobStore.State.PAUSED)
+      instrumentation.runOnMainSync(() -> jobs.action(id, "RESUME", null));
     long deadline = System.currentTimeMillis() + 60000;
     DownloadJobStore.Job complete = null;
     while (System.currentTimeMillis() < deadline) {
@@ -544,9 +556,19 @@ public class ProcessRecoveryTest {
   public void recoverFinalized() throws Exception {
     DownloadJobs jobs = launch();
     long id = context.getSharedPreferences("recovery-test", 0).getLong("finalized", -1);
-    assertEquals(DownloadJobStore.State.PAUSED, jobs.store.get(id).state);
-    assertNotNull(jobs.store.finalizedMedia(id));
-    instrumentation.runOnMainSync(() -> jobs.action(id, "RESUME", null));
+    DownloadJobStore.Job recovered = jobs.store.get(id);
+    // v0.7: the verified finalized job is re-queued automatically; it must not look active from
+    // the dead process, and it must finish from its checkpoint (the old source now fails).
+    assertTrue(
+        "A dead worker must never appear active: " + recovered.state,
+        recovered.state == DownloadJobStore.State.QUEUED
+            || recovered.state == DownloadJobStore.State.PAUSED
+            || recovered.state == DownloadJobStore.State.COMPLETED
+            || DownloadJobStore.ownedHere(recovered));
+    if (recovered.state == DownloadJobStore.State.PAUSED) {
+      assertNotNull(jobs.store.finalizedMedia(id));
+      instrumentation.runOnMainSync(() -> jobs.action(id, "RESUME", null));
+    }
     var completed = await(jobs, id, DownloadJobStore.State.COMPLETED);
     try (var fd = context.getContentResolver().openFileDescriptor(Uri.parse(completed.uri), "r")) {
       PostProcessor.inspect(fd.getFileDescriptor(), 3, true, true);
