@@ -157,4 +157,28 @@ public class MediaIdentityTest {
     assertEquals(MediaCandidate.MediaType.AUDIO, d.snapshot().get(0).getType());
     assertEquals("request=actual", d.snapshot().get(0).getHeaders().get("Cookie"));
   }
+
+  @Test
+  public void protectedResponsesFromOnePlayerCollapseToOneEntry() {
+    MediaDetector detector = new MediaDetector(null);
+    for (int i = 0; i < 5; i++)
+      detector.capture(
+          "https://vasdqwef121.com/relay/seg-" + i + ".bin?t=" + i,
+          "application/x-adownloader-protected",
+          "protected-response",
+          "https://yaskorea01.tv/premium/?items_id=76",
+          Map.of(),
+          Map.of("transportProtection", "encrypted-relay", "protectionToken", "emr1"));
+    assertEquals(1, detector.snapshot().size());
+    assertEquals(
+        MediaCandidate.MediaType.PROTECTED, detector.snapshot().get(0).getType());
+    // A genuinely supported source on the same page stays a separate, downloadable entry.
+    detector.capture(
+        "https://cdn.vasdqwef121.com/v/movie-9.m3u8",
+        "application/vnd.apple.mpegurl",
+        "network-response",
+        "https://yaskorea01.tv/premium/?items_id=76",
+        Map.of());
+    assertEquals(2, detector.snapshot().size());
+  }
 }

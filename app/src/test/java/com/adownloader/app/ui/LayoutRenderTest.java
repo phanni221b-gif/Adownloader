@@ -150,4 +150,37 @@ public class LayoutRenderTest {
       assertTrue(toolbar.getHeight() > 0);
     }
   }
+
+  private View mediaRow(Context context, String title, String type, String host, String info,
+      boolean supported) {
+    View row = LayoutInflater.from(context).inflate(R.layout.item_media, null);
+    ((TextView) row.findViewById(R.id.media_title)).setText(title);
+    ((TextView) row.findViewById(R.id.media_type)).setText(type);
+    ((TextView) row.findViewById(R.id.media_host)).setText(host);
+    ((TextView) row.findViewById(R.id.media_metadata)).setText(info);
+    var download = (com.google.android.material.button.MaterialButton) row.findViewById(R.id.media_download);
+    download.setEnabled(supported);
+    download.setText(supported ? "다운로드" : "미지원");
+    return row;
+  }
+
+  @Test
+  public void mediaSheetMixedSupportedAndProtected() throws Exception {
+    for (boolean dark : new boolean[] {false, true}) {
+      Context context = themed(dark);
+      View sheet = LayoutInflater.from(context).inflate(R.layout.sheet_list, null);
+      ((TextView) sheet.findViewById(R.id.sheet_title)).setText("감지된 미디어 3");
+      ((TextView) sheet.findViewById(R.id.sheet_subtitle)).setText("다운로드 가능 1개 · 암호화 전송 2개");
+      android.widget.LinearLayout list = new android.widget.LinearLayout(context);
+      list.setOrientation(android.widget.LinearLayout.VERTICAL);
+      list.addView(mediaRow(context, "주말 캠핑 브이로그 1080p", "HLS", "cdn.example.test",
+          "1080p · 60fps · 원본 자동 선택", true));
+      list.addView(mediaRow(context, "인기 영상 클립", "보호된 전송", "vasdqwef121.com",
+          "플레이어가 응답을 자체 암호화해 전송합니다 (emr1). 재생은 플레이어만 복호화하며, 암호화 해제·보호 우회는 지원하지 않습니다.", false));
+      var holder = (android.view.ViewGroup) ((android.view.ViewGroup) sheet).getChildAt(3);
+      holder.removeAllViews();
+      holder.addView(list);
+      render(sheet, 411, 0, "media-sheet-" + (dark ? "dark" : "light"));
+    }
+  }
 }

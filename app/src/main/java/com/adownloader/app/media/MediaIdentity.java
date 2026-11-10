@@ -18,6 +18,11 @@ public final class MediaIdentity {
     try {
       URI uri = URI.create(url);
       if (uri.getUserInfo() != null) return exact(type, url);
+      // A protected/relay transport cannot be downloaded, and its per-segment URLs differ. Group
+      // every such response from one player (page origin + media origin) into a single entry.
+      if (type == MediaCandidate.MediaType.PROTECTED
+          || type == MediaCandidate.MediaType.RELAY_HLS)
+        return hash(type + "|" + origin(page) + "|" + origin(url));
       String path = uri.getRawPath() == null ? "/" : uri.getRawPath();
       String query = uri.getRawQuery();
       boolean stable = specific(path);
