@@ -13,6 +13,12 @@ public final class ManifestParser {
   public static final class Part {
     public boolean initialization;
 
+    /**
+     * Zero-based #EXT-X-DISCONTINUITY group. Parts of one group share a timeline; a new group is
+     * joined losslessly by offsetting its timestamps during the sample-copy mux.
+     */
+    public int discontinuity;
+
     public Part asInitialization() {
       initialization = true;
       return this;
@@ -178,10 +184,6 @@ public final class ManifestParser {
         "라이브는 VOD 다운로드로 저장하지 않습니다");
     require(
         !text.contains("#EXT-X-GAP"), DownloadError.Category.HLS_GAP, "누락된 HLS 조각을 건너뛰어 저장하지 않습니다");
-    require(
-        !Pattern.compile("(?m)^#EXT-X-DISCONTINUITY\\s*$").matcher(text).find(),
-        DownloadError.Category.HLS_DISCONTINUITY,
-        "타임스탬프가 불연속인 HLS는 안전한 병합을 지원하지 않습니다");
     sessionKeys(text);
     require(
         !text.contains("#EXT-X-SKIP:"),
@@ -193,9 +195,18 @@ public final class ManifestParser {
     boolean explicitOffset = false;
     Part init = null;
     boolean pendingDuration = false, previousRange = false;
+    int discontinuity = 0;
+    boolean mediaInGroup = false;
     for (String raw : text.split("\\r?\\n")) {
       String line = raw.trim();
-      if (line.startsWith("#EXT-X-TARGETDURATION:") || line.startsWith("#EXT-X-VERSION:")) {
+      if (line.equals("#EXT-X-DISCONTINUITY")) {
+        require(!pendingDuration, "HLS_SEGMENT_URI");
+        // A marker before the first media segment does not split the timeline.
+        if (mediaInGroup) {
+          discontinuity++;
+          mediaInGroup = false;
+        }
+      } else if (line.startsWith("#EXT-X-TARGETDURATION:") || line.startsWith("#EXT-X-VERSION:")) {
         require(Long.parseLong(line.substring(line.indexOf(':') + 1)) > 0, "HLS_ATTRIBUTE");
       } else if (line.startsWith("#EXT-X-MEDIA-SEQUENCE:")) {
         sequence = Long.parseLong(line.substring(line.indexOf(':') + 1));
@@ -269,7 +280,10 @@ public final class ManifestParser {
         require(
             sequence < Long.MAX_VALUE && (length < 0 || offset <= Long.MAX_VALUE - length),
             "HLS_ATTRIBUTE");
-        track.parts.add(new Part(partUrl, length > 0 ? offset : 0, length, sequence++, key, iv));
+        Part media = new Part(partUrl, length > 0 ? offset : 0, length, sequence++, key, iv);
+        media.discontinuity = discontinuity;
+        track.parts.add(media);
+        mediaInGroup = true;
         offset = length > 0 ? offset + length : 0;
         previousUrl = partUrl;
         previousRange = length > 0;

@@ -796,7 +796,9 @@ public final class DownloadJobStore extends SQLiteOpenHelper {
         try {
           request(j.id);
           new JobJournal(this, j.id).verifyAll();
-          state(j.id, State.PAUSED, "");
+          // The process died mid-transfer (often the OS reclaiming memory in the background).
+          // Verified checkpoints are intact, so continue automatically within the retry budget.
+          state(j.id, AutoResume.take(context, j.id, false) ? State.QUEUED : State.PAUSED, "");
         } catch (DownloadError damaged) {
           state(j.id, State.FAILED, damaged.category.name());
         } catch (Exception unreadable) {

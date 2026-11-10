@@ -106,14 +106,13 @@ public class HlsVodMatrixTest {
   }
 
   @Test
-  public void protectedSessionKeySampleAesGapDiscontinuityAndDeltaNeverComplete() {
+  public void protectedSessionKeySampleAesGapAndDeltaNeverComplete() {
     rejects(
         "#EXT-X-SESSION-KEY:METHOD=SAMPLE-AES,URI=\"key\"\n#EXTINF:1,\na.ts",
         DownloadError.Category.DRM);
     rejects(
         "#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"key\"\n#EXTINF:1,\na.ts", DownloadError.Category.DRM);
     rejects("#EXT-X-GAP\n#EXTINF:1,\na.ts", DownloadError.Category.HLS_GAP);
-    rejects("#EXT-X-DISCONTINUITY\n#EXTINF:1,\na.ts", DownloadError.Category.HLS_DISCONTINUITY);
     rejects(
         "#EXT-X-SKIP:SKIPPED-SEGMENTS=2\n#EXTINF:1,\na.ts", DownloadError.Category.HLS_UNSUPPORTED);
   }

@@ -59,9 +59,7 @@ public final class BrowserSessionManager {
   public BrowserSessionManager(Context context, GeckoView view, Listener listener) {
     this.view = view;
     this.listener = listener;
-    synchronized (BrowserSessionManager.class) {
-      if (runtime == null) runtime = GeckoRuntime.create(context.getApplicationContext());
-    }
+    runtime = GeckoRuntimes.get(context);
     newTab(null);
     constructing = false;
   }

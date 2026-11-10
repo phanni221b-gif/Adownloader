@@ -48,6 +48,12 @@ public final class DownloadJobs {
   private DownloadJobs(Context context) {
     this.context = context.getApplicationContext();
     com.adownloader.app.ui.DeviceDiagnostics.configureNetwork(this.context);
+    // Media requests go through Gecko's own network stack and cookie store first, so a transfer
+    // does not depend on a visible tab, and keeps working in the background or after a restart.
+    HttpConnections.installBrowser(
+        url ->
+            new com.adownloader.app.browser.GeckoHttpConnection(
+                url, com.adownloader.app.browser.GeckoRuntimes.obtain(this.context, 20_000)));
     store = new DownloadJobStore(context);
     commands.execute(
         () -> {
@@ -170,7 +176,7 @@ public final class DownloadJobs {
                   }
               });
       } else context.startForegroundService(new Intent(context, DownloadService.class));
-    } catch (SecurityException | IllegalStateException restricted) {
+    } catch (RuntimeException restricted) {
       commands.execute(
           () -> {
             for (DownloadJobStore.Job job : store.list())
@@ -180,6 +186,22 @@ public final class DownloadJobs {
               }
           });
     }
+  }
+
+  /**
+   * Starts the transfer host if work is waiting (for example jobs re-queued after the OS stopped
+   * them). Call while the app is visible: Android only allows starting transfers from the
+   * foreground.
+   */
+  public void resumeQueued() {
+    commands.execute(
+        () -> {
+          for (DownloadJobStore.Job job : store.list())
+            if (job.state == DownloadJobStore.State.QUEUED) {
+              schedule();
+              return;
+            }
+        });
   }
 
   public int parallelLimit() {
@@ -227,6 +249,13 @@ public final class DownloadJobs {
   private void finish(long id) {
     try {
       active.remove(id);
+      // The worker may return early (state changed underneath it); never leave its ongoing
+      // progress notification behind.
+      DownloadJobStore.Job ended = store.get(id);
+      if (ended == null
+          || ended.state == DownloadJobStore.State.CANCELED
+          || ended.state == DownloadJobStore.State.QUEUED) JobNotifications.clear(context, id);
+      else if (ended.state == DownloadJobStore.State.PAUSED) JobNotifications.status(context, ended);
       if (deferredResume.remove(id)) {
         DownloadJobStore.Job current = store.get(id);
         if (current != null

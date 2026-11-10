@@ -2,6 +2,14 @@
 
 An Android 11+ video download browser with bundled Gecko, a Java application codebase and an ARM64 release for modern Galaxy Fold devices. Android System WebView is not used. The engine version has one source: [`geckoVersion` in gradle.properties](gradle.properties); Gradle also generates the version shown in App info and Device Diagnostics.
 
+## v0.7.0 background transfer reliability
+
+- **Browser network stack for downloads.** Manifests and segments are requested through Gecko's own `GeckoWebExecutor` — the same cookie store (HttpOnly and cookies refreshed during playback), TLS and HTTP/2 as playback — instead of replaying a captured header snapshot. A transfer no longer needs a live tab, so it keeps its access in the background and after a process restart. The captured-context `HttpURLConnection` path remains the fallback (for example for partitioned third-party cookies) and is kept for the rest of that transfer once it is the one that works.
+- **Expired signed segment URLs** during long transfers trigger one fresh playlist read; the transfer continues only if the new plan is the same media, quality and timeline, otherwise it stops for a refresh as before.
+- **Automatic continuation.** A transfer stopped by Android (job stop, process death) or by a transient network/server error is queued again and resumes from its verified checkpoint. A budget of 4 attempts without progress prevents loops; a user pause always stays paused.
+- **Faster HLS/DASH.** Up to 4 segments per track are fetched concurrently; each is still staged, synced and checkpointed individually.
+- **Per-download notifications.** Parallel downloads no longer share one notification whose buttons could act on a different download.
+
 ## v0.6.1 stabilization
 
 SQLite schema 2 preserves existing jobs and encrypted contexts. Download state now lives only in SQLite; successful v0.5 history import removes the legacy payload. Access failures distinguish AUTH from evidence-based EXPIRED_URL. Conservative CDN identity handling never changes the real request URL or removes resource/quality/JWT payload information.
@@ -10,7 +18,7 @@ HLS/DASH perform an early capacity estimate. After validated pending output is s
 
 ## v0.6 reliability
 
-- SQLite job queue survives process termination. Real pause, resume, cancel and retry controls are available in the download list and notifications; one worker runs at a time.
+- SQLite job queue survives process termination. Real pause, resume, cancel and retry controls are available in the download list and notifications; 1–3 transfers run in parallel (Settings), each with its own notification controls.
 - Per-installation Android Keystore AES-256-GCM protects source URLs, minimal request headers and durable segment plans. No bearer-token collection, browser cookie-jar export or plaintext secret fallback.
 - Direct transfers verify the saved prefix and HTTP Range/If-Range validators. Changed or non-resumable sources restart safely. HLS/DASH reuse hash-verified committed segments and the saved maximum-quality plan.
 - Android 14+ uses user-initiated data-transfer jobs; Android 11–13 uses an owned foreground service. Interrupted work is reconciled honestly and can be resumed. Completion follows actual track, duration and seek validation.
@@ -29,7 +37,7 @@ The built-in WebExtension uses Mozilla ensureBuiltIn/native messaging, response 
 
 HLS chooses resolution, then FPS, then bitrate, with the selected default external audio group. Static DASH chooses the highest video and audio representations. Supported plans include HLS TS/fMP4, ranges and identity AES-128, and DASH SegmentTemplate/Timeline, SegmentList and full-file BaseURL. Direct MP4/WebM preserves source bytes; required container conversion uses sample-copy remux. No encoder is instantiated and no lower-quality fallback hides a failure.
 
-DRM/SAMPLE-AES, live recording, HLS GAP/discontinuity and multiple-Period DASH are rejected explicitly. The platform-only pipeline does not guarantee rolling-window recording or cross-period timestamp/codec normalization. Alternate audio/subtitle rendition metadata is recognized; embedded subtitle downloads and arbitrary language selection are not offered. Unsupported platform containers/codecs can fail safely. FFmpeg is used only to generate synthetic test assets, never included in the application.
+DRM/SAMPLE-AES, live recording, HLS GAP and multiple-Period DASH are rejected explicitly. HLS discontinuity groups are joined by sample copy with shifted timestamps when every group has the same codec configuration; a resolution/codec change between groups is refused rather than stitched. The platform-only pipeline does not guarantee rolling-window recording or cross-period timestamp/codec normalization. Alternate audio/subtitle rendition metadata is recognized; embedded subtitle downloads and arbitrary language selection are not offered. Unsupported platform containers/codecs can fail safely. FFmpeg is used only to generate synthetic test assets, never included in the application.
 
 Downloads are saved to Movies/Adownloader or Music/Adownloader. Cancellation removes private workspace and unpublished media; clearing completed history preserves published files. Startup orphan cleanup only targets app-owned unpublished rows in those two directories.
 

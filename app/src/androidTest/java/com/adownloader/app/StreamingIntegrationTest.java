@@ -77,7 +77,9 @@ public class StreamingIntegrationTest {
               context.getContentResolver().openFileDescriptor(uri, "rwt")) {
         assertNotNull(output);
         PostProcessor.muxSources(
-            Collections.singletonList(input), output.getFileDescriptor(), new TransferControl());
+            List.of(List.<android.media.MediaDataSource>of(input)),
+            output.getFileDescriptor(),
+            new TransferControl());
         output.getFileDescriptor().sync();
         var result = PostProcessor.inspect(output.getFileDescriptor(), 3, true, true);
         assertTrue(result.video);
