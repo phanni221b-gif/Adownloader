@@ -120,6 +120,19 @@ public class RelayTransportTest {
     String token = "A".repeat(40);
     assertTrue(RelayTransport.supportedRoot("https://cdn.example/media/" + token));
     assertTrue(RelayTransport.supportedRoot("http://127.0.0.1:1234/media/" + token));
+    // Path forms this provider actually serves the authorized relay root under.
+    assertTrue(RelayTransport.supportedRoot("https://cdn.example/media/" + token + ".shtml"));
+    assertTrue(RelayTransport.supportedRoot("https://cdn.example/media/" + token + "/index.m3u8"));
+    assertTrue(
+        "The observed /media/<token>/resource root is the same authorized relay protocol",
+        RelayTransport.supportedRoot("https://cdn.example/media/" + token + "/resource"));
+    // Every supported root form derives the same /session handshake endpoint.
+    for (String form : List.of("", ".shtml", "/index.m3u8", "/resource"))
+      assertEquals(
+          "https://cdn.example/media/" + token + "/session",
+          RelayTransport.sessionEndpoint(
+                  java.net.URI.create("https://cdn.example/media/" + token + form))
+              .toString());
     for (String u :
         List.of(
             "http://cdn.example/media/" + token,
