@@ -427,36 +427,45 @@ public class RelaySessionIntegrationTest {
   }
 
   @Test
-  public void loginGatedRootDownloadsWithTheUsersOwnCookieAndIsBlockedWithoutIt() throws Exception {
-    // On-device reproduction (F-b8fe400f): a /premium/ page the user is signed in to answers the
-    // relay session/resource request with 403 -> ACCESS_BLOCKED at ROOT_MANIFEST when it arrives
-    // without the user's login cookie. The relay previously dropped the browser's captured Cookie,
-    // so even the user's own authenticated access was blocked. Forwarding the user's own cookie to
-    // the same media origin — exactly as the normal HLS transport does — must unblock it, while a
-    // request without that cookie must still be refused (no bypass of the login gate itself).
+  public void loginGatedRootOnTheRawFallbackForwardsTheUsersOwnCookie() throws Exception {
+    // The raw captured-context fallback (used when no browser stack is installed): a login-gated
+    // page answers the relay with 403 -> ACCESS_BLOCKED unless the request carries the user's own
+    // login cookie. On this path the relay forwards the user's captured Cookie to the same origin,
+    // which unblocks it, while a request without it stays refused (the login gate is not bypassed).
+    // The browser path (which instead supplies cookies from Gecko's own store, including HttpOnly)
+    // is covered by geckoDetectionEnablesSessionHls...; here we force the fallback so the captured-
+    // cookie behavior is exercised deterministically regardless of test order.
     requireLogin = true;
-
-    // Without the user's cookie the session handshake is refused, as observed on device.
-    Map<String, String> anonymous = new HashMap<>(candidate().getHeaders());
-    anonymous.put("Cookie", "PRIVATE_COOKIE=1");
-    try (HttpSource source = new HttpSource(root, anonymous).relay(true)) {
-      DownloadError blocked =
-          assertThrows(DownloadError.class, () -> source.document(root));
-      assertEquals(DownloadError.Category.ACCESS_BLOCKED, blocked.category);
-    }
-    assertEquals(0, segments.get());
-
-    // With the user's own login cookie the authorized session completes end to end.
-    DownloadEngine engine = new DownloadEngine(directory, (t, p) -> {});
+    java.lang.reflect.Field opener = HttpConnections.class.getDeclaredField("browser");
+    opener.setAccessible(true);
+    Object installed = opener.get(null);
+    opener.set(null, null);
     try {
-      var result =
-          engine.download(root, MediaCandidate.MediaType.RELAY_HLS, candidate().getHeaders());
-      validate(result.file);
-      assertTrue(handshakes.get() >= 1);
-      assertEquals(3, segments.get());
-      assertFalse(leaked.get());
+      assertFalse("fallback path requires no browser stack", HttpConnections.browserAvailable());
+
+      // Without the user's cookie the session handshake is refused, as observed on device.
+      Map<String, String> anonymous = new HashMap<>(candidate().getHeaders());
+      anonymous.put("Cookie", "PRIVATE_COOKIE=1");
+      try (HttpSource source = new HttpSource(root, anonymous).relay(true)) {
+        DownloadError blocked = assertThrows(DownloadError.class, () -> source.document(root));
+        assertEquals(DownloadError.Category.ACCESS_BLOCKED, blocked.category);
+      }
+      assertEquals(0, segments.get());
+
+      // With the user's own login cookie the authorized session completes end to end.
+      DownloadEngine engine = new DownloadEngine(directory, (t, p) -> {});
+      try {
+        var result =
+            engine.download(root, MediaCandidate.MediaType.RELAY_HLS, candidate().getHeaders());
+        validate(result.file);
+        assertTrue(handshakes.get() >= 1);
+        assertEquals(3, segments.get());
+        assertFalse(leaked.get());
+      } finally {
+        engine.cleanup();
+      }
     } finally {
-      engine.cleanup();
+      opener.set(null, installed);
     }
   }
 
