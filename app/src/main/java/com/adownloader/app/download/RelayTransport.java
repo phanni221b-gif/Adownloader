@@ -84,7 +84,12 @@ public final class RelayTransport implements AutoCloseable {
         || url.getRawFragment() != null
         || !url.getRawPath().startsWith("/media/"))
       throw new DownloadError(DownloadError.Category.MANIFEST_INVALID);
-    HttpURLConnection c = (HttpURLConnection) url.toURL().openConnection();
+    // Route through the browser stack (Gecko) when it is available, so the authorized session uses
+    // the same cookie store — including HttpOnly and anti-bot cookies the page received during
+    // playback that JavaScript can never capture — and the same TLS/HTTP2 as playback. This is why
+    // a site that plays in the browser could still answer the relay's own raw connection with 403.
+    // The captured-context raw connection stays as the fallback when no browser stack is installed.
+    HttpURLConnection c = HttpConnections.open(url.toString(), HttpConnections.browserAvailable());
     c.setInstanceFollowRedirects(false);
     c.setConnectTimeout(20000);
     c.setReadTimeout(45000);
@@ -113,9 +118,16 @@ public final class RelayTransport implements AutoCloseable {
         out.write(bytes);
       }
       int status = c.getResponseCode();
-      if (status != 200)
-        throw DownloadError.http(
-            status, endpoint.toString(), false, false, System.currentTimeMillis());
+      if (status != 200) {
+        // Record the real status and that it failed at the authorized-session handshake, so a
+        // block no longer surfaces as httpStatus 0 / transport UNKNOWN in diagnostics.
+        DownloadError e =
+            DownloadError.http(status, endpoint.toString(), false, false, System.currentTimeMillis());
+        throw e.diagnostic(
+            new HlsDiagnostic(
+                endpoint.toString(), status, "", 0, "root",
+                HlsDiagnostic.Stage.CHILD_AUTH, "", e.category));
+      }
       try (InputStream in = c.getInputStream()) {
         return new JSONObject(new String(bounded(in, 65536), StandardCharsets.UTF_8));
       }
@@ -247,8 +259,13 @@ public final class RelayTransport implements AutoCloseable {
     try {
       if (!legacy) raw.setRequestProperty("X-Playback-Session", session);
       int status = raw.getResponseCode();
-      if (status != 200)
-        throw DownloadError.http(status, url, true, false, System.currentTimeMillis());
+      if (status != 200) {
+        // Record the real status and that it failed fetching the authorized resource itself.
+        DownloadError e = DownloadError.http(status, url, true, false, System.currentTimeMillis());
+        throw e.diagnostic(
+            new HlsDiagnostic(
+                url, status, "", 0, "root", HlsDiagnostic.Stage.ROOT_HTTP, "", e.category));
+      }
       if (legacy) return raw;
       String envelope = raw.getHeaderField("X-Relay-Envelope");
       if (!"emr1".equals(envelope) && !"emr2".equals(envelope))

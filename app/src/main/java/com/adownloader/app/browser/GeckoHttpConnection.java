@@ -15,11 +15,21 @@ public final class GeckoHttpConnection extends HttpURLConnection {
   private final GeckoRuntime runtime;
   private final List<String> keys = new ArrayList<>(), values = new ArrayList<>();
   private InputStream body;
+  private ByteArrayOutputStream requestBody;
   private volatile boolean closed;
 
   public GeckoHttpConnection(URL url, GeckoRuntime runtime) {
     super(url);
     this.runtime = runtime;
+  }
+
+  @Override
+  public OutputStream getOutputStream() throws IOException {
+    if (closed) throw new SocketException("Connection closed");
+    if (connected) throw new ProtocolException("Cannot write a request body after connecting");
+    doOutput = true;
+    if (requestBody == null) requestBody = new ByteArrayOutputStream();
+    return requestBody;
   }
 
   @Override
@@ -38,6 +48,15 @@ public final class GeckoHttpConnection extends HttpURLConnection {
       if (lower.equals("cookie")) continue;
       if (lower.equals("referer")) request.referrer(value);
       else request.header(name, value);
+    }
+    if (requestBody != null) {
+      byte[] bytes = requestBody.toByteArray();
+      if (bytes.length > 0) {
+        // GeckoWebExecutor requires a direct buffer for the request body.
+        java.nio.ByteBuffer buffer = java.nio.ByteBuffer.allocateDirect(bytes.length);
+        buffer.put(bytes).flip();
+        request.body(buffer);
+      }
     }
     long wait =
         Math.max(1000, getConnectTimeout() > 0 ? getConnectTimeout() : 20_000)

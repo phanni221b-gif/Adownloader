@@ -47,7 +47,12 @@ public class RelaySessionIntegrationTest {
   // client-minted one — the session-independence property the relay must preserve.
   private final AtomicBoolean leaked = new AtomicBoolean();
   private static final String LOGIN_COOKIE = "LOGIN=premium-member";
-  private volatile boolean renewSoon, tamper, deny, requireLogin;
+  // An access cookie the origin sets HttpOnly on the page, so JavaScript (and therefore the
+  // captured request context) can never read it. Only a request routed through the browser's own
+  // cookie store carries it. This is the real F-d7d0f133 case: the user never logged in, but the
+  // site still gates the media on an HttpOnly cookie it issued during playback.
+  private static final String HTTPONLY_COOKIE = "RELAY_ACCESS=on";
+  private volatile boolean renewSoon, tamper, deny, requireLogin, requireHttpOnly;
 
   @Before
   public void setup() throws Exception {
@@ -234,12 +239,16 @@ public class RelaySessionIntegrationTest {
       // A login-gated (e.g. /premium/) origin refuses the session/resource request unless it
       // carries the user's own login cookie — the real on-device ACCESS_BLOCKED (403) case.
       boolean loggedIn = h.getOrDefault("cookie", "").contains(LOGIN_COOKIE);
+      // An HttpOnly access cookie is carried only by a browser-routed request, never by the
+      // captured context, so a missing one is the F-d7d0f133 403.
+      boolean accessOk = !requireHttpOnly || h.getOrDefault("cookie", "").contains(HTTPONLY_COOKIE);
       int status = 200;
       String mime = "application/octet-stream", protocol = "";
+      String setCookie = "";
       byte[] bytes;
       if (path.endsWith("/session")) {
         byte[] body = in.readNBytes(Integer.parseInt(h.getOrDefault("content-length", "0")));
-        if (requireLogin && !loggedIn) {
+        if ((requireLogin && !loggedIn) || !accessOk) {
           status = 403;
           bytes = text("{}");
         } else if (deny) {
@@ -251,6 +260,9 @@ public class RelaySessionIntegrationTest {
         mime = "application/json";
       } else if (path.equals("/watch")) {
         mime = "text/html";
+        // Issue the access cookie HttpOnly, as the real site does while the page plays: the content
+        // script cannot read it, so only a browser-routed relay request will carry it back.
+        if (requireHttpOnly) setCookie = HTTPONLY_COOKIE + "; Path=/; HttpOnly";
         bytes =
             text(
                 "<title>Authorized relay fixture</title><div data-video-url='"
@@ -264,7 +276,7 @@ public class RelaySessionIntegrationTest {
         // The relay must fetch resources with its own minted session, never by replaying the
         // browser's captured playback-session token.
         if (session.equals("OLD_BROWSER_SESSION")) leaked.set(true);
-        if (requireLogin && !loggedIn) {
+        if ((requireLogin && !loggedIn) || !accessOk) {
           status = 403;
           bytes = text("{}");
         } else if (!sessions.containsKey(id)) {
@@ -338,6 +350,7 @@ public class RelaySessionIntegrationTest {
                   + mime
                   + "\r\n"
                   + (protocol.isEmpty() ? "" : "X-Relay-Envelope: " + protocol + "\r\n")
+                  + (setCookie.isEmpty() ? "" : "Set-Cookie: " + setCookie + "\r\n")
                   + "Content-Length: "
                   + bytes.length
                   + "\r\nConnection: close\r\n\r\n"));
@@ -483,6 +496,11 @@ public class RelaySessionIntegrationTest {
 
   @Test
   public void geckoDetectionEnablesSessionHlsAndJobCompletesInMediaStore() throws Exception {
+    // Reproduction of F-d7d0f133: the origin gates the authorized session on an HttpOnly access
+    // cookie it set during playback. The captured context can never carry it, so the job completes
+    // only because the relay is routed through the browser's own cookie store (Gecko), exactly as
+    // every other media transport already is.
+    requireHttpOnly = true;
     activity =
         (MainActivity)
             ins.startActivitySync(
