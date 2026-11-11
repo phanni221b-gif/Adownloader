@@ -51,7 +51,12 @@ public final class MediaSheetController {
   /** The concrete, verified reason a transport is not downloadable — not a generic label. */
   static String protectedReason(MediaCandidate item) {
     String token = item.getMetadata().getOrDefault("protectionToken", "");
-    return "플레이어가 응답을 자체 암호화해 전송합니다"
+    boolean bodyVerified = "body".equals(item.getMetadata().get("protectionVerified"));
+    String what =
+        bodyVerified
+            ? "응답 본문이 실제로 암호화돼 있습니다"
+            : "서버가 암호화 전송이라고 표시했습니다";
+    return what
         + (token.isEmpty() ? "" : " (" + token + ")")
         + ". 재생은 플레이어만 복호화하며, 암호화 해제·보호 우회는 지원하지 않습니다.";
   }
