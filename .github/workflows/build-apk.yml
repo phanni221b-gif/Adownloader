@@ -107,10 +107,19 @@ jobs:
       - name: Generate synthetic test media
         timeout-minutes: 12
         run: |
+          # ffmpeg only: install it, but never let a flaky Ubuntu apt mirror hang the whole step.
+          # Bound the apt attempt so a mirror outage fails fast, then fall back to snap, whose store
+          # (api.snapcraft.io) is independent of the apt mirrors that intermittently go dark.
           if ! command -v ffmpeg; then
-            sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-            sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y ffmpeg
+            timeout 150 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update || true
+            timeout 180 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y ffmpeg || true
           fi
+          if ! command -v ffmpeg && command -v snap >/dev/null 2>&1; then
+            sudo snap install ffmpeg || true
+            export PATH="$PATH:/snap/bin"
+          fi
+          command -v ffmpeg >/dev/null 2>&1 || { echo "::error::ffmpeg could not be installed (apt mirror and snap both unavailable)"; exit 1; }
+          ffmpeg -version | head -1
           bash ci/generate-test-fixtures.sh
       - name: Enable KVM for emulator
         run: |

@@ -22,6 +22,10 @@ public final class AccessPresentation {
     String stage =
         switch (d.stage) {
           case VARIANT_HTTP, VARIANT_BODY -> "화질 정보 요청";
+          // The authorized relay session handshake and its resource fetch are distinct steps and
+          // must never be shown as a segment request.
+          case SESSION -> "영상 세션 요청";
+          case RESOURCE -> "영상 데이터 요청";
           case CHILD_AUTH, SEGMENT_URI -> "영상 조각 요청";
           default -> "영상 정보 요청";
         };

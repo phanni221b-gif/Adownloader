@@ -16,6 +16,7 @@ public final class FailureDiagnostics {
     VARIANT_PLAYLIST,
     AUDIO_PLAYLIST,
     DASH_MPD,
+    RELAY_SESSION,
     AES_KEY,
     INIT_SEGMENT,
     VIDEO_SEGMENT,
@@ -470,6 +471,18 @@ public final class FailureDiagnostics {
       m.put("candidateCreated", !url.isEmpty());
       m.put("titlePresent", !metadata.getOrDefault("title", "").isBlank());
       m.put("geckoMediaSuccessObserved", "true".equals(metadata.get("requestContextVerified")));
+      // Disambiguate the line above: a protected/relay candidate is classified by its response
+      // header, never by a captured media-success proof, so "false" there is structural and NOT
+      // evidence that the browser failed to play. "observed" = a media response was tied to this
+      // candidate; "not-applicable" = protected candidate (no proof is ever expected); "none" = a
+      // normal candidate with no linked media success observed.
+      m.put(
+          "candidateMediaProof",
+          "true".equals(metadata.get("requestContextVerified"))
+              ? "observed"
+              : "protected-response".equals(metadata.getOrDefault("detectionSource", ""))
+                  ? "not-applicable"
+                  : "none");
       m.put("geckoPlaybackObserved", "true".equals(metadata.get("geckoPlaybackObserved")));
       media = sanitize(m);
       event(Map.of("action", "START", "stage", "UNKNOWN"));
@@ -569,6 +582,9 @@ public final class FailureDiagnostics {
                       ? stage
                       : Stage.VARIANT_PLAYLIST;
               case ATTRIBUTE -> h.tag.equals("EXT-X-STREAM-INF") ? Stage.MASTER_MANIFEST : stage;
+              // The relay session handshake is its own stage; the authorized resource is the root.
+              case SESSION -> Stage.RELAY_SESSION;
+              case RESOURCE -> media.get("type").equals("DASH") ? Stage.DASH_MPD : Stage.ROOT_MANIFEST;
               case CHILD_AUTH, SEGMENT_URI -> phase;
               default -> stage;
             };
@@ -591,6 +607,8 @@ public final class FailureDiagnostics {
         failure.put("mime", d.diagnostic.mime);
         failure.put("host", d.diagnostic.host);
         failure.put("tag", d.diagnostic.tag);
+        if (!d.diagnostic.transport().isEmpty())
+          failure.put("transport", d.diagnostic.transport());
       }
       Map<String, Object> exception = new LinkedHashMap<>();
       exception.put("exceptionClass", error == null ? "OTHER" : error.getClass().getSimpleName());
