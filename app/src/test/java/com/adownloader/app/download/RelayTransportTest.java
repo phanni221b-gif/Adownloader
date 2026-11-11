@@ -116,6 +116,30 @@ public class RelayTransportTest {
   }
 
   @Test
+  public void forwardsTheBrowsersOwnAuthenticatedContextToTheRootOrigin() {
+    // Login-gated content (a /premium/ page the user is signed in to) answers a relay session that
+    // lacks the user's own login cookie with 403 -> ACCESS_BLOCKED. The transport must forward the
+    // same authenticated context the normal HLS/DASH transport does — the browser's captured
+    // Cookie/Authorization/x-* session headers for this media URL — not a subset that drops them.
+    String token = "A".repeat(40);
+    Map<String, String> captured = new LinkedHashMap<>();
+    captured.put("Cookie", "SESSIONID=user-own-login; member=1");
+    captured.put("Authorization", "Bearer user-own-token");
+    captured.put("X-Playback-Session", "captured-session");
+    captured.put("User-Agent", "GeckoView");
+    captured.put("Referer", "https://cdn.example/player");
+    Map<String, String> forwarded =
+        new RelayTransport(
+                "https://cdn.example/media/" + token + "/resource", captured, new TransferControl())
+            .forwardedHeaders();
+    assertEquals("SESSIONID=user-own-login; member=1", forwarded.get("Cookie"));
+    assertEquals("Bearer user-own-token", forwarded.get("Authorization"));
+    assertEquals("captured-session", forwarded.get("X-Playback-Session"));
+    assertEquals("GeckoView", forwarded.get("User-Agent"));
+    assertEquals("https://cdn.example/player", forwarded.get("Referer"));
+  }
+
+  @Test
   public void onlyCredentiallessSecureRootOrLoopbackFixtureCanStartSession() {
     String token = "A".repeat(40);
     assertTrue(RelayTransport.supportedRoot("https://cdn.example/media/" + token));
