@@ -33,6 +33,29 @@ public final class MediaSheetController {
     this.downloader = downloader;
   }
 
+  /** Downloadable candidates first, protected (undownloadable) last; stable otherwise. */
+  private static List<MediaCandidate> ordered(List<MediaCandidate> candidates) {
+    List<MediaCandidate> out = new ArrayList<>(candidates);
+    out.sort(
+        (a, b) ->
+            Boolean.compare(
+                a.getType() == MediaCandidate.MediaType.PROTECTED,
+                b.getType() == MediaCandidate.MediaType.PROTECTED));
+    return out;
+  }
+
+  private static boolean supported(MediaCandidate item) {
+    return item.getType() != MediaCandidate.MediaType.PROTECTED;
+  }
+
+  /** The concrete, verified reason a transport is not downloadable — not a generic label. */
+  static String protectedReason(MediaCandidate item) {
+    String token = item.getMetadata().getOrDefault("protectionToken", "");
+    return "플레이어가 응답을 자체 암호화해 전송합니다"
+        + (token.isEmpty() ? "" : " (" + token + ")")
+        + ". 재생은 플레이어만 복호화하며, 암호화 해제·보호 우회는 지원하지 않습니다.";
+  }
+
   public static String type(MediaCandidate item) {
     if (item.getType() == MediaCandidate.MediaType.PROTECTED) return "보호된 전송";
     if (item.getType() == MediaCandidate.MediaType.RELAY_HLS) return "세션 HLS";
@@ -58,8 +81,9 @@ public final class MediaSheetController {
 
   public void update(List<MediaCandidate> candidates) {
     if (closed || dialog == null || !dialog.isShowing() || activeAdapter == null) return;
+    List<MediaCandidate> sorted = ordered(candidates);
     activeAdapter.items.clear();
-    activeAdapter.items.addAll(candidates);
+    activeAdapter.items.addAll(sorted);
     activeAdapter.notifyDataSetChanged();
     if (activeContent != null) {
       ((TextView) activeContent.findViewById(R.id.sheet_title))
@@ -68,11 +92,12 @@ public final class MediaSheetController {
           .findViewById(R.id.sheet_empty)
           .setVisibility(candidates.isEmpty() ? View.VISIBLE : View.GONE);
     }
-    loadPreviews(candidates, activeAdapter);
-    subtitle(candidates);
+    loadPreviews(sorted, activeAdapter);
+    subtitle(sorted);
   }
 
-  public void show(List<MediaCandidate> candidates) {
+  public void show(List<MediaCandidate> input) {
+    List<MediaCandidate> candidates = ordered(input);
     if (dialog != null) dialog.dismiss();
     View content = activity.getLayoutInflater().inflate(R.layout.sheet_list, null);
     ((TextView) content.findViewById(R.id.sheet_title))
@@ -98,20 +123,22 @@ public final class MediaSheetController {
   }
 
   private void subtitle(List<MediaCandidate> candidates) {
-    if (activeContent != null)
-      ((TextView) activeContent.findViewById(R.id.sheet_subtitle))
-          .setText(
-              !candidates.isEmpty()
-                      && candidates.stream()
-                          .allMatch(c -> c.getType() == MediaCandidate.MediaType.PROTECTED)
-                  ? "암호화된 전송 방식 · 현재 다운로드 미지원"
-                  : "최고 원본 자동 선택");
+    if (activeContent == null) return;
+    long downloadable = candidates.stream().filter(MediaSheetController::supported).count();
+    long protectedCount = candidates.size() - downloadable;
+    String text;
+    if (candidates.isEmpty()) text = "최고 원본 자동 선택";
+    else if (downloadable == 0)
+      text = "암호화된 전송만 감지됨 · 다운로드 미지원";
+    else if (protectedCount == 0) text = "최고 원본 자동 선택";
+    else text = "다운로드 가능 " + downloadable + "개 · 암호화 전송 " + protectedCount + "개";
+    ((TextView) activeContent.findViewById(R.id.sheet_subtitle)).setText(text);
   }
 
   private void loadPreviews(List<MediaCandidate> candidates, MediaAdapter adapter) {
     for (MediaCandidate item : candidates.subList(0, Math.min(6, candidates.size()))) {
       if (item.getType() == MediaCandidate.MediaType.PROTECTED) {
-        information.put(item.getUrl(), "플레이어가 별도로 암호화한 응답입니다. 암호화 해제와 보호 우회는 지원하지 않습니다.");
+        information.put(item.getUrl(), protectedReason(item));
         continue;
       }
       String version =
