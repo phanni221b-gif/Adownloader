@@ -21,11 +21,29 @@ const drain=()=>new Promise(resolve=>setImmediate(resolve));
  assert(r.filters.has('hint'),'An extensionless DOM media hint must still be sniffed, not mistaken for a known binary file');
  r.data('hint',Buffer.from('#EXTM3U\n#EXTINF:1,\npart.ts\n#EXT-X-ENDLIST\n'));await drain();
  assert(r.sent.some(m=>m.kind==='manifest-capture-end'),'Plain HLS in a hinted opaque URL must retain successful response evidence');
+ // The envelope header is verified against the body, not trusted alone.
  r=setup(); let d={requestId:'encrypted',tabId:6,frameId:4294967297,type:'xmlhttprequest',url:hinted,statusCode:200,requestHeaders:[{name:'X-Playback-Session',value:'DO_NOT_RETAIN_SESSION'}],responseHeaders:[{name:'Content-Type',value:'application/octet-stream'},{name:'X-Relay-Envelope',value:'emr2'}]};
  r.fire('before',d);r.fire('response',d);r.fire('response',{...d,requestId:'second'});
+ assert(r.filters.has('encrypted'),'An envelope-flagged response is inspected, not flagged on the header alone');
+ r.data('encrypted',Buffer.from('EMR1'+'opaque-ciphertext'.repeat(30)));await drain();
  let p=r.sent.filter(m=>m.source==='protected-response');assert.equal(p.length,1,'Only one unsupported transport candidate per frame/page');
- assert.equal(p[0].metadata.transportProtection,'encrypted-relay');assert.equal(p[0].metadata.frameId,'4294967297');assert.deepEqual(Object.keys(p[0].headers),[]);
+ assert.equal(p[0].metadata.transportProtection,'encrypted-relay');assert.equal(p[0].metadata.protectionVerified,'body','Encrypted body confirms the protection');
+ assert.equal(p[0].metadata.frameId,'4294967297');assert.deepEqual(Object.keys(p[0].headers),[]);
  assert(!JSON.stringify(r.sent).includes('DO_NOT_RETAIN_SESSION'));assert(!r.sent.some(m=>m.kind==='manifest-capture-start'));
+
+ // An envelope header over a body that is actually a plain HLS manifest is NOT protected: it is a
+ // downloadable candidate (mislabelled transport, supported source recovered).
+ r=setup();d={requestId:'mislabelled',tabId:6,frameId:0,type:'xmlhttprequest',url:hinted,statusCode:200,requestHeaders:[],responseHeaders:[{name:'Content-Type',value:'application/octet-stream'},{name:'X-Relay-Envelope',value:'emr1'}]};
+ r.fire('before',d);r.fire('response',d);r.data('mislabelled',Buffer.from('#EXTM3U\n#EXTINF:1,\npart.ts\n#EXT-X-ENDLIST\n'));await drain();
+ assert(!r.sent.some(m=>m.source==='protected-response'),'A non-encrypted body must not be flagged as protected');
+ assert(r.sent.some(m=>m.kind==='manifest-capture-end'),'The real HLS manifest is captured as a downloadable source');
+
+ // When no response filter can run, the header is the only signal: flag it, clearly as declared.
+ r=setup();r.ctx.browser.webRequest.filterResponseData=undefined;
+ d={requestId:'nofilter',tabId:6,frameId:0,type:'xmlhttprequest',url:hinted,statusCode:200,requestHeaders:[],responseHeaders:[{name:'Content-Type',value:'application/octet-stream'},{name:'X-Relay-Envelope',value:'emr2'}]};
+ r.fire('before',d);r.fire('response',d);await drain();
+ let declared=r.sent.filter(m=>m.source==='protected-response');assert.equal(declared.length,1,'Header-only fallback still reports the transport');
+ assert.equal(declared[0].metadata.protectionVerified,'declared','Header-only protection is marked unverified');
  r=setup();r.fire('message',{kind:'candidate',url:hinted,source:'dom-media',pageUrl:r.sender.tab.url},r.sender);d=r.request('magic',hinted,'application/octet-stream');r.data('magic',Buffer.from('EMR1'+ 'opaque-ciphertext'.repeat(30)));await drain();
  assert(r.sent.some(m=>m.source==='protected-response'));assert(!r.sent.some(m=>m.kind==='manifest-capture-start'));
  assert(Buffer.concat(r.filters.get('magic').written).equals(Buffer.from('EMR1'+ 'opaque-ciphertext'.repeat(30))),'Encrypted player response must remain byte-identical');
