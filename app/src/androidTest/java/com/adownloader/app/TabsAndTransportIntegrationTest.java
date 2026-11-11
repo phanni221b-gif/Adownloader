@@ -221,7 +221,9 @@ public class TabsAndTransportIntegrationTest {
     assertTrue(media.getHeaders().isEmpty());
     ins.runOnMainSync(() -> activity.findViewById(R.id.media_action).performClick());
     var device = UiDevice.getInstance(ins);
-    assertTrue(device.wait(Until.hasObject(By.text("보호된 전송")), 5000));
+    // GeckoView provides no response-body reader, so an envelope header cannot be body-verified
+    // on device: an unknown protected transport is shown as "보호 방식 미확인", not "암호화 전송".
+    assertTrue(device.wait(Until.hasObject(By.text("보호 방식 미확인")), 5000));
     var download = device.findObject(By.res(context.getPackageName(), "media_download"));
     assertNotNull(download);
     assertFalse(download.isEnabled());
