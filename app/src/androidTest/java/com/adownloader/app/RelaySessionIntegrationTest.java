@@ -47,7 +47,12 @@ public class RelaySessionIntegrationTest {
   // client-minted one — the session-independence property the relay must preserve.
   private final AtomicBoolean leaked = new AtomicBoolean();
   private static final String LOGIN_COOKIE = "LOGIN=premium-member";
-  private volatile boolean renewSoon, tamper, deny, requireLogin;
+  // An access cookie the origin sets HttpOnly on the page, so JavaScript (and therefore the
+  // captured request context) can never read it. Only a request routed through the browser's own
+  // cookie store carries it. This is the real F-d7d0f133 case: the user never logged in, but the
+  // site still gates the media on an HttpOnly cookie it issued during playback.
+  private static final String HTTPONLY_COOKIE = "RELAY_ACCESS=on";
+  private volatile boolean renewSoon, tamper, deny, requireLogin, requireHttpOnly;
 
   @Before
   public void setup() throws Exception {
@@ -234,12 +239,16 @@ public class RelaySessionIntegrationTest {
       // A login-gated (e.g. /premium/) origin refuses the session/resource request unless it
       // carries the user's own login cookie — the real on-device ACCESS_BLOCKED (403) case.
       boolean loggedIn = h.getOrDefault("cookie", "").contains(LOGIN_COOKIE);
+      // An HttpOnly access cookie is carried only by a browser-routed request, never by the
+      // captured context, so a missing one is the F-d7d0f133 403.
+      boolean accessOk = !requireHttpOnly || h.getOrDefault("cookie", "").contains(HTTPONLY_COOKIE);
       int status = 200;
       String mime = "application/octet-stream", protocol = "";
+      String setCookie = "";
       byte[] bytes;
       if (path.endsWith("/session")) {
         byte[] body = in.readNBytes(Integer.parseInt(h.getOrDefault("content-length", "0")));
-        if (requireLogin && !loggedIn) {
+        if ((requireLogin && !loggedIn) || !accessOk) {
           status = 403;
           bytes = text("{}");
         } else if (deny) {
@@ -251,6 +260,9 @@ public class RelaySessionIntegrationTest {
         mime = "application/json";
       } else if (path.equals("/watch")) {
         mime = "text/html";
+        // Issue the access cookie HttpOnly, as the real site does while the page plays: the content
+        // script cannot read it, so only a browser-routed relay request will carry it back.
+        if (requireHttpOnly) setCookie = HTTPONLY_COOKIE + "; Path=/; HttpOnly";
         bytes =
             text(
                 "<title>Authorized relay fixture</title><div data-video-url='"
@@ -264,7 +276,7 @@ public class RelaySessionIntegrationTest {
         // The relay must fetch resources with its own minted session, never by replaying the
         // browser's captured playback-session token.
         if (session.equals("OLD_BROWSER_SESSION")) leaked.set(true);
-        if (requireLogin && !loggedIn) {
+        if ((requireLogin && !loggedIn) || !accessOk) {
           status = 403;
           bytes = text("{}");
         } else if (!sessions.containsKey(id)) {
@@ -338,6 +350,7 @@ public class RelaySessionIntegrationTest {
                   + mime
                   + "\r\n"
                   + (protocol.isEmpty() ? "" : "X-Relay-Envelope: " + protocol + "\r\n")
+                  + (setCookie.isEmpty() ? "" : "Set-Cookie: " + setCookie + "\r\n")
                   + "Content-Length: "
                   + bytes.length
                   + "\r\nConnection: close\r\n\r\n"));
@@ -414,36 +427,45 @@ public class RelaySessionIntegrationTest {
   }
 
   @Test
-  public void loginGatedRootDownloadsWithTheUsersOwnCookieAndIsBlockedWithoutIt() throws Exception {
-    // On-device reproduction (F-b8fe400f): a /premium/ page the user is signed in to answers the
-    // relay session/resource request with 403 -> ACCESS_BLOCKED at ROOT_MANIFEST when it arrives
-    // without the user's login cookie. The relay previously dropped the browser's captured Cookie,
-    // so even the user's own authenticated access was blocked. Forwarding the user's own cookie to
-    // the same media origin — exactly as the normal HLS transport does — must unblock it, while a
-    // request without that cookie must still be refused (no bypass of the login gate itself).
+  public void loginGatedRootOnTheRawFallbackForwardsTheUsersOwnCookie() throws Exception {
+    // The raw captured-context fallback (used when no browser stack is installed): a login-gated
+    // page answers the relay with 403 -> ACCESS_BLOCKED unless the request carries the user's own
+    // login cookie. On this path the relay forwards the user's captured Cookie to the same origin,
+    // which unblocks it, while a request without it stays refused (the login gate is not bypassed).
+    // The browser path (which instead supplies cookies from Gecko's own store, including HttpOnly)
+    // is covered by geckoDetectionEnablesSessionHls...; here we force the fallback so the captured-
+    // cookie behavior is exercised deterministically regardless of test order.
     requireLogin = true;
-
-    // Without the user's cookie the session handshake is refused, as observed on device.
-    Map<String, String> anonymous = new HashMap<>(candidate().getHeaders());
-    anonymous.put("Cookie", "PRIVATE_COOKIE=1");
-    try (HttpSource source = new HttpSource(root, anonymous).relay(true)) {
-      DownloadError blocked =
-          assertThrows(DownloadError.class, () -> source.document(root));
-      assertEquals(DownloadError.Category.ACCESS_BLOCKED, blocked.category);
-    }
-    assertEquals(0, segments.get());
-
-    // With the user's own login cookie the authorized session completes end to end.
-    DownloadEngine engine = new DownloadEngine(directory, (t, p) -> {});
+    java.lang.reflect.Field opener = HttpConnections.class.getDeclaredField("browser");
+    opener.setAccessible(true);
+    Object installed = opener.get(null);
+    opener.set(null, null);
     try {
-      var result =
-          engine.download(root, MediaCandidate.MediaType.RELAY_HLS, candidate().getHeaders());
-      validate(result.file);
-      assertTrue(handshakes.get() >= 1);
-      assertEquals(3, segments.get());
-      assertFalse(leaked.get());
+      assertFalse("fallback path requires no browser stack", HttpConnections.browserAvailable());
+
+      // Without the user's cookie the session handshake is refused, as observed on device.
+      Map<String, String> anonymous = new HashMap<>(candidate().getHeaders());
+      anonymous.put("Cookie", "PRIVATE_COOKIE=1");
+      try (HttpSource source = new HttpSource(root, anonymous).relay(true)) {
+        DownloadError blocked = assertThrows(DownloadError.class, () -> source.document(root));
+        assertEquals(DownloadError.Category.ACCESS_BLOCKED, blocked.category);
+      }
+      assertEquals(0, segments.get());
+
+      // With the user's own login cookie the authorized session completes end to end.
+      DownloadEngine engine = new DownloadEngine(directory, (t, p) -> {});
+      try {
+        var result =
+            engine.download(root, MediaCandidate.MediaType.RELAY_HLS, candidate().getHeaders());
+        validate(result.file);
+        assertTrue(handshakes.get() >= 1);
+        assertEquals(3, segments.get());
+        assertFalse(leaked.get());
+      } finally {
+        engine.cleanup();
+      }
     } finally {
-      engine.cleanup();
+      opener.set(null, installed);
     }
   }
 
@@ -483,6 +505,11 @@ public class RelaySessionIntegrationTest {
 
   @Test
   public void geckoDetectionEnablesSessionHlsAndJobCompletesInMediaStore() throws Exception {
+    // Reproduction of F-d7d0f133: the origin gates the authorized session on an HttpOnly access
+    // cookie it set during playback. The captured context can never carry it, so the job completes
+    // only because the relay is routed through the browser's own cookie store (Gecko), exactly as
+    // every other media transport already is.
+    requireHttpOnly = true;
     activity =
         (MainActivity)
             ins.startActivitySync(
