@@ -379,6 +379,27 @@ public class RelaySessionIntegrationTest {
   }
 
   @Test
+  public void resourcePathRootDownloadsThroughTheAuthorizedSession() throws Exception {
+    // Regression: the real provider serves the relay root at /media/<token>/resource. That path
+    // form was rejected by supportedRoot, so the same authorized session was mis-reported as an
+    // unsupported protected transport. It must complete exactly like the other root forms.
+    root = base + "/media/" + "A".repeat(40) + "/resource";
+    assertTrue(RelayTransport.supportedRoot(root));
+    var preview = MediaProbeService.shared().preview(candidate());
+    assertTrue(preview.tracks().stream().anyMatch(t -> t.height == 1080));
+    DownloadEngine engine = new DownloadEngine(directory, (t, p) -> {});
+    try {
+      var result =
+          engine.download(root, MediaCandidate.MediaType.RELAY_HLS, candidate().getHeaders());
+      validate(result.file);
+      assertEquals(3, segments.get());
+      assertFalse(leaked.get());
+    } finally {
+      engine.cleanup();
+    }
+  }
+
+  @Test
   public void sessionRenewalUsesAuthenticatedProofAndOriginalSession() throws Exception {
     renewSoon = true;
     DownloadEngine engine = new DownloadEngine(directory, (t, p) -> {});

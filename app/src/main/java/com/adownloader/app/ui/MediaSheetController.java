@@ -52,17 +52,18 @@ public final class MediaSheetController {
   static String protectedReason(MediaCandidate item) {
     String token = item.getMetadata().getOrDefault("protectionToken", "");
     boolean bodyVerified = "body".equals(item.getMetadata().get("protectionVerified"));
-    String what =
-        bodyVerified
-            ? "응답 본문이 실제로 암호화돼 있습니다"
-            : "서버가 암호화 전송이라고 표시했습니다";
-    return what
+    if (bodyVerified)
+      return "응답 본문이 실제로 암호화돼 있습니다"
+          + (token.isEmpty() ? "" : " (" + token + ")")
+          + ". 재생은 플레이어만 복호화하며, 암호화 해제·보호 우회는 지원하지 않습니다.";
+    return "서버가 암호화 전송이라고 표시했지만 응답 본문은 확인하지 못했습니다"
         + (token.isEmpty() ? "" : " (" + token + ")")
-        + ". 재생은 플레이어만 복호화하며, 암호화 해제·보호 우회는 지원하지 않습니다.";
+        + ". 지원되는 인가 재생 세션이 아니며, 암호화 해제·보호 우회는 지원하지 않습니다.";
   }
 
   public static String type(MediaCandidate item) {
-    if (item.getType() == MediaCandidate.MediaType.PROTECTED) return "보호된 전송";
+    if (item.getType() == MediaCandidate.MediaType.PROTECTED)
+      return "body".equals(item.getMetadata().get("protectionVerified")) ? "암호화 전송" : "보호 방식 미확인";
     if (item.getType() == MediaCandidate.MediaType.RELAY_HLS) return "세션 HLS";
     if (item.getType() == MediaCandidate.MediaType.HLS) return "HLS";
     if (item.getType() == MediaCandidate.MediaType.DASH) return "DASH";
@@ -133,8 +134,11 @@ public final class MediaSheetController {
     long protectedCount = candidates.size() - downloadable;
     String text;
     if (candidates.isEmpty()) text = "최고 원본 자동 선택";
-    else if (downloadable == 0)
-      text = "암호화된 전송만 감지됨 · 다운로드 미지원";
+    else if (downloadable == 0) {
+      boolean anyVerified =
+          candidates.stream().anyMatch(c -> "body".equals(c.getMetadata().get("protectionVerified")));
+      text = (anyVerified ? "암호화 전송만 감지됨" : "보호 방식 미확인 · 받을 수 있는 원본 없음") + " · 다운로드 미지원";
+    }
     else if (protectedCount == 0) text = "최고 원본 자동 선택";
     else text = "다운로드 가능 " + downloadable + "개 · 암호화 전송 " + protectedCount + "개";
     ((TextView) activeContent.findViewById(R.id.sheet_subtitle)).setText(text);

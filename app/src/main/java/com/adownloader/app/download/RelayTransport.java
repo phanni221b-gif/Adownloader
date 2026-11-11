@@ -34,7 +34,8 @@ public final class RelayTransport implements AutoCloseable {
           && u.getUserInfo() == null
           && u.getRawQuery() == null
           && u.getRawFragment() == null
-          && u.getRawPath().matches("/media/[A-Za-z0-9_-]{40,7000}(?:[.]shtml|/index[.]m3u8)?");
+          && u.getRawPath()
+              .matches("/media/[A-Za-z0-9_-]{40,7000}(?:[.]shtml|/index[.]m3u8|/resource)?");
     } catch (Exception invalid) {
       return false;
     }
@@ -84,9 +85,14 @@ public final class RelayTransport implements AutoCloseable {
     return c;
   }
 
+  /** The authorized handshake endpoint for a relay root, independent of its path form. */
+  static URI sessionEndpoint(URI root) {
+    return URI.create(
+        root.toString().replaceFirst("(?:[.]shtml|/index[.]m3u8|/resource)$", "") + "/session");
+  }
+
   private JSONObject post(JSONObject body) throws Exception {
-    URI endpoint =
-        URI.create(root.toString().replaceFirst("(?:[.]shtml|/index[.]m3u8)$", "") + "/session");
+    URI endpoint = sessionEndpoint(root);
     HttpURLConnection c = connect(endpoint);
     try {
       c.setRequestMethod("POST");
