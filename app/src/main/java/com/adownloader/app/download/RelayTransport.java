@@ -46,12 +46,21 @@ public final class RelayTransport implements AutoCloseable {
       throw new IllegalArgumentException("Unsupported playback session address");
     root = URI.create(url);
     this.control = control;
-    MediaHeaders.select(requestHeaders)
-        .forEach(
-            (n, v) -> {
-              if (Set.of("user-agent", "origin", "referer", "accept-language")
-                  .contains(n.toLowerCase(Locale.ROOT))) headers.put(n, v);
-            });
+    // Carry the browser's own captured request context for this media URL — the same
+    // authenticated context (Cookie, Authorization, x-* session/token headers) the normal HLS/DASH
+    // transport forwards via MediaHeaders.select. The client-owned ECDH session below stands on its
+    // own generated keypair and never imports a browser key or DRM secret; this is only the user's
+    // own HTTP login, which the origin itself requires before it will route the handshake at all.
+    // connect() restricts every relay request to the root's origin, so these only ever return to
+    // the origin that issued them. Dropping them (the earlier user-agent/origin/referer subset)
+    // made login-gated content — e.g. a /premium/ page the user is signed in to and already
+    // playing — answer the session/resource request with 403 (ACCESS_BLOCKED).
+    headers.putAll(MediaHeaders.select(requestHeaders));
+  }
+
+  /** The request headers this transport forwards to the root origin; for tests. */
+  Map<String, String> forwardedHeaders() {
+    return Collections.unmodifiableMap(new LinkedHashMap<>(headers));
   }
 
   public void page(String page) {

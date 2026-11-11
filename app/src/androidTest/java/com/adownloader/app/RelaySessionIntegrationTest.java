@@ -43,8 +43,11 @@ public class RelaySessionIntegrationTest {
       renewals = new AtomicInteger(),
       segments = new AtomicInteger(),
       low = new AtomicInteger();
+  // Set only if a resource fetch replays the browser's own playback session instead of the
+  // client-minted one — the session-independence property the relay must preserve.
   private final AtomicBoolean leaked = new AtomicBoolean();
-  private volatile boolean renewSoon, tamper, deny;
+  private static final String LOGIN_COOKIE = "LOGIN=premium-member";
+  private volatile boolean renewSoon, tamper, deny, requireLogin;
 
   @Before
   public void setup() throws Exception {
@@ -228,13 +231,18 @@ public class RelaySessionIntegrationTest {
         int at = l.indexOf(':');
         if (at > 0) h.put(l.substring(0, at).toLowerCase(Locale.ROOT), l.substring(at + 1).trim());
       }
-      if (h.containsKey("cookie") || h.containsKey("authorization")) leaked.set(true);
+      // A login-gated (e.g. /premium/) origin refuses the session/resource request unless it
+      // carries the user's own login cookie — the real on-device ACCESS_BLOCKED (403) case.
+      boolean loggedIn = h.getOrDefault("cookie", "").contains(LOGIN_COOKIE);
       int status = 200;
       String mime = "application/octet-stream", protocol = "";
       byte[] bytes;
       if (path.endsWith("/session")) {
         byte[] body = in.readNBytes(Integer.parseInt(h.getOrDefault("content-length", "0")));
-        if (deny) {
+        if (requireLogin && !loggedIn) {
+          status = 403;
+          bytes = text("{}");
+        } else if (deny) {
           status = 403;
           bytes = text("{}");
         } else
@@ -253,7 +261,13 @@ public class RelaySessionIntegrationTest {
       } else {
         String session = h.getOrDefault("x-playback-session", ""),
             id = session.replace("SESSION_", "");
-        if (!sessions.containsKey(id)) {
+        // The relay must fetch resources with its own minted session, never by replaying the
+        // browser's captured playback-session token.
+        if (session.equals("OLD_BROWSER_SESSION")) leaked.set(true);
+        if (requireLogin && !loggedIn) {
+          status = 403;
+          bytes = text("{}");
+        } else if (!sessions.containsKey(id)) {
           // The synthetic page supplies only an observed envelope. Download must make its own
           // session.
           if (path.equals(URI.create(root).getPath())) {
@@ -340,7 +354,7 @@ public class RelaySessionIntegrationTest {
         base + "/watch",
         Map.of(
             "Cookie",
-            "PRIVATE_COOKIE",
+            LOGIN_COOKIE + "; PRIVATE_COOKIE=1",
             "Authorization",
             "PRIVATE_AUTH",
             "X-Playback-Session",
@@ -392,6 +406,40 @@ public class RelaySessionIntegrationTest {
       var result =
           engine.download(root, MediaCandidate.MediaType.RELAY_HLS, candidate().getHeaders());
       validate(result.file);
+      assertEquals(3, segments.get());
+      assertFalse(leaked.get());
+    } finally {
+      engine.cleanup();
+    }
+  }
+
+  @Test
+  public void loginGatedRootDownloadsWithTheUsersOwnCookieAndIsBlockedWithoutIt() throws Exception {
+    // On-device reproduction (F-b8fe400f): a /premium/ page the user is signed in to answers the
+    // relay session/resource request with 403 -> ACCESS_BLOCKED at ROOT_MANIFEST when it arrives
+    // without the user's login cookie. The relay previously dropped the browser's captured Cookie,
+    // so even the user's own authenticated access was blocked. Forwarding the user's own cookie to
+    // the same media origin — exactly as the normal HLS transport does — must unblock it, while a
+    // request without that cookie must still be refused (no bypass of the login gate itself).
+    requireLogin = true;
+
+    // Without the user's cookie the session handshake is refused, as observed on device.
+    Map<String, String> anonymous = new HashMap<>(candidate().getHeaders());
+    anonymous.put("Cookie", "PRIVATE_COOKIE=1");
+    try (HttpSource source = new HttpSource(root, anonymous).relay(true)) {
+      DownloadError blocked =
+          assertThrows(DownloadError.class, () -> source.document(root));
+      assertEquals(DownloadError.Category.ACCESS_BLOCKED, blocked.category);
+    }
+    assertEquals(0, segments.get());
+
+    // With the user's own login cookie the authorized session completes end to end.
+    DownloadEngine engine = new DownloadEngine(directory, (t, p) -> {});
+    try {
+      var result =
+          engine.download(root, MediaCandidate.MediaType.RELAY_HLS, candidate().getHeaders());
+      validate(result.file);
+      assertTrue(handshakes.get() >= 1);
       assertEquals(3, segments.get());
       assertFalse(leaked.get());
     } finally {
