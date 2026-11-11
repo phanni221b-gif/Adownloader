@@ -111,4 +111,55 @@ public class HlsDiagnosticTest {
     assertFalse(label.contains("SECRET"));
     assertFalse(label.contains("private"));
   }
+
+  @Test
+  public void relaySessionAndResourceFailuresAreLabelledDistinctlyFromASegmentRequest() {
+    // A 403 at the authorized-session handshake must read as a session failure, not "영상 조각 요청".
+    var session =
+        new DownloadError(DownloadError.Category.ACCESS_BLOCKED)
+            .diagnostic(
+                new HlsDiagnostic(
+                        "https://cdn.test/media/token/session",
+                        403,
+                        "",
+                        0,
+                        "root",
+                        HlsDiagnostic.Stage.SESSION,
+                        "",
+                        DownloadError.Category.ACCESS_BLOCKED)
+                    .transport("gecko"));
+    String sessionLabel = AccessPresentation.preview(session);
+    assertTrue(sessionLabel.contains("영상 세션 요청"));
+    assertFalse(sessionLabel.contains("영상 조각 요청"));
+    assertTrue(sessionLabel.contains("HTTP 403"));
+    assertEquals("gecko", session.diagnostic.transport());
+
+    var resource =
+        new DownloadError(DownloadError.Category.ACCESS_BLOCKED)
+            .diagnostic(
+                new HlsDiagnostic(
+                    "https://cdn.test/media/token/resource",
+                    403,
+                    "",
+                    0,
+                    "root",
+                    HlsDiagnostic.Stage.RESOURCE,
+                    "",
+                    DownloadError.Category.ACCESS_BLOCKED));
+    String resourceLabel = AccessPresentation.preview(resource);
+    assertTrue(resourceLabel.contains("영상 데이터 요청"));
+    assertFalse(resourceLabel.contains("영상 조각 요청"));
+  }
+
+  @Test
+  public void transportIsAnAllowlistAndRejectsFreeText() {
+    HlsDiagnostic d =
+        new HlsDiagnostic(
+            "https://cdn.test/x", 403, "", 0, "root",
+            HlsDiagnostic.Stage.SESSION, "", DownloadError.Category.ACCESS_BLOCKED);
+    assertEquals("", d.transport());
+    assertEquals("native", d.transport("native").transport());
+    assertEquals("gecko", d.transport("gecko").transport());
+    assertEquals("", d.transport("something-else").transport());
+  }
 }

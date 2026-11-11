@@ -23,6 +23,9 @@ public final class RelayTransport implements AutoCloseable {
   private String id, session;
   private long expires;
   private boolean legacy;
+  // The network stack that served the most recent request, for failure diagnostics: "gecko" when
+  // routed through the browser (Gecko) or "native" for the direct captured-context connection.
+  private String lastTransport = "";
 
   public static boolean supportedRoot(String url) {
     try {
@@ -89,7 +92,9 @@ public final class RelayTransport implements AutoCloseable {
     // playback that JavaScript can never capture — and the same TLS/HTTP2 as playback. This is why
     // a site that plays in the browser could still answer the relay's own raw connection with 403.
     // The captured-context raw connection stays as the fallback when no browser stack is installed.
-    HttpURLConnection c = HttpConnections.open(url.toString(), HttpConnections.browserAvailable());
+    boolean viaBrowser = HttpConnections.browserAvailable();
+    lastTransport = viaBrowser ? "gecko" : "native";
+    HttpURLConnection c = HttpConnections.open(url.toString(), viaBrowser);
     c.setInstanceFollowRedirects(false);
     c.setConnectTimeout(20000);
     c.setReadTimeout(45000);
@@ -119,14 +124,16 @@ public final class RelayTransport implements AutoCloseable {
       }
       int status = c.getResponseCode();
       if (status != 200) {
-        // Record the real status and that it failed at the authorized-session handshake, so a
-        // block no longer surfaces as httpStatus 0 / transport UNKNOWN in diagnostics.
+        // Record the real status, the exact step (session-establishment handshake, not a segment)
+        // and which network stack served it, so a block no longer surfaces as httpStatus 0 /
+        // transport UNKNOWN and so the failing endpoint type is unambiguous in diagnostics.
         DownloadError e =
             DownloadError.http(status, endpoint.toString(), false, false, System.currentTimeMillis());
         throw e.diagnostic(
             new HlsDiagnostic(
-                endpoint.toString(), status, "", 0, "root",
-                HlsDiagnostic.Stage.CHILD_AUTH, "", e.category));
+                    endpoint.toString(), status, "", 0, "root",
+                    HlsDiagnostic.Stage.SESSION, "", e.category)
+                .transport(lastTransport));
       }
       try (InputStream in = c.getInputStream()) {
         return new JSONObject(new String(bounded(in, 65536), StandardCharsets.UTF_8));
@@ -260,11 +267,13 @@ public final class RelayTransport implements AutoCloseable {
       if (!legacy) raw.setRequestProperty("X-Playback-Session", session);
       int status = raw.getResponseCode();
       if (status != 200) {
-        // Record the real status and that it failed fetching the authorized resource itself.
+        // Record the real status, that it failed fetching the authorized resource itself (distinct
+        // from the session handshake), and which network stack served it.
         DownloadError e = DownloadError.http(status, url, true, false, System.currentTimeMillis());
         throw e.diagnostic(
             new HlsDiagnostic(
-                url, status, "", 0, "root", HlsDiagnostic.Stage.ROOT_HTTP, "", e.category));
+                    url, status, "", 0, "root", HlsDiagnostic.Stage.RESOURCE, "", e.category)
+                .transport(lastTransport));
       }
       if (legacy) return raw;
       String envelope = raw.getHeaderField("X-Relay-Envelope");

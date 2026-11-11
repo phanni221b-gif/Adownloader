@@ -487,7 +487,14 @@ public class RelaySessionIntegrationTest {
   public void deniedSessionAndModifiedTerminalTagCannotProduceCompletedOutput() throws Exception {
     deny = true;
     try (HttpSource source = new HttpSource(root, Map.of()).relay(true)) {
-      assertThrows(DownloadError.class, () -> source.document(root));
+      DownloadError blocked = assertThrows(DownloadError.class, () -> source.document(root));
+      // A refused session handshake is diagnosed as a SESSION-stage failure with the real status
+      // and the network stack that served it — never collapsed into an opaque segment request.
+      assertNotNull(blocked.diagnostic);
+      assertEquals(HlsDiagnostic.Stage.SESSION, blocked.diagnostic.stage);
+      assertEquals(403, blocked.diagnostic.status);
+      assertTrue(Set.of("gecko", "native").contains(blocked.diagnostic.transport()));
+      assertTrue(AccessPresentation.preview(blocked).contains("영상 세션 요청"));
     }
     assertEquals(0, segments.get());
     deny = false;

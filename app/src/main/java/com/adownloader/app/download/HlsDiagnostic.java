@@ -15,6 +15,11 @@ public final class HlsDiagnostic {
     SEGMENT_URI,
     ATTRIBUTE,
     CHILD_AUTH,
+    // Authorized relay transport: SESSION is the session-establishment handshake, RESOURCE is the
+    // authorized media resource/root fetch. Kept distinct so a handshake failure is never reported
+    // as a segment request.
+    SESSION,
+    RESOURCE,
     REDIRECT,
     REQUEST_CONTEXT_UNAVAILABLE,
     UNSUPPORTED,
@@ -24,6 +29,18 @@ public final class HlsDiagnostic {
   public final String host, mime, playlist, tag, category;
   public final Stage stage;
   public final int status, redirects;
+  // Which network stack actually served the failing request: "gecko" (browser) or "native" (direct
+  // captured context). Empty when not applicable. Values are an allowlist; never free text.
+  private String transport = "";
+
+  public HlsDiagnostic transport(String value) {
+    transport = "gecko".equals(value) || "native".equals(value) ? value : "";
+    return this;
+  }
+
+  public String transport() {
+    return transport;
+  }
 
   public HlsDiagnostic(
       String url,
@@ -64,6 +81,7 @@ public final class HlsDiagnostic {
     v.put("stage", stage.name());
     v.put("tag", tag);
     v.put("category", category);
+    if (!transport.isEmpty()) v.put("transport", transport);
     return Collections.unmodifiableMap(v);
   }
 
