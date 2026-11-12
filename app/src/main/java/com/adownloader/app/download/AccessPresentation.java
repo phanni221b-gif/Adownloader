@@ -7,6 +7,7 @@ public final class AccessPresentation {
   public static String label(String category) {
     return switch (category == null ? "" : category) {
       case "EXPIRED_URL" -> "주소 만료";
+      case "AUTH" -> "로그인 또는 세션 확인 필요";
       case "ACCESS_BLOCKED" -> "사이트 요청 차단";
       default -> "접근 확인 필요";
     };

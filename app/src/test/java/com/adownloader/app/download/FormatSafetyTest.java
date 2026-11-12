@@ -13,7 +13,7 @@ public class FormatSafetyTest {
     failure(root + "#EXT-X-GAP\n#EXT-X-ENDLIST", DownloadError.Category.HLS_GAP);
     failure(
         "#EXTM3U\n#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"key\"\n#EXTINF:1,\none.ts\n#EXT-X-ENDLIST",
-        DownloadError.Category.DRM);
+        DownloadError.Category.ENCRYPTION_UNSUPPORTED);
     try {
       ManifestParser.dash("https://example.invalid/list.mpd", "<MPD><Period/><Period/></MPD>");
       fail();

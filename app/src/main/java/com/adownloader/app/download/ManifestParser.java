@@ -99,22 +99,24 @@ public final class ManifestParser {
     return text != null && text.startsWith("\ufeff") ? text.substring(1) : text;
   }
 
-  private static void sessionKeys(String text) {
-    for (String raw : text.split("\\r?\\n"))
-      if (raw.trim().startsWith("#EXT-X-SESSION-KEY:")) {
-        Map<String, String> a = attributes(raw.trim());
-        require(
-            "AES-128".equals(a.get("METHOD"))
-                && "identity".equals(a.getOrDefault("KEYFORMAT", "identity")),
-            DownloadError.Category.DRM,
-            "HLS_SESSION_KEY");
-      }
+  private static boolean licenseScheme(String value) {
+    String scheme = value.toLowerCase(Locale.ROOT);
+    return Set.of(
+            "com.apple.streamingkeydelivery",
+            "com.widevine",
+            "com.widevine.alpha",
+            "com.microsoft.playready",
+            "com.apple.fps",
+            "urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed",
+            "urn:uuid:9a04f079-9840-4286-ab92-e65be0885f95",
+            "urn:uuid:94ce86fb-07ff-4f43-adb8-93d2fa968ca2")
+        .contains(scheme);
   }
 
   public static HlsSelection hlsSelection(String url, String text) {
     text = normalizeHls(text);
     require(text.trim().startsWith("#EXTM3U"), "올바른 HLS 목록이 아닙니다");
-    sessionKeys(text);
+    // Master session keys are preload hints. The selected media playlist declares its keys.
     HlsSelection result = new HlsSelection();
     result.video = url;
     long bestPixels = -1, bestBandwidth = -1;
@@ -184,7 +186,7 @@ public final class ManifestParser {
         "라이브는 VOD 다운로드로 저장하지 않습니다");
     require(
         !text.contains("#EXT-X-GAP"), DownloadError.Category.HLS_GAP, "누락된 HLS 조각을 건너뛰어 저장하지 않습니다");
-    sessionKeys(text);
+    require(!text.contains("#EXT-X-SESSION-KEY:"), "HLS_SESSION_KEY_IN_MEDIA");
     require(
         !text.contains("#EXT-X-SKIP:"),
         DownloadError.Category.HLS_UNSUPPORTED,
@@ -224,12 +226,17 @@ public final class ManifestParser {
           key = null;
           iv = null;
         } else {
+          String format = a.getOrDefault("KEYFORMAT", "identity");
+          String uri = a.getOrDefault("URI", "");
+          require(method != null && !uri.isBlank(), "HLS 키 속성 누락");
           require(
-              "AES-128".equals(method)
-                  && "identity".equals(a.getOrDefault("KEYFORMAT", "identity")),
+              !licenseScheme(format) && !uri.regionMatches(true, 0, "skd:", 0, 4),
               DownloadError.Category.DRM,
-              "DRM/SAMPLE-AES는 지원하지 않습니다");
-          require(a.containsKey("URI"), "HLS 키 주소 누락");
+              "HLS_LICENSE_KEY");
+          require(
+              "AES-128".equals(method) && "identity".equals(format),
+              DownloadError.Category.ENCRYPTION_UNSUPPORTED,
+              "HLS_ENCRYPTION");
           key = resolve(url, a.get("URI"));
           iv = a.get("IV");
         }
@@ -303,20 +310,17 @@ public final class ManifestParser {
         "외부 엔티티가 있는 MPD는 거부합니다");
     DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
     factory.setExpandEntityReferences(false);
+    factory.setNamespaceAware(true);
     Element mpd =
         factory
             .newDocumentBuilder()
             .parse(new InputSource(new StringReader(xml)))
             .getDocumentElement();
-    require("MPD".equals(mpd.getTagName()), "올바른 MPD가 아닙니다");
+    require("MPD".equals(mpd.getLocalName()), "올바른 MPD가 아닙니다");
     require(
         !"dynamic".equals(mpd.getAttribute("type")),
         DownloadError.Category.LIVE_UNSUPPORTED,
         "라이브 DASH는 지원하지 않습니다");
-    require(
-        mpd.getElementsByTagName("ContentProtection").getLength() == 0,
-        DownloadError.Category.DRM,
-        "DRM 스트림은 지원하지 않습니다");
     List<Element> periods = children(mpd, "Period");
     require(
         periods.size() == 1,
@@ -359,10 +363,32 @@ public final class ManifestParser {
         }
       }
     require(video != null || audio != null, "DASH 트랙 없음");
+    checkDashProtection(mpd, period, video, audio);
     List<Track> result = new ArrayList<>();
     if (video != null) result.add(dashTrack(base, period, video, duration, false));
     if (audio != null) result.add(dashTrack(base, period, audio, duration, true));
     return result;
+  }
+
+  private static void checkDashProtection(
+      Element mpd, Element period, Element video, Element audio) {
+    boolean encrypted = false;
+    Set<Element> levels = new LinkedHashSet<>(List.of(mpd, period));
+    for (Element rep : Arrays.asList(video, audio)) {
+      if (rep == null) continue;
+      levels.add((Element) rep.getParentNode());
+      levels.add(rep);
+    }
+    for (Element level : levels) {
+      for (Element protection : children(level, "ContentProtection")) {
+        require(
+            !licenseScheme(protection.getAttribute("schemeIdUri")),
+            DownloadError.Category.DRM,
+            "DASH_LICENSE_SCHEME");
+        encrypted = true;
+      }
+    }
+    require(!encrypted, DownloadError.Category.ENCRYPTION_UNSUPPORTED, "DASH_ENCRYPTION");
   }
 
   private static Track dashTrack(
@@ -539,7 +565,7 @@ public final class ManifestParser {
   private static List<Element> children(Element element, String name) {
     List<Element> result = new ArrayList<>();
     for (Node n = element.getFirstChild(); n != null; n = n.getNextSibling())
-      if (n instanceof Element && name.equals(n.getNodeName())) result.add((Element) n);
+      if (n instanceof Element && name.equals(n.getLocalName())) result.add((Element) n);
     return result;
   }
 

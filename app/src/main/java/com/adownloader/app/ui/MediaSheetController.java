@@ -136,10 +136,10 @@ public final class MediaSheetController {
     if (candidates.isEmpty()) text = "최고 원본 자동 선택";
     else if (downloadable == 0) {
       boolean anyVerified =
-          candidates.stream().anyMatch(c -> "body".equals(c.getMetadata().get("protectionVerified")));
+          candidates.stream()
+              .anyMatch(c -> "body".equals(c.getMetadata().get("protectionVerified")));
       text = (anyVerified ? "암호화 전송만 감지됨" : "보호 방식 미확인 · 받을 수 있는 원본 없음") + " · 다운로드 미지원";
-    }
-    else if (protectedCount == 0) text = "최고 원본 자동 선택";
+    } else if (protectedCount == 0) text = "최고 원본 자동 선택";
     else text = "다운로드 가능 " + downloadable + "개 · 암호화 전송 " + protectedCount + "개";
     ((TextView) activeContent.findViewById(R.id.sheet_subtitle)).setText(text);
   }
@@ -187,11 +187,17 @@ public final class MediaSheetController {
     try {
       return MediaProbeService.shared().preview(item).description;
     } catch (Exception unavailable) {
-      if (unavailable instanceof DownloadError error
-          && (error.category == DownloadError.Category.AUTH
-              || error.category == DownloadError.Category.ACCESS_BLOCKED
-              || error.category == DownloadError.Category.EXPIRED_URL))
-        return AccessPresentation.preview(error);
+      if (unavailable instanceof DownloadError error) {
+        switch (error.category) {
+          case AUTH, ACCESS_BLOCKED, EXPIRED_URL:
+            return AccessPresentation.preview(error);
+          case DRM, ENCRYPTION_UNSUPPORTED, MANIFEST_INVALID, UNSUPPORTED_CODEC, UNSUPPORTED_FORMAT:
+            return com.adownloader.app.jobs.JobNotifications.message(
+                error.category.name(), com.adownloader.app.jobs.DownloadJobStore.State.FAILED);
+          default:
+            break;
+        }
+      }
       return "세부 정보 확인 불가 · 원본 자동 선택";
     }
   }

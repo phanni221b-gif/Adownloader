@@ -106,12 +106,13 @@ public class HlsVodMatrixTest {
   }
 
   @Test
-  public void protectedSessionKeySampleAesGapAndDeltaNeverComplete() {
+  public void invalidSessionKeySampleAesGapAndDeltaNeverComplete() {
     rejects(
         "#EXT-X-SESSION-KEY:METHOD=SAMPLE-AES,URI=\"key\"\n#EXTINF:1,\na.ts",
-        DownloadError.Category.DRM);
+        DownloadError.Category.MANIFEST_INVALID);
     rejects(
-        "#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"key\"\n#EXTINF:1,\na.ts", DownloadError.Category.DRM);
+        "#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"key\"\n#EXTINF:1,\na.ts",
+        DownloadError.Category.ENCRYPTION_UNSUPPORTED);
     rejects("#EXT-X-GAP\n#EXTINF:1,\na.ts", DownloadError.Category.HLS_GAP);
     rejects(
         "#EXT-X-SKIP:SKIPPED-SEGMENTS=2\n#EXTINF:1,\na.ts", DownloadError.Category.HLS_UNSUPPORTED);
