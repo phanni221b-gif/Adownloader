@@ -585,8 +585,8 @@ public final class RecordsController {
 
   private static final class DownloadHolder extends RecyclerView.ViewHolder {
     final TextView title, subtitle, detail;
-    final View open, diagnostic;
-    final com.google.android.material.button.MaterialButton primary, secondary;
+    final View diagnostic;
+    final com.google.android.material.button.MaterialButton open, primary, secondary;
     final ImageView image;
     final LinearProgressIndicator progress;
 
