@@ -87,6 +87,41 @@ public class DownloadIntegrationTest {
                     + " 테스트</a>")
                 .getBytes(java.nio.charset.StandardCharsets.UTF_8);
         mime = "text/html";
+      } else if (path.equals("encrypted/master.m3u8")) {
+        body =
+            ("#EXTM3U\n"
+                 + "#EXT-X-SESSION-KEY:METHOD=SAMPLE-AES,URI=\"skd://test\",KEYFORMAT=\"com.apple.streamingkeydelivery\"\n"
+                 + "#EXT-X-STREAM-INF:BANDWIDTH=200000\n"
+                 + "playlist.m3u8\n")
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        mime = "application/vnd.apple.mpegurl";
+      } else if (path.equals("encrypted/playlist.m3u8")) {
+        String playlist =
+            new String(fixture("playlist.m3u8"), java.nio.charset.StandardCharsets.UTF_8)
+                .replace("#EXT-X-MEDIA-SEQUENCE:0", "#EXT-X-MEDIA-SEQUENCE:7")
+                .replaceFirst(
+                    "(?m)^#EXTINF:",
+                    "#EXT-X-KEY:METHOD=AES-128,URI=\"first.key\",IV=0x2a\n#EXTINF:")
+                .replaceFirst(
+                    "(?m)^(playlist0\\.ts\\r?\\n)",
+                    "$1#EXT-X-KEY:METHOD=AES-128,URI=\"next.key\"\n");
+        body = playlist.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        mime = "application/vnd.apple.mpegurl";
+      } else if (path.equals("encrypted/first.key") || path.equals("encrypted/next.key")) {
+        body = aesKey(path.endsWith("first.key"));
+        mime = "application/octet-stream";
+      } else if (path.matches("encrypted/playlist[0-9]+\\.ts")) {
+        String name = path.substring("encrypted/".length());
+        int segment = Integer.parseInt(name.substring("playlist".length(), name.length() - 3));
+        byte[] iv =
+            java.nio.ByteBuffer.allocate(16).putLong(8, segment == 0 ? 42 : 7 + segment).array();
+        var cipher = javax.crypto.Cipher.getInstance("AES/CBC/PKCS5Padding");
+        cipher.init(
+            javax.crypto.Cipher.ENCRYPT_MODE,
+            new javax.crypto.spec.SecretKeySpec(aesKey(segment == 0), "AES"),
+            new javax.crypto.spec.IvParameterSpec(iv));
+        body = cipher.doFinal(fixture(name));
+        mime = "video/mp2t";
       } else {
         body = fixture(path);
         mime =
@@ -121,6 +156,12 @@ public class DownloadIntegrationTest {
       output.flush();
     } catch (Exception ignored) {
     }
+  }
+
+  private static byte[] aesKey(boolean first) {
+    byte[] key = new byte[16];
+    Arrays.fill(key, (byte) (first ? 0x23 : 0x56));
+    return key;
   }
 
   private DownloadEngine engine() {
@@ -160,6 +201,19 @@ public class DownloadIntegrationTest {
           engine.download(
               base + "playlist.m3u8", MediaCandidate.MediaType.HLS, Collections.emptyMap());
       PostProcessor.inspect(result.file, 3, true, true);
+    } finally {
+      engine.cleanup();
+    }
+  }
+
+  @Test
+  public void hlsAes128DownloadsWithRotatedKeyAndBothIvModes() throws Exception {
+    DownloadEngine engine = engine();
+    try {
+      var result =
+          engine.download(base + "encrypted/master.m3u8", MediaCandidate.MediaType.HLS, Map.of());
+      var tracks = PostProcessor.inspect(result.file, 3, true, true);
+      assertTrue(tracks.video && tracks.audio);
     } finally {
       engine.cleanup();
     }

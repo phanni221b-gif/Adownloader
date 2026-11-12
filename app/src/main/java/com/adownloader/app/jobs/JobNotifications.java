@@ -216,7 +216,11 @@ public final class JobNotifications {
       case "UNSUPPORTED_FORMAT":
         return "원본 형식의 안전한 저장을 지원하지 않습니다.";
       case "DRM":
-        return "보호된 영상은 다운로드할 수 없습니다.";
+        return "DRM 라이선스가 필요한 영상입니다.";
+      case "ENCRYPTION_UNSUPPORTED":
+        return "이 스트림의 암호화 방식은 아직 지원하지 않습니다.";
+      case "UNKNOWN":
+        return "다운로드 실패 원인을 확인하지 못했습니다.";
       case "AUTH":
         return "영상에 접근할 수 없습니다. 로그인 상태 또는 사이트 재생 여부를 확인해 주세요.";
       case "EXPIRED_URL":

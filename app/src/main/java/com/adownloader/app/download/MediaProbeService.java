@@ -452,9 +452,15 @@ public final class MediaProbeService implements AutoCloseable {
         a.representation = selection.audio;
         tracks.add(a);
       }
-    } else if (type == MediaCandidate.MediaType.DASH)
-      tracks = ManifestParser.dash(root.url, root.text);
-    else throw new DownloadError(DownloadError.Category.UNSUPPORTED_FORMAT);
+    } else if (type == MediaCandidate.MediaType.DASH) {
+      try {
+        tracks = ManifestParser.dash(root.url, root.text);
+      } catch (DownloadError.ManifestFailure failure) {
+        throw new DownloadError(failure.category);
+      } catch (IllegalArgumentException | org.xml.sax.SAXException invalid) {
+        throw new DownloadError(DownloadError.Category.MANIFEST_INVALID);
+      }
+    } else throw new DownloadError(DownloadError.Category.UNSUPPORTED_FORMAT);
     Map<String, Object> manifestInfo = new LinkedHashMap<>();
     manifestInfo.put("segmentCount", tracks.stream().mapToInt(t -> t.parts.size()).sum());
     manifestInfo.put("audioGroupPresent", tracks.stream().anyMatch(t -> t.audio));
