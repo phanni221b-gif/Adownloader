@@ -462,9 +462,17 @@ public final class RecordsController {
                   ? facts(row)
                   : DownloadHistory.userError(
                       row.optString("state").startsWith("실패") ? row.optString("state") : "중단"));
-      holder.open.setVisibility(done && row.optBoolean("available") ? View.VISIBLE : View.GONE);
+      boolean openSource =
+          row.optString("jobState").equals("FAILED") && row.optBoolean("canOpenPage");
+      holder.open.setText(openSource ? "페이지 열기" : "열기");
+      holder.open.setVisibility(
+          openSource || (done && row.optBoolean("available")) ? View.VISIBLE : View.GONE);
       holder.open.setOnClickListener(
-          v -> MediaOpener.open(activity, row.optString("uri"), row.optString("mime")));
+          v -> {
+            if (openSource)
+              ((com.adownloader.app.MainActivity) activity).openJobPage(row.optLong("job"));
+            else MediaOpener.open(activity, row.optString("uri"), row.optString("mime"));
+          });
       bindActions(holder, row);
       if (done && !row.optBoolean("available"))
         holder.detail.setText("파일을 찾을 수 없습니다. 기기에서 삭제되었을 수 있습니다.");
@@ -577,8 +585,8 @@ public final class RecordsController {
 
   private static final class DownloadHolder extends RecyclerView.ViewHolder {
     final TextView title, subtitle, detail;
-    final View open, diagnostic;
-    final com.google.android.material.button.MaterialButton primary, secondary;
+    final View diagnostic;
+    final com.google.android.material.button.MaterialButton open, primary, secondary;
     final ImageView image;
     final LinearProgressIndicator progress;
 

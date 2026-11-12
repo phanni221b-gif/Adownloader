@@ -429,6 +429,34 @@ public class UiFlowTest {
   }
 
   @Test
+  public void failedDownloadOpensOriginalPageAndRetainsRetry() throws Exception {
+    var store = com.adownloader.app.jobs.DownloadJobs.get(context).store;
+    String originalPage = base + "second.html";
+    long id =
+        store.enqueue(
+            "failed-page-" + UUID.randomUUID(),
+            "HLS",
+            "Failed source fixture",
+            "127.0.0.1",
+            new JSONObject().put("url", base + "playlist.m3u8").put("page", originalPage));
+    try {
+      store.state(id, com.adownloader.app.jobs.DownloadJobStore.State.FAILED, "NETWORK");
+      tab("nav_downloads");
+      var page = view("item_open");
+      assertEquals("페이지 열기", page.getText());
+      assertEquals("재시도", view("item_primary").getText());
+      page.click();
+      assertTrue(
+          device.wait(
+              Until.hasObject(By.res("com.adownloader.app", "address_bar").text(originalPage)),
+              15000));
+      assertEquals(com.adownloader.app.jobs.DownloadJobStore.State.FAILED, store.get(id).state);
+    } finally {
+      store.clearFailedOrCanceled(id);
+    }
+  }
+
+  @Test
   public void cleanupMenuConfirmsFailedAndCanceledOnlyAndCancelKeepsRecords() throws Exception {
     var jobs = com.adownloader.app.jobs.DownloadJobs.get(context);
     var store = jobs.store;
