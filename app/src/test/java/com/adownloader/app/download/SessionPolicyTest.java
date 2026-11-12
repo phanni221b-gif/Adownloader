@@ -90,7 +90,7 @@ public class SessionPolicyTest {
   @Test
   public void recoveryLabelsDistinguishAccessFromExpiry() {
     assertEquals("주소 만료", AccessPresentation.label("EXPIRED_URL"));
-    assertEquals("접근 확인 필요", AccessPresentation.label("AUTH"));
+    assertEquals("로그인 또는 세션 확인 필요", AccessPresentation.label("AUTH"));
     assertEquals("사이트 요청 차단", AccessPresentation.label("ACCESS_BLOCKED"));
     assertEquals("페이지 열기", AccessPresentation.action("ACCESS_BLOCKED"));
   }

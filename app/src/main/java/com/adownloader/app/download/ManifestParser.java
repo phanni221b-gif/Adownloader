@@ -234,9 +234,7 @@ public final class ManifestParser {
               DownloadError.Category.DRM,
               "HLS_LICENSE_KEY");
           require(
-              "AES-128".equals(method)
-                  && "identity".equals(format)
-                  && "1".equals(a.getOrDefault("KEYFORMATVERSIONS", "1")),
+              "AES-128".equals(method) && "identity".equals(format),
               DownloadError.Category.ENCRYPTION_UNSUPPORTED,
               "HLS_ENCRYPTION");
           key = resolve(url, a.get("URI"));
