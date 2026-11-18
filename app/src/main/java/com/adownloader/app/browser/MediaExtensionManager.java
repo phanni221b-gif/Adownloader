@@ -1,6 +1,7 @@
 package com.adownloader.app.browser;
 
 import android.util.Log;
+import com.adownloader.app.download.MediaNetworkSession;
 import com.adownloader.app.media.MediaDetector;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -169,8 +170,16 @@ public final class MediaExtensionManager implements AutoCloseable {
     int diagnosticTab = json.optInt("tabId", -1);
     if ("page-meta".equals(json.optString("kind")))
       detectionWatchdog.page(diagnosticTab, json.optString("pageUrl"));
-    if ("manifest-invalidate".equals(json.optString("kind")))
+    if ("manifest-invalidate".equals(json.optString("kind"))) {
       detectionWatchdog.discard(diagnosticTab);
+      MediaNetworkSession.clearPlayerOutcomes();
+    }
+    if ("media-observed".equals(json.optString("kind"))) {
+      // Privacy-safe outcome of the live player's own media request (host + status only) so a
+      // failed download can tell a server block from a candidate that is not the playing stream.
+      MediaNetworkSession.observePlayerRequest(json.optString("host"), json.optInt("status"));
+      return;
+    }
     if ("detection".equals(json.optString("kind"))) {
       detector.detectionDiagnostics = json.optJSONObject("metrics");
       detectionWatchdog.metrics(diagnosticTab, detector.detectionDiagnostics);

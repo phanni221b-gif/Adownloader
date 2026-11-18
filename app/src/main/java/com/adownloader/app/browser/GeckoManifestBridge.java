@@ -69,6 +69,12 @@ public final class GeckoManifestBridge implements MediaNetworkSession.Provider, 
         || MediaHeaders.origin(page).isEmpty()
         || status < 200
         || status >= 300) return;
+    // The player fetched this media successfully; record the host outcome (host + status only) so a
+    // later failed download can tell "the player succeeds here" from "the player is blocked here too".
+    try {
+      MediaNetworkSession.observePlayerRequest(java.net.URI.create(url).getHost(), status);
+    } catch (RuntimeException ignored) {
+    }
     Map<String, String> headers = new LinkedHashMap<>();
     JSONObject h = j.optJSONObject("headers");
     if (h != null)
