@@ -228,7 +228,7 @@ public class FailureJournalIntegrationTest {
     journal.barrier().get(30, TimeUnit.SECONDS);
     assertEquals(100, (int) journal.countAsync().get());
     assertNull(journal.latestAsync(1000).get());
-    assertEquals(50, journal.latestAsync(1105).get().getJSONArray("eventHistory").length());
+    assertEquals(56, journal.latestAsync(1105).get().getJSONArray("eventHistory").length());
     JSONObject actual = runFailure();
     long id = actual.getLong("jobId");
     File exported = journal.exportAsync(id).get();

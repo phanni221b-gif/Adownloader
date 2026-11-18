@@ -230,6 +230,18 @@ public final class HttpSource implements AutoCloseable {
       java.util.concurrent.ConcurrentHashMap.newKeySet();
   private final java.util.Set<String> blockedHostRecorded =
       java.util.concurrent.ConcurrentHashMap.newKeySet();
+  // Hosts whose segments are served through the live playing tab's content-script context (route
+  // #1): native and the browser stack were both access-blocked, but the page-context fetch — where
+  // the site's anti-bot challenge is already solved for the tab that is playing the media —
+  // returned the bytes. Later whole-segment requests on such a host go straight to that bridge
+  // instead of each paying two blocked network attempts first. A host here is never added to
+  // blockedHosts, so the bridge stays available for its remaining segments.
+  private final java.util.Set<String> contentScriptHosts =
+      java.util.concurrent.ConcurrentHashMap.newKeySet();
+  // The page-context bridge returns the whole body in memory (base64 over the extension channel),
+  // so an oversized segment is refused rather than risk exhausting memory. Matches the manifest
+  // bootstrap's own 8 MiB ceiling.
+  private static final int CONTENT_SCRIPT_BODY_LIMIT = 8 * 1024 * 1024;
   private final String rootUrl;
 
   private static String hostOf(String url) {
@@ -300,6 +312,26 @@ public final class HttpSource implements AutoCloseable {
       String url, long offset, long length, String validator, boolean resume, Document previous)
       throws Exception {
     if (relay != null) return relay.open(url, offset, length);
+    // A host already proven to serve its segments through the page-context bridge (route #1) skips
+    // the two blocked network attempts: go straight to the content-script fetch. Only for a whole
+    // segment — a byte-range or resume request cannot be served from the in-memory body. A bridge
+    // failure here (e.g. a segment not yet observed in the tab) falls through to the network path
+    // rather than failing outright.
+    if (documentRole.isEmpty()
+        && !resume
+        && offset == 0
+        && length <= 0
+        && contentScriptHosts.contains(hostOf(url)))
+      try {
+        HttpURLConnection viaContentScript = contentScriptSegment(url, true);
+        if (viaContentScript != null) return viaContentScript;
+      } catch (TransferControl.Stopped stopped) {
+        throw stopped;
+      } catch (Exception bridgeRetry) {
+        if (bridgeRetry instanceof DownloadError e
+            && (e.category == DownloadError.Category.STORAGE
+                || e.category == DownloadError.Category.STORAGE_FULL)) throw e;
+      }
     // A segment host already confirmed blocked on every transport fails fast: no further request is
     // sent, so a download does not hammer a hotlink/anti-bot CDN with all 1000+ remaining segments.
     // Scoped to segments (documentRole empty); a manifest can still recover through the content-
@@ -370,11 +402,45 @@ public final class HttpSource implements AutoCloseable {
             "native",
             "SEGMENT_NATIVE_BLOCKED",
             lastSentNames.getOrDefault(url, java.util.List.of()));
-        // Every transport was blocked for this segment host: mark it so its remaining segments fail
-        // fast, and record the decision once (not once per skipped segment) so the retry storm is a
-        // single HOST_ACCESS_BLOCKED event instead of hundreds of repeats.
+        // Route #1, last resort: native and the browser stack were both access-blocked for this
+        // segment. Try the live playing tab's content-script context, where the site's anti-bot
+        // challenge is already solved — the same page-context bridge the manifest bootstrap uses.
+        // Only a whole-segment request is eligible; a byte-range or resume request cannot be served
+        // from the bridge's in-memory body. Not a protection bypass: it uses the page's own fetch,
+        // and only reaches segments the tab itself has fetched.
+        boolean eligible = !resume && offset == 0 && length <= 0;
+        try {
+          HttpURLConnection viaContentScript = contentScriptSegment(url, eligible);
+          if (viaContentScript != null) {
+            String host = hostOf(url);
+            if (!host.isEmpty()) contentScriptHosts.add(host);
+            return viaContentScript;
+          }
+        } catch (TransferControl.Stopped stopped) {
+          throw stopped;
+        } catch (Exception bridgeFailure) {
+          if (bridgeFailure instanceof DownloadError e
+              && (e.category == DownloadError.Category.STORAGE
+                  || e.category == DownloadError.Category.STORAGE_FULL)) throw e;
+          record(
+              url,
+              bridgeFailure instanceof DownloadError
+                      && ((DownloadError) bridgeFailure).diagnostic != null
+                  ? ((DownloadError) bridgeFailure).diagnostic.status
+                  : 0,
+              0,
+              "",
+              "UNKNOWN",
+              "content-script",
+              "SEGMENT_CONTENT_SCRIPT_BLOCKED",
+              java.util.List.of());
+        }
+        // Every transport — including the content-script bridge — was blocked for this segment
+        // host: mark it so its remaining segments fail fast, and record the decision once (not once
+        // per skipped segment) so the retry storm is a single HOST_ACCESS_BLOCKED event instead of
+        // hundreds of repeats. A host the bridge can serve is left usable (never marked here).
         String blockedHost = hostOf(url);
-        if (!blockedHost.isEmpty()) {
+        if (!blockedHost.isEmpty() && !contentScriptHosts.contains(blockedHost)) {
           blockedHosts.add(blockedHost);
           if (blockedHostRecorded.add(blockedHost))
             FailureDiagnostics.event(
@@ -649,6 +715,113 @@ public final class HttpSource implements AutoCloseable {
       return connection;
     }
     throw redirectFailure(current, 0, "", 8);
+  }
+
+  // Fetches a whole segment through the live playing tab's content-script context (route #1) and
+  // wraps the returned bytes in an in-memory connection the segment consumers read like any other.
+  // Returns null when the attempt is not applicable (ineligible request, no provider, or the
+  // segment was never observed in the tab, so the page-context fetch has nothing to replay). A
+  // reachable-but-refused fetch throws DownloadError instead, so the caller marks the host blocked.
+  private HttpURLConnection contentScriptSegment(String url, boolean eligible) throws Exception {
+    var provider = MediaNetworkSession.provider();
+    var observed = MediaNetworkSession.latest(url, topPage, topTab, topFrame);
+    if (!eligible
+        || provider == null
+        || observed == null
+        || topPage == null
+        || topTab < 0
+        || topFrame < 0) return null;
+    control.check();
+    record(
+        url, 0, 0, "", "UNKNOWN", "content-script", "SEGMENT_CONTENT_SCRIPT", observed.headerNames());
+    var response = provider.manifest(url, topPage, topTab, topFrame, observed.headers(), control);
+    if (response.status() < 200
+        || response.status() >= 300
+        || response.body().length == 0
+        || response.body().length > CONTENT_SCRIPT_BODY_LIMIT
+        || (url.startsWith("https:") && !response.url().startsWith("https:")))
+      throw new DownloadError(DownloadError.Category.ACCESS_BLOCKED)
+          .diagnostic(
+              new HlsDiagnostic(
+                  url,
+                  response.status(),
+                  response.metadata().getOrDefault("content-type", ""),
+                  response.redirects(),
+                  "segment",
+                  HlsDiagnostic.Stage.VARIANT_HTTP,
+                  "",
+                  DownloadError.Category.ACCESS_BLOCKED));
+    // Segment responses can carry rotating hotlink cookies; adopt them so a later native request
+    // to the same host benefits, exactly as the manifest bootstrap does.
+    for (var entry : response.responseCookies().entrySet())
+      if (cookies.accept(URI.create(entry.getKey()), Map.of("Set-Cookie", entry.getValue())))
+        persistCookies();
+    record(
+        url,
+        response.status(),
+        response.redirects(),
+        response.metadata().getOrDefault("content-type", ""),
+        "MEDIA",
+        "content-script",
+        "SEGMENT_CONTENT_SCRIPT",
+        response.requestHeaders().keySet());
+    return inMemoryConnection(url, response);
+  }
+
+  private HttpURLConnection inMemoryConnection(String url, MediaNetworkSession.Bootstrap response)
+      throws Exception {
+    byte[] body = response.body();
+    String contentType = response.metadata().getOrDefault("content-type", "");
+    InputStream stream = new ByteArrayInputStream(body);
+    HttpURLConnection connection =
+        new HttpURLConnection(URI.create(url).toURL()) {
+          @Override
+          public void connect() {}
+
+          @Override
+          public boolean usingProxy() {
+            return false;
+          }
+
+          @Override
+          public void disconnect() {
+            try {
+              stream.close();
+            } catch (IOException ignored) {
+            }
+            control.detach(this);
+          }
+
+          @Override
+          public int getResponseCode() {
+            return 200;
+          }
+
+          @Override
+          public InputStream getInputStream() {
+            return stream;
+          }
+
+          @Override
+          public long getContentLengthLong() {
+            return body.length;
+          }
+
+          @Override
+          public String getContentType() {
+            return contentType.isEmpty() ? null : contentType;
+          }
+
+          @Override
+          public String getHeaderField(String name) {
+            if (name == null) return null;
+            if (name.equalsIgnoreCase("Content-Length")) return String.valueOf(body.length);
+            if (name.equalsIgnoreCase("Content-Type")) return contentType.isEmpty() ? null : contentType;
+            return null;
+          }
+        };
+    control.attach(connection);
+    return connection;
   }
 
   public byte[] bytes(String url, long offset, long length, int limit) throws Exception {
