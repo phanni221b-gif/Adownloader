@@ -238,6 +238,13 @@ public final class HttpSource implements AutoCloseable {
   // blockedHosts, so the bridge stays available for its remaining segments.
   private final java.util.Set<String> contentScriptHosts =
       java.util.concurrent.ConcurrentHashMap.newKeySet();
+  // Hosts for which the content-script bridge (route #1) could not even be attempted because the
+  // live tab never recorded a successful media observation of the segment to replay. Recorded once
+  // per host so the report shows the player's own fetch of this host was never captured — the
+  // signal that the download target was not confirmed as the stream actually playing (or that the
+  // observation had expired), as opposed to a transport that was tried and blocked.
+  private final java.util.Set<String> contentScriptUnobservedRecorded =
+      java.util.concurrent.ConcurrentHashMap.newKeySet();
   // The page-context bridge returns the whole body in memory (base64 over the extension channel),
   // so an oversized segment is refused rather than risk exhausting memory. Matches the manifest
   // bootstrap's own 8 MiB ceiling.
@@ -723,14 +730,22 @@ public final class HttpSource implements AutoCloseable {
   // segment was never observed in the tab, so the page-context fetch has nothing to replay). A
   // reachable-but-refused fetch throws DownloadError instead, so the caller marks the host blocked.
   private HttpURLConnection contentScriptSegment(String url, boolean eligible) throws Exception {
+    if (!eligible || topPage == null || topTab < 0 || topFrame < 0) return null;
     var provider = MediaNetworkSession.provider();
+    if (provider == null) return null;
     var observed = MediaNetworkSession.latest(url, topPage, topTab, topFrame);
-    if (!eligible
-        || provider == null
-        || observed == null
-        || topPage == null
-        || topTab < 0
-        || topFrame < 0) return null;
+    if (observed == null) {
+      // The bridge replays a request the live tab was seen making successfully; without that
+      // observation there is nothing to replay. Record once per host that the player's own
+      // successful fetch of this segment host was never captured, so the report can tell this apart
+      // from a transport that was actually attempted and blocked.
+      String host = hostOf(url);
+      if (!host.isEmpty() && contentScriptUnobservedRecorded.add(host))
+        FailureDiagnostics.event(
+            diagnosticSession,
+            Map.of("action", "SEGMENT_CONTENT_SCRIPT_UNOBSERVED", "stage", stage(url)));
+      return null;
+    }
     control.check();
     record(
         url, 0, 0, "", "UNKNOWN", "content-script", "SEGMENT_CONTENT_SCRIPT", observed.headerNames());

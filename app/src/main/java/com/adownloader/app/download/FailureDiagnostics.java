@@ -156,6 +156,7 @@ public final class FailureDiagnostics {
           "CONTENT_SCRIPT_BLOCKED",
           "SEGMENT_CONTENT_SCRIPT",
           "SEGMENT_CONTENT_SCRIPT_BLOCKED",
+          "SEGMENT_CONTENT_SCRIPT_UNOBSERVED",
           "START",
           "PHASE",
           "MANIFEST_PARSED",
