@@ -19,6 +19,10 @@ public final class HttpConnections {
   }
 
   private static volatile Opener browser;
+  // The browser engine's own User-Agent, published by the browser layer. Used as a fallback for
+  // direct requests whose captured context carries no User-Agent (e.g. media found in the DOM
+  // rather than from an observed network request), so the request still looks like the player's.
+  private static volatile String userAgent = "";
 
   private HttpConnections() {}
 
@@ -28,6 +32,15 @@ public final class HttpConnections {
 
   public static boolean browserAvailable() {
     return browser != null;
+  }
+
+  public static void setUserAgent(String value) {
+    if (value != null && !value.isBlank() && value.length() <= 512 && !value.matches(".*[\\r\\n].*"))
+      userAgent = value;
+  }
+
+  public static String userAgent() {
+    return userAgent;
   }
 
   public static HttpURLConnection open(String url, boolean viaBrowser) throws IOException {

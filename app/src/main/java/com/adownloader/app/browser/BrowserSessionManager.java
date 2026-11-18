@@ -229,6 +229,11 @@ public final class BrowserSessionManager {
           }
         });
     tab.session.open(runtime);
+    // Publish the engine's own User-Agent so direct media requests without a captured context can
+    // present the same identity the in-page player does.
+    tab.session
+        .getUserAgent()
+        .accept(ua -> com.adownloader.app.download.HttpConnections.setUserAgent(ua));
     if (observer != null) observer.accept(tab.session, true);
     selectTab(tabs.size() - 1);
     if (url != null) load(url);
