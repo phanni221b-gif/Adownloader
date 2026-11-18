@@ -214,7 +214,22 @@ public final class HttpSource implements AutoCloseable {
 
   private volatile RequestContext context;
   private volatile boolean preferDirect;
+  // Hosts whose direct requests were access-blocked (e.g. an anti-bot challenge on a segment CDN)
+  // but succeeded through the browser stack, which carries the cleared browsing session. Later
+  // requests to such a host go straight to the browser stack instead of paying a blocked direct
+  // attempt first. preferDirect, in contrast, is a single per-transfer latch, so on its own it
+  // would force every host onto the direct stack once any one request fell back to it.
+  private final java.util.Set<String> browserPreferredHosts =
+      java.util.concurrent.ConcurrentHashMap.newKeySet();
   private final String rootUrl;
+
+  private static String hostOf(String url) {
+    try {
+      return URI.create(url).getHost() == null ? "" : URI.create(url).getHost();
+    } catch (RuntimeException invalid) {
+      return "";
+    }
+  }
   private volatile String responseDisposition = "";
   private boolean acceptedResource;
   private int lastRedirects;
@@ -277,6 +292,14 @@ public final class HttpSource implements AutoCloseable {
       throws Exception {
     if (relay != null) return relay.open(url, offset, length);
     try {
+      // A host already shown to need the browser stack is served through it directly, so later
+      // segments on that anti-bot CDN do not each repeat a blocked direct attempt.
+      if (HttpConnections.browserAvailable() && browserPreferredHosts.contains(hostOf(url)))
+        try {
+          return nativeRequest(url, offset, length, validator, resume, previous, true);
+        } catch (Exception browserOnly) {
+          if (!access(browserOnly) && !transport(browserOnly)) throw browserOnly;
+        }
       if (HttpConnections.browserAvailable() && !preferDirect) {
         if (!transportDecided)
           // The first request decides which stack serves this transfer; concurrent segment
@@ -295,6 +318,20 @@ public final class HttpSource implements AutoCloseable {
       return nativeRequest(url, offset, length, validator, resume, previous, false);
     } catch (Exception first) {
       if (!access(first)) throw first;
+      // The direct stack pinned by preferDirect was blocked for this request. A segment CDN
+      // different from the manifest host may run an anti-bot challenge the direct stack cannot pass
+      // while the browser stack — carrying the cleared browsing session's cookies — can. Try it, and
+      // remember the host so its remaining segments skip the blocked direct attempt.
+      if (preferDirect && HttpConnections.browserAvailable())
+        try {
+          HttpURLConnection viaBrowser =
+              nativeRequest(url, offset, length, validator, resume, previous, true);
+          browserPreferredHosts.add(hostOf(url));
+          return viaBrowser;
+        } catch (Exception browserRetry) {
+          if (access(browserRetry)) first = browserRetry;
+          else if (!transport(browserRetry)) throw browserRetry;
+        }
       if (refreshContext(lastRequestUrl.get() == null ? url : lastRequestUrl.get()))
         try {
           return nativeRequest(url, offset, length, validator, resume, previous, false);
