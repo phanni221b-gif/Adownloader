@@ -382,6 +382,23 @@ public final class HttpSource implements AutoCloseable {
       connection.setRequestProperty("Accept-Encoding", "identity");
       connection.setRequestProperty("Accept", "*/*");
       headers.forEach(connection::setRequestProperty);
+      // Media discovered in the DOM (rather than from an observed network request) carries no
+      // captured request context, so without this the request would reach the CDN with no Referer
+      // and no User-Agent and a hotlink/anti-bot origin answers 403. Supply the page as Referer and
+      // the engine's own User-Agent — what the in-page player sends — only when they are absent, so
+      // a captured value is never overridden.
+      boolean hasReferer = headers.keySet().stream().anyMatch(k -> k.equalsIgnoreCase("referer"));
+      boolean hasUserAgent =
+          headers.keySet().stream().anyMatch(k -> k.equalsIgnoreCase("user-agent"));
+      if (!hasReferer && topPage != null && !topPage.isEmpty())
+        try {
+          URI p = URI.create(topPage);
+          if (p.getHost() != null && java.util.Set.of("http", "https").contains(p.getScheme()))
+            connection.setRequestProperty("Referer", p.resolve("/").toString());
+        } catch (RuntimeException ignored) {
+        }
+      if (!hasUserAgent && !HttpConnections.userAgent().isEmpty())
+        connection.setRequestProperty("User-Agent", HttpConnections.userAgent());
       lastHeaders.put(current, new java.util.LinkedHashMap<>(headers));
       if (previous != null && current.equals(previous.url)) {
         if (!previous.etag.isEmpty()) connection.setRequestProperty("If-None-Match", previous.etag);
