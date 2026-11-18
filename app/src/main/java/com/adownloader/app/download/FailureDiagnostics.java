@@ -456,6 +456,19 @@ public final class FailureDiagnostics {
           events.addAll(all.subList(all.size() - RECENT_EVENTS, all.size()));
         } else events = all;
         out.put(key, events);
+      } else if (key.equals("observedPlayerMediaHosts") && value instanceof Collection<?> list) {
+        List<String> tokens = new ArrayList<>();
+        for (Object t : list)
+          if (t instanceof String s) {
+            int bar = s.lastIndexOf('|');
+            String host = bar > 0 ? safeHost(s.substring(0, bar)) : "";
+            String outcome = bar > 0 ? s.substring(bar + 1) : "";
+            if (!host.isEmpty() && (outcome.equals("ok") || outcome.equals("err"))) {
+              tokens.add(host + "|" + outcome);
+              if (tokens.size() >= 12) break;
+            }
+          }
+        if (!tokens.isEmpty()) out.put(key, tokens);
       } else if (Set.of(
                   "headerNames", "geckoHeaderNames", "nativeHeaderNames", "missingHeaderNames")
               .contains(key)
@@ -686,6 +699,20 @@ public final class FailureDiagnostics {
       if (manifest != null) report.put("manifest", manifest);
       if (detection != null) report.put("detection", detection);
       report.put("eventHistory", new ArrayList<>(events));
+      // What the live player's own media requests resolved to, by host (host + ok/err only). Lets a
+      // failed download separate "the player also fails on this host" (server block) from "the
+      // player succeeds on a different host" (the download target is not the playing stream).
+      Map<String, Integer> playerMedia = MediaNetworkSession.playerMediaSnapshot();
+      if (!playerMedia.isEmpty()) {
+        List<String> tokens = new ArrayList<>();
+        for (var e : playerMedia.entrySet()) {
+          String h = safeHost(e.getKey());
+          if (!h.isEmpty())
+            tokens.add(h + "|" + (e.getValue() >= 200 && e.getValue() < 300 ? "ok" : "err"));
+          if (tokens.size() >= 12) break;
+        }
+        if (!tokens.isEmpty()) report.put("observedPlayerMediaHosts", tokens);
+      }
       return sanitize(report);
     }
 

@@ -96,6 +96,33 @@ public final class MediaNetworkSession {
     return provider.get();
   }
 
+  // What the live player's OWN media requests resolved to, keyed by host, as the extension observes
+  // them from the browsing context (host + HTTP status only — never a URL, header or cookie). It
+  // lets a failed download say whether the player itself succeeded on the segment host (a session
+  // gap the app might bridge), was blocked there too (a server restriction, not an app defect), or
+  // streamed from a different host entirely (the download target is not the stream that plays). A
+  // 2xx for a host is kept even if a later request to it fails, so a host the player truly reached
+  // stays marked reached. Bounded and cleared on navigation.
+  private static final Map<String, Integer> playerMediaOutcomes =
+      new java.util.concurrent.ConcurrentHashMap<>();
+
+  public static void observePlayerRequest(String host, int status) {
+    if (host == null || host.isEmpty() || host.length() > 253) return;
+    if (status < 100 || status > 599) return;
+    if (playerMediaOutcomes.size() >= 256 && !playerMediaOutcomes.containsKey(host))
+      playerMediaOutcomes.clear();
+    playerMediaOutcomes.merge(
+        host, status, (old, next) -> old >= 200 && old < 300 ? old : next);
+  }
+
+  public static Map<String, Integer> playerMediaSnapshot() {
+    return Map.copyOf(playerMediaOutcomes);
+  }
+
+  public static void clearPlayerOutcomes() {
+    playerMediaOutcomes.clear();
+  }
+
   public static Observation latest(String url, String page) {
     return latest(url, page, -1, -1);
   }
