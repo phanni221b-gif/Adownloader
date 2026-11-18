@@ -30,6 +30,8 @@ public final class FailureDiagnostics {
     UNKNOWN
   }
 
+  // Event-history retention: keep the first HEAD_EVENTS and the last RECENT_EVENTS, drop the middle.
+  static final int HEAD_EVENTS = 16, RECENT_EVENTS = 50;
   private static final ThreadLocal<Session> ACTIVE = new ThreadLocal<>();
   private static volatile Consumer<Map<String, Object>> sink;
 
@@ -138,7 +140,7 @@ public final class FailureDiagnostics {
           "extension",
           "UNKNOWN");
   private static final Set<String> TRANSPORTS =
-      Set.of("native", "gecko", "gecko-response-cache", "UNKNOWN");
+      Set.of("native", "gecko", "content-script", "gecko-response-cache", "UNKNOWN");
   private static final Set<String> ACTIONS =
       Set.of(
           "NATIVE_INITIAL",
@@ -148,6 +150,9 @@ public final class FailureDiagnostics {
           "GECKO_CACHE_MISS",
           "MANIFEST_NATIVE_BLOCKED",
           "SEGMENT_NATIVE_BLOCKED",
+          "BROWSER_INITIAL",
+          "HOST_ACCESS_BLOCKED",
+          "CONTENT_SCRIPT_BLOCKED",
           "START",
           "PHASE",
           "MANIFEST_PARSED",
@@ -169,7 +174,41 @@ public final class FailureDiagnostics {
           "BRIDGE_DISCONNECTED",
           "ENCRYPTED_TRANSPORT_UNSUPPORTED",
           "MANIFEST_PARSE",
+          // Category-specific reasons so a failure says what kind it is rather than the generic
+          // DOWNLOAD_FAILURE. A server's intentional access restriction (ACCESS_BLOCKED /
+          // AUTH_REQUIRED / URL_EXPIRED / DRM_PROTECTED) reads differently from an engine-side limit
+          // (STREAM_UNSUPPORTED / MANIFEST_INVALID) or a transient condition (NETWORK / SERVER).
+          "ACCESS_BLOCKED",
+          "AUTH_REQUIRED",
+          "URL_EXPIRED",
+          "DRM_PROTECTED",
+          "UNSUPPORTED_FORMAT",
+          "LIVE_UNSUPPORTED",
+          "STREAM_UNSUPPORTED",
+          "MANIFEST_INVALID",
+          "NETWORK_ERROR",
+          "SERVER_ERROR",
+          "STORAGE",
           "UNKNOWN");
+
+  /** A category-specific reason for a generic download failure, so the failure kind is explicit. */
+  static String specificReason(DownloadError.Category category, String generic) {
+    if (!"DOWNLOAD_FAILURE".equals(generic) || category == null) return generic;
+    return switch (category) {
+      case ACCESS_BLOCKED -> "ACCESS_BLOCKED";
+      case AUTH -> "AUTH_REQUIRED";
+      case EXPIRED_URL -> "URL_EXPIRED";
+      case DRM -> "DRM_PROTECTED";
+      case UNSUPPORTED_FORMAT, UNSUPPORTED_CODEC -> "UNSUPPORTED_FORMAT";
+      case LIVE_UNSUPPORTED -> "LIVE_UNSUPPORTED";
+      case HLS_UNSUPPORTED, HLS_GAP, HLS_DISCONTINUITY, DASH_MULTIPERIOD -> "STREAM_UNSUPPORTED";
+      case MANIFEST_INVALID -> "MANIFEST_INVALID";
+      case NETWORK -> "NETWORK_ERROR";
+      case SERVER -> "SERVER_ERROR";
+      case STORAGE, STORAGE_FULL -> "STORAGE";
+      default -> "DOWNLOAD_FAILURE";
+    };
+  }
   private static final Set<String> MIME =
       Set.of(
           "text/html",
@@ -310,6 +349,8 @@ public final class FailureDiagnostics {
     return switch (key) {
       case "type" -> TYPES.contains(v) ? v : "UNKNOWN";
       case "detectionSource" -> SOURCES.contains(v) ? v : "UNKNOWN";
+      case "candidateMediaProof" ->
+          Set.of("observed", "not-applicable", "none").contains(v) ? v : "none";
       case "stage" -> {
         try {
           yield Stage.valueOf(v).name();
@@ -369,6 +410,8 @@ public final class FailureDiagnostics {
                       "other",
                       "native-http",
                       "content-fetch",
+                      "browser-fetch",
+                      "content-script-fetch",
                       "playback-response")
                   .contains(v)
               ? v
@@ -391,7 +434,7 @@ public final class FailureDiagnostics {
             });
         out.put(key, sanitize(child));
       } else if (key.equals("eventHistory") && value instanceof Collection<?> list) {
-        List<Object> events = new ArrayList<>();
+        List<Object> all = new ArrayList<>();
         for (Object item : list)
           if (item instanceof Map<?, ?> m) {
             Map<String, Object> event = new LinkedHashMap<>();
@@ -399,9 +442,15 @@ public final class FailureDiagnostics {
                 (k, v) -> {
                   if (k instanceof String) event.put((String) k, v);
                 });
-            events.add(sanitize(event));
-            if (events.size() == 50) break;
+            all.add(sanitize(event));
+            if (all.size() >= 512) break; // hard bound against planted stored input
           }
+        // Keep the first HEAD_EVENTS and the last RECENT_EVENTS so both ends of a long run survive.
+        List<Object> events;
+        if (all.size() > HEAD_EVENTS + RECENT_EVENTS) {
+          events = new ArrayList<>(all.subList(0, HEAD_EVENTS));
+          events.addAll(all.subList(all.size() - RECENT_EVENTS, all.size()));
+        } else events = all;
         out.put(key, events);
       } else if (Set.of(
                   "headerNames", "geckoHeaderNames", "nativeHeaderNames", "missingHeaderNames")
@@ -445,7 +494,10 @@ public final class FailureDiagnostics {
   public static final class Session {
     private final long jobId, started = System.nanoTime();
     private final Map<String, Object> media;
-    private final ArrayDeque<Map<String, Object>> events = new ArrayDeque<>();
+    // Keeps the first HEAD_EVENTS events permanently and a sliding window of the most recent ones,
+    // dropping the middle, so the beginning of a transfer (the transport decision and the first
+    // failing requests) stays in the report instead of being trimmed away by a long retry run.
+    private final List<Map<String, Object>> events = new ArrayList<>();
     private Map<String, Object> failedEvent, lastTransport, manifest, detection;
 
     public synchronized void detection(Map<String, Object> metrics) {
@@ -471,6 +523,21 @@ public final class FailureDiagnostics {
       m.put("titlePresent", !metadata.getOrDefault("title", "").isBlank());
       m.put("geckoMediaSuccessObserved", "true".equals(metadata.get("requestContextVerified")));
       m.put("geckoPlaybackObserved", "true".equals(metadata.get("geckoPlaybackObserved")));
+      // Disambiguate geckoMediaSuccessObserved: it is whether a successful media network response
+      // was captured and tied to this candidate, NOT whether the browser played the video. For a
+      // candidate found in the DOM or by a protected-response header, no such capture is ever
+      // expected, so "false" there is structural ("not-applicable"), not a playback failure. This
+      // field spells that out: observed = a media response was tied to the candidate;
+      // not-applicable = the candidate's detection does not produce one; none = it could have but
+      // none was seen.
+      m.put(
+          "candidateMediaProof",
+          "true".equals(metadata.get("requestContextVerified"))
+              ? "observed"
+              : Set.of("dom-media", "protected-response")
+                      .contains(metadata.getOrDefault("detectionSource", ""))
+                  ? "not-applicable"
+                  : "none");
       media = sanitize(m);
       event(Map.of("action", "START", "stage", "UNKNOWN"));
     }
@@ -513,16 +580,19 @@ public final class FailureDiagnostics {
       if (raw.get("status") instanceof Number n && n.intValue() >= 400) failedEvent = safe;
       if (Boolean.TRUE.equals(safe.get("manifestCacheUsed")))
         media.put("manifestCachePresent", true);
-      if (Boolean.TRUE.equals(safe.get("geckoSuccess")))
+      if (Boolean.TRUE.equals(safe.get("geckoSuccess"))) {
         media.put("geckoMediaSuccessObserved", true);
-      events.addLast(safe);
-      while (events.size() > 50) events.removeFirst();
+        media.put("candidateMediaProof", "observed");
+      }
+      events.add(safe);
+      // Drop from just after the head, never the head itself, so both ends are preserved.
+      while (events.size() > HEAD_EVENTS + RECENT_EVENTS) events.remove(HEAD_EVENTS);
     }
 
     public synchronized Map<String, Object> report(
         Throwable error, DownloadError.Category category, String reason) {
       String id = "F-" + UUID.randomUUID();
-      Map<String, Object> last = events.peekLast();
+      Map<String, Object> last = events.isEmpty() ? null : events.get(events.size() - 1);
       Map<String, Object> evidence =
           Set.of(Stage.MUX, Stage.FINAL_INSPECTION, Stage.MEDIASTORE, Stage.STORAGE).contains(phase)
               ? (last == null ? Map.of() : last)
@@ -580,7 +650,7 @@ public final class FailureDiagnostics {
       Map<String, Object> failure = new LinkedHashMap<>();
       failure.put("stage", stage.name());
       failure.put("category", category.name());
-      failure.put("reasonCode", reason);
+      failure.put("reasonCode", specificReason(category, reason));
       failure.put("host", evidence.getOrDefault("host", ""));
       failure.put("redirects", evidence.getOrDefault("redirects", 0));
       failure.put("transport", evidence.getOrDefault("transport", "UNKNOWN"));

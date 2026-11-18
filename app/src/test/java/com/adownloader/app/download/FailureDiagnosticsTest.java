@@ -114,7 +114,9 @@ public class FailureDiagnosticsTest {
     List<?> events =
         (List<?>)
             s.report(null, DownloadError.Category.NETWORK, "DOWNLOAD_FAILURE").get("eventHistory");
-    assertEquals(50, events.size());
+    // Bounded, and preserving the first HEAD_EVENTS plus the last RECENT_EVENTS (the start is kept).
+    assertEquals(66, events.size());
+    assertEquals(1L, ((Map<?, ?>) events.get(0)).get("sequence"));
     long last = 0;
     for (Object o : events) {
       long n = ((Number) ((Map<?, ?>) o).get("sequence")).longValue();
@@ -244,5 +246,81 @@ public class FailureDiagnosticsTest {
     assertEquals(
         "AUDIO_PLAYLIST",
         ((Map<?, ?>) s.report(error, error.category, "PROBE_FAILURE").get("failure")).get("stage"));
+  }
+
+  @Test
+  public void genericDownloadFailureBecomesACategorySpecificReason() {
+    // A server's intentional access restriction reads differently from an engine-side limit.
+    assertEquals(
+        "ACCESS_BLOCKED",
+        FailureDiagnostics.specificReason(
+            DownloadError.Category.ACCESS_BLOCKED, "DOWNLOAD_FAILURE"));
+    assertEquals(
+        "AUTH_REQUIRED",
+        FailureDiagnostics.specificReason(DownloadError.Category.AUTH, "DOWNLOAD_FAILURE"));
+    assertEquals(
+        "DRM_PROTECTED",
+        FailureDiagnostics.specificReason(DownloadError.Category.DRM, "DOWNLOAD_FAILURE"));
+    assertEquals(
+        "URL_EXPIRED",
+        FailureDiagnostics.specificReason(DownloadError.Category.EXPIRED_URL, "DOWNLOAD_FAILURE"));
+    assertEquals(
+        "STREAM_UNSUPPORTED",
+        FailureDiagnostics.specificReason(
+            DownloadError.Category.HLS_DISCONTINUITY, "DOWNLOAD_FAILURE"));
+    // A non-generic reason is left untouched, and the specific reason survives sanitisation.
+    assertEquals(
+        "PROBE_FAILURE",
+        FailureDiagnostics.specificReason(DownloadError.Category.ACCESS_BLOCKED, "PROBE_FAILURE"));
+    var s = session();
+    s.phase(FailureDiagnostics.Stage.VIDEO_SEGMENT);
+    Map<?, ?> failure =
+        (Map<?, ?>)
+            s.report(null, DownloadError.Category.ACCESS_BLOCKED, "DOWNLOAD_FAILURE").get("failure");
+    assertEquals("ACCESS_BLOCKED", failure.get("reasonCode"));
+  }
+
+  @Test
+  public void candidateMediaProofDistinguishesStructuralAbsenceFromFailure() {
+    // dom-media never produces a captured media success, so geckoMediaSuccessObserved=false there is
+    // structural, not a playback failure — candidateMediaProof must say so.
+    var dom =
+        new FailureDiagnostics.Session(
+            1, "HLS", "https://cdn.test/a.m3u8", "https://page.test/", Map.of("detectionSource", "dom-media"));
+    Map<?, ?> media =
+        (Map<?, ?>) dom.report(null, DownloadError.Category.ACCESS_BLOCKED, "DOWNLOAD_FAILURE").get("media");
+    assertEquals(false, media.get("geckoMediaSuccessObserved"));
+    assertEquals("not-applicable", media.get("candidateMediaProof"));
+
+    var verified =
+        new FailureDiagnostics.Session(
+            2,
+            "HLS",
+            "https://cdn.test/a.m3u8",
+            "https://page.test/",
+            Map.of("detectionSource", "network-response", "requestContextVerified", "true"));
+    Map<?, ?> vm =
+        (Map<?, ?>)
+            verified.report(null, DownloadError.Category.ACCESS_BLOCKED, "DOWNLOAD_FAILURE").get("media");
+    assertEquals(true, vm.get("geckoMediaSuccessObserved"));
+    assertEquals("observed", vm.get("candidateMediaProof"));
+  }
+
+  @Test
+  public void eventHistoryKeepsTheStartNotJustTheMostRecentEvents() {
+    var s = session(); // START event is seq 1
+    for (int i = 0; i < 400; i++)
+      s.event(Map.of("action", "STEP", "stage", "VIDEO_SEGMENT", "n", i));
+    List<?> history =
+        (List<?>)
+            s.report(null, DownloadError.Category.ACCESS_BLOCKED, "DOWNLOAD_FAILURE")
+                .get("eventHistory");
+    // The very first events (the transport decision / first requests) survive a long retry run.
+    assertEquals("START", ((Map<?, ?>) history.get(0)).get("action"));
+    assertEquals(1L, ((Map<?, ?>) history.get(0)).get("sequence"));
+    // ...and so do the most recent ones, with the middle dropped and the window bounded.
+    assertTrue(history.size() <= 70);
+    long lastSeq = (Long) ((Map<?, ?>) history.get(history.size() - 1)).get("sequence");
+    assertTrue("last event is a recent one", lastSeq >= 390);
   }
 }

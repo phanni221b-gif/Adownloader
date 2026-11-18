@@ -168,7 +168,9 @@ public final class HttpSource implements AutoCloseable {
           action,
           transport.equals("gecko-response-cache")
               ? playbackRequestType
-              : transport.equals("gecko") ? "content-fetch" : "native-http");
+              : transport.equals("gecko")
+                      ? "browser-fetch"
+                      : transport.equals("content-script") ? "content-script-fetch" : "native-http");
     }
   }
 
@@ -220,6 +222,13 @@ public final class HttpSource implements AutoCloseable {
   // attempt first. preferDirect, in contrast, is a single per-transfer latch, so on its own it
   // would force every host onto the direct stack once any one request fell back to it.
   private final java.util.Set<String> browserPreferredHosts =
+      java.util.concurrent.ConcurrentHashMap.newKeySet();
+  // Hosts that answered with access-blocked on every transport (direct and browser). Once a host is
+  // confirmed blocked, its remaining resources fail fast instead of each repeating the full set of
+  // blocked attempts — a CDN that blocks the first segment this way blocks all 1000+ of them.
+  private final java.util.Set<String> blockedHosts =
+      java.util.concurrent.ConcurrentHashMap.newKeySet();
+  private final java.util.Set<String> blockedHostRecorded =
       java.util.concurrent.ConcurrentHashMap.newKeySet();
   private final String rootUrl;
 
@@ -291,6 +300,16 @@ public final class HttpSource implements AutoCloseable {
       String url, long offset, long length, String validator, boolean resume, Document previous)
       throws Exception {
     if (relay != null) return relay.open(url, offset, length);
+    // A segment host already confirmed blocked on every transport fails fast: no further request is
+    // sent, so a download does not hammer a hotlink/anti-bot CDN with all 1000+ remaining segments.
+    // Scoped to segments (documentRole empty); a manifest can still recover through the content-
+    // script bridge, so it is never fast-failed here.
+    if (documentRole.isEmpty() && blockedHosts.contains(hostOf(url)))
+      throw new DownloadError(DownloadError.Category.ACCESS_BLOCKED)
+          .diagnostic(
+              new HlsDiagnostic(
+                  url, 403, "", 0, "segment",
+                  HlsDiagnostic.Stage.VARIANT_HTTP, "", DownloadError.Category.ACCESS_BLOCKED));
     try {
       // A host already shown to need the browser stack is served through it directly, so later
       // segments on that anti-bot CDN do not each repeat a blocked direct attempt.
@@ -339,7 +358,7 @@ public final class HttpSource implements AutoCloseable {
           if (!access(retry)) throw retry;
           first = retry;
         }
-      if (documentRole.isEmpty() && resourceStages.containsKey(url))
+      if (documentRole.isEmpty() && resourceStages.containsKey(url)) {
         record(
             url,
             first instanceof DownloadError && ((DownloadError) first).diagnostic != null
@@ -351,6 +370,17 @@ public final class HttpSource implements AutoCloseable {
             "native",
             "SEGMENT_NATIVE_BLOCKED",
             lastSentNames.getOrDefault(url, java.util.List.of()));
+        // Every transport was blocked for this segment host: mark it so its remaining segments fail
+        // fast, and record the decision once (not once per skipped segment) so the retry storm is a
+        // single HOST_ACCESS_BLOCKED event instead of hundreds of repeats.
+        String blockedHost = hostOf(url);
+        if (!blockedHost.isEmpty()) {
+          blockedHosts.add(blockedHost);
+          if (blockedHostRecorded.add(blockedHost))
+            FailureDiagnostics.event(
+                diagnosticSession, Map.of("action", "HOST_ACCESS_BLOCKED", "stage", stage(url)));
+        }
+      }
       throw first;
     }
   }
@@ -395,10 +425,12 @@ public final class HttpSource implements AutoCloseable {
       boolean viaBrowser)
       throws Exception {
     control.check();
-    // The browser stack is served through GeckoHttpConnection; label its requests "gecko" so a
-    // browser-stack attempt (including the retry of a direct-blocked host) is never reported as a
-    // plain direct "native" request in diagnostics.
+    // The browser stack is served through GeckoHttpConnection (GeckoWebExecutor). Label both its
+    // transport and its action so a browser-stack attempt is never reported with a direct "native"
+    // event name — this is the GeckoWebExecutor fetch, distinct from the page content-script fetch
+    // used for manifest bootstrap.
     String transportLabel = viaBrowser ? "gecko" : "native";
+    String actionLabel = viaBrowser ? "BROWSER_INITIAL" : "NATIVE_INITIAL";
     String current = url;
     for (int hop = 0; hop < 8; hop++) {
       Map<String, String> headers = context.forUrl(current);
@@ -511,7 +543,7 @@ public final class HttpSource implements AutoCloseable {
           connection.getContentType(),
           errorBody,
           transportLabel,
-          "NATIVE_INITIAL",
+          actionLabel,
           sentNames);
       boolean cookieChanged = cookies.accept(URI.create(current), connection.getHeaderFields());
       if (cookieChanged)
@@ -571,7 +603,7 @@ public final class HttpSource implements AutoCloseable {
             connection.getContentType(),
             kind,
             transportLabel,
-            "NATIVE_INITIAL",
+            actionLabel,
             sentNames);
       }
       if (code < 200
@@ -916,7 +948,7 @@ public final class HttpSource implements AutoCloseable {
           || bootstrapped.size() >= 8
           || !bootstrapped.add(url)) throw first;
       try {
-        record(url, 0, 0, "", "UNKNOWN", "gecko", "GECKO_BOOTSTRAP", observed.headerNames());
+        record(url, 0, 0, "", "UNKNOWN", "content-script", "GECKO_BOOTSTRAP", observed.headerNames());
         var response =
             provider.manifest(url, topPage, topTab, topFrame, observed.headers(), control);
         if (response.status() < 200
@@ -933,7 +965,7 @@ public final class HttpSource implements AutoCloseable {
             d.redirects,
             d.mime,
             bodyKind(d.text),
-            "gecko",
+            "content-script",
             "GECKO_BOOTSTRAP",
             fresh == null ? observed.headerNames() : fresh.headerNames());
         if (bodyKind(d.text).startsWith("HTML")) HlsDiagnostic.body(d, documentRole);
@@ -952,8 +984,8 @@ public final class HttpSource implements AutoCloseable {
             0,
             "",
             "UNKNOWN",
-            "gecko",
-            "MANIFEST_NATIVE_BLOCKED",
+            "content-script",
+            "CONTENT_SCRIPT_BLOCKED",
             observed.headerNames());
         throw first;
       }
@@ -988,7 +1020,7 @@ public final class HttpSource implements AutoCloseable {
       return "DASH";
     if (p.toLowerCase(java.util.Locale.ROOT).matches("(?s)<(?:!doctype|html|head|body|form).*"))
       return p.toLowerCase(java.util.Locale.ROOT)
-              .matches("(?s).*(challenge|captcha|cloudflare|access.denied).*")
+              .matches("(?s).*(challenge|captcha|cloudflare|access.denied|forbidden|ddos|차단).*")
           ? "HTML_CHALLENGE"
           : "HTML";
     return "UNKNOWN";
