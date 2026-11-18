@@ -23,6 +23,7 @@ public class SegmentContentScriptFallbackTest {
   private final AtomicInteger bridgeCalls = new AtomicInteger();
   private MediaNetworkSession.Provider provider;
   private volatile boolean bridgeServes = true;
+  private volatile boolean observeSegments = true;
   private static final byte[] SEGMENT = "MEDIA-SEGMENT-BYTES".getBytes(StandardCharsets.UTF_8);
 
   private String page;
@@ -67,7 +68,7 @@ public class SegmentContentScriptFallbackTest {
     provider =
         new MediaNetworkSession.Provider() {
           public MediaNetworkSession.Observation latest(String url, String top) {
-            return url.contains("/cdn/") && top.equals(page)
+            return observeSegments && url.contains("/cdn/") && top.equals(page)
                 ? new MediaNetworkSession.Observation(
                     url,
                     page,
@@ -174,5 +175,54 @@ public class SegmentContentScriptFallbackTest {
       assertEquals(DownloadError.Category.ACCESS_BLOCKED, blocked.category);
       assertEquals("the bridge is never called for a ranged segment", 0, bridgeCalls.get());
     }
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  public void theBridgeSuccessIsRecordedAsContentScriptNotDowngradedToNative() throws Exception {
+    FailureDiagnostics.Session session =
+        new FailureDiagnostics.Session(0, "HLS", seg(1), page, Map.of());
+    try (FailureDiagnostics.Scope scope = FailureDiagnostics.activate(session);
+        HttpSource source = source()) {
+      assertArrayEquals(SEGMENT, source.bytes(seg(1), 0, 0, 1 << 20));
+    }
+    Map<String, Object> report =
+        session.report(
+            new DownloadError(DownloadError.Category.NETWORK),
+            DownloadError.Category.NETWORK,
+            "TEST");
+    List<Map<String, Object>> history = (List<Map<String, Object>>) report.get("eventHistory");
+    assertTrue(
+        "the bridge fetch is recorded as transport=content-script, not hidden as native",
+        history.stream()
+            .anyMatch(
+                e ->
+                    "content-script".equals(e.get("transport"))
+                        && "SEGMENT_CONTENT_SCRIPT".equals(e.get("action"))));
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  public void whenTheSegmentWasNeverObservedTheReportRecordsItAsUnobserved() throws Exception {
+    observeSegments = false;
+    FailureDiagnostics.Session session =
+        new FailureDiagnostics.Session(0, "HLS", seg(1), page, Map.of());
+    try (FailureDiagnostics.Scope scope = FailureDiagnostics.activate(session);
+        HttpSource source = source()) {
+      DownloadError blocked =
+          assertThrows(DownloadError.class, () -> source.bytes(seg(1), 0, 0, 1 << 20));
+      assertEquals(DownloadError.Category.ACCESS_BLOCKED, blocked.category);
+    }
+    assertEquals("the bridge is never fetched when nothing was observed", 0, bridgeCalls.get());
+    Map<String, Object> report =
+        session.report(
+            new DownloadError(DownloadError.Category.ACCESS_BLOCKED),
+            DownloadError.Category.ACCESS_BLOCKED,
+            "TEST");
+    List<Map<String, Object>> history = (List<Map<String, Object>>) report.get("eventHistory");
+    assertTrue(
+        "the report shows the player's own fetch of the segment host was never captured",
+        history.stream()
+            .anyMatch(e -> "SEGMENT_CONTENT_SCRIPT_UNOBSERVED".equals(e.get("action"))));
   }
 }

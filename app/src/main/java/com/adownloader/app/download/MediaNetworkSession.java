@@ -137,7 +137,9 @@ public final class MediaNetworkSession {
         action,
         transport.equals("native")
             ? "native-http"
-            : transport.equals("gecko") ? "content-fetch" : "playback-response");
+            : transport.equals("gecko")
+                ? "browser-fetch"
+                : transport.equals("content-script") ? "content-script-fetch" : "playback-response");
   }
 
   public static void trace(
@@ -176,7 +178,9 @@ public final class MediaNetworkSession {
     }
     safe.put(
         "transport",
-        Set.of("gecko", "gecko-response-cache").contains(transport) ? transport : "native");
+        Set.of("gecko", "gecko-response-cache", "content-script").contains(transport)
+            ? transport
+            : "native");
     safe.put(
         "requestType",
         Set.of(
@@ -186,6 +190,8 @@ public final class MediaNetworkSession {
                     "other",
                     "native-http",
                     "content-fetch",
+                    "browser-fetch",
+                    "content-script-fetch",
                     "playback-response")
                 .contains(requestType)
             ? requestType
@@ -213,11 +219,17 @@ public final class MediaNetworkSession {
         Set.of(
                     "NATIVE_INITIAL",
                     "NATIVE_CONTEXT_RETRY",
+                    "BROWSER_INITIAL",
+                    "BROWSER_TRANSPORT_FALLBACK",
                     "GECKO_BOOTSTRAP",
                     "GECKO_RESPONSE_CACHE",
                     "GECKO_CACHE_MISS",
                     "MANIFEST_NATIVE_BLOCKED",
-                    "SEGMENT_NATIVE_BLOCKED")
+                    "SEGMENT_NATIVE_BLOCKED",
+                    "HOST_ACCESS_BLOCKED",
+                    "CONTENT_SCRIPT_BLOCKED",
+                    "SEGMENT_CONTENT_SCRIPT",
+                    "SEGMENT_CONTENT_SCRIPT_BLOCKED")
                 .contains(action)
             ? action
             : "NATIVE_INITIAL");
