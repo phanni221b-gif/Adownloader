@@ -22,6 +22,7 @@ public class SegmentHostFallbackTest {
   private ServerSocket server;
   private Thread thread;
   private final AtomicInteger directHits = new AtomicInteger(), browserHits = new AtomicInteger();
+  private volatile boolean alwaysBlock;
   private static final String BODY = "#EXTM3U\n#EXT-X-ENDLIST\n";
 
   @Before
@@ -43,13 +44,13 @@ public class SegmentHostFallbackTest {
                   // the browser opener's header) is served; a plain direct request gets a 403.
                   byte[] out;
                   String status, type;
-                  if (cleared) {
-                    browserHits.incrementAndGet();
+                  if (cleared) browserHits.incrementAndGet();
+                  else directHits.incrementAndGet();
+                  if (cleared && !alwaysBlock) {
                     out = BODY.getBytes(StandardCharsets.UTF_8);
                     status = "200 OK";
                     type = "application/vnd.apple.mpegurl";
                   } else {
-                    directHits.incrementAndGet();
                     out = "<html>captcha challenge</html>".getBytes(StandardCharsets.UTF_8);
                     status = "403 Forbidden";
                     type = "text/html";
@@ -114,6 +115,37 @@ public class SegmentHostFallbackTest {
       assertEquals("no further blocked direct attempts", 1, directHits.get());
       assertEquals(2, browserHits.get());
     }
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  public void aBrowserStackAttemptIsRecordedAsGeckoNotHiddenAsNative() throws Exception {
+    // Model the real on-device case where the anti-bot blocks even the browser stack (both the
+    // direct and the browser retry are 403). The browser attempt must be visible in diagnostics as
+    // transport=gecko, so a report can show the browser stack was tried and also blocked rather
+    // than leaving every attempt indistinguishable as "native".
+    alwaysBlock = true;
+    FailureDiagnostics.Session session =
+        new FailureDiagnostics.Session(0, "HLS", url(), "http://127.0.0.1/", Map.of());
+    try (FailureDiagnostics.Scope scope = FailureDiagnostics.activate(session);
+        HttpSource source =
+            new HttpSource(url(), Collections.emptyMap(), new TransferControl())) {
+      setPreferDirect(source);
+      assertThrows(DownloadError.class, () -> source.document(url()));
+    }
+    Map<String, Object> report =
+        session.report(
+            new DownloadError(DownloadError.Category.ACCESS_BLOCKED),
+            DownloadError.Category.ACCESS_BLOCKED,
+            "TEST");
+    List<Map<String, Object>> events = (List<Map<String, Object>>) report.get("eventHistory");
+    assertTrue(
+        "a direct attempt is recorded",
+        events.stream().anyMatch(e -> "native".equals(e.get("transport"))));
+    assertTrue(
+        "the browser-stack attempt is recorded as gecko, not hidden as native",
+        events.stream().anyMatch(e -> "gecko".equals(e.get("transport"))));
+    assertTrue("the browser stack was actually tried", browserHits.get() >= 1);
   }
 
   @Test
