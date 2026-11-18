@@ -395,6 +395,10 @@ public final class HttpSource implements AutoCloseable {
       boolean viaBrowser)
       throws Exception {
     control.check();
+    // The browser stack is served through GeckoHttpConnection; label its requests "gecko" so a
+    // browser-stack attempt (including the retry of a direct-blocked host) is never reported as a
+    // plain direct "native" request in diagnostics.
+    String transportLabel = viaBrowser ? "gecko" : "native";
     String current = url;
     for (int hop = 0; hop < 8; hop++) {
       Map<String, String> headers = context.forUrl(current);
@@ -506,7 +510,7 @@ public final class HttpSource implements AutoCloseable {
           hop,
           connection.getContentType(),
           errorBody,
-          "native",
+          transportLabel,
           "NATIVE_INITIAL",
           sentNames);
       boolean cookieChanged = cookies.accept(URI.create(current), connection.getHeaderFields());
@@ -566,7 +570,7 @@ public final class HttpSource implements AutoCloseable {
             hop,
             connection.getContentType(),
             kind,
-            "native",
+            transportLabel,
             "NATIVE_INITIAL",
             sentNames);
       }
