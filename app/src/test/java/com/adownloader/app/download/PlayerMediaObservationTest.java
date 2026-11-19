@@ -64,6 +64,8 @@ public class PlayerMediaObservationTest {
         hosts.contains("yapsyas.com|err"));
     assertTrue(
         "a host the player actually streamed is marked ok", hosts.contains("realcdn.example|ok"));
+    assertEquals(
+        "the raw observed count is present and matches", 2L, report.get("observedPlayerMediaRequestCount"));
   }
 
   @Test
@@ -77,5 +79,9 @@ public class PlayerMediaObservationTest {
             DownloadError.Category.ACCESS_BLOCKED,
             "TEST");
     assertFalse(report.containsKey("observedPlayerMediaHosts"));
+    assertEquals(
+        "a genuine zero is recorded as count 0, not an absent field",
+        0L,
+        report.get("observedPlayerMediaRequestCount"));
   }
 }

@@ -311,7 +311,8 @@ public final class FailureDiagnostics {
           "selectedWidth",
           "cookieEntryCount",
           "occurrenceCount",
-          "eventCount");
+          "eventCount",
+          "observedPlayerMediaRequestCount");
   private static final Set<String> FILES =
       Set.of(
           "HttpSource.java",
@@ -703,6 +704,11 @@ public final class FailureDiagnostics {
       // failed download separate "the player also fails on this host" (server block) from "the
       // player succeeds on a different host" (the download target is not the playing stream).
       Map<String, Integer> playerMedia = MediaNetworkSession.playerMediaSnapshot();
+      // Always present so an absent host list is unambiguous: 0 means the extension observed no
+      // player media request at all (not a server block, not a candidate mismatch), while a positive
+      // count with no host tokens below would mean the hosts were observed but dropped by the host
+      // allowlist. Distinguishes a genuine zero from a serialization/filtering artifact.
+      report.put("observedPlayerMediaRequestCount", playerMedia.size());
       if (!playerMedia.isEmpty()) {
         List<String> tokens = new ArrayList<>();
         for (var e : playerMedia.entrySet()) {
