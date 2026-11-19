@@ -3,9 +3,11 @@ package com.adownloader.app.browser;
 import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
+import com.adownloader.app.BuildConfig;
 import java.io.IOException;
 import java.util.concurrent.*;
 import org.mozilla.geckoview.GeckoRuntime;
+import org.mozilla.geckoview.GeckoRuntimeSettings;
 
 /**
  * The single process-wide GeckoRuntime. The browser UI and background downloads share it, so a
@@ -18,7 +20,15 @@ public final class GeckoRuntimes {
 
   /** Must be called on the main thread. */
   public static synchronized GeckoRuntime get(Context context) {
-    if (runtime == null) runtime = GeckoRuntime.create(context.getApplicationContext());
+    if (runtime == null) {
+      GeckoRuntimeSettings.Builder settings = new GeckoRuntimeSettings.Builder();
+      // Debug builds only: expose Gecko's remote debugging protocol so the real playback network can
+      // be inspected with Firefox devtools (about:debugging) independently of the WebExtension — to
+      // tell an unobservable player pipeline from a missed observation. A release build sets
+      // BuildConfig.DEBUG=false, so this stays off in anything shipped.
+      if (BuildConfig.DEBUG) settings.remoteDebuggingEnabled(true);
+      runtime = GeckoRuntime.create(context.getApplicationContext(), settings.build());
+    }
     return runtime;
   }
 
