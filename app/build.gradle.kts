@@ -39,6 +39,17 @@ android {
                 "proguard-rules.pro"
             )
         }
+        // Developer-only build for independent network verification with Firefox about:debugging.
+        // Debuggable, so BuildConfig.DEBUG is true and GeckoRuntimes enables Gecko remote debugging.
+        // Its own applicationId lets it install beside the signed release app without replacing it
+        // or touching its data. Never published as a release; release builds keep debugging off.
+        create("diagnostic") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".diag"
+            versionNameSuffix = "-diag"
+            isDebuggable = true
+            matchingFallbacks += listOf("debug")
+        }
     }
 
     compileOptions {

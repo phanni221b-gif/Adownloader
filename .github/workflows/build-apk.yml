@@ -44,6 +44,8 @@ jobs:
           git fetch --no-tags --depth=1 origin a13c305e91592daa8f617c09e97d29ce9640edcf
           node ci/benchmark-response-capture.cjs
           gradle :app:testDebugUnitTest :app:lintRelease :app:assembleRelease --stacktrace
+          # Gecko remote debugging is gated on BuildConfig.DEBUG; a shipped build must keep it off.
+          grep -q 'boolean DEBUG = false;' app/build/generated/source/buildConfig/release/com/adownloader/app/BuildConfig.java
       - name: Print rendered UI for review (pull requests)
         if: always() && github.event_name == 'pull_request'
         run: |
