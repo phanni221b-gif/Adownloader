@@ -1,0 +1,52 @@
+name: Regression comparison APKs
+# Side-by-side A/B builds for a suspected regression. Each APK is the same source with a different
+# GeckoView version, debug-signed, with its own applicationId (com.adownloader.app.<tag>) and
+# launcher label ("AD <tag>"), so it installs beside the release app without touching its data.
+# Runs only on regression/** branches; never attached to a release.
+on:
+  push:
+    branches: ['regression/**']
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - tag: gk1104
+            gecko: 160.0.20261104181552
+          - tag: gk1116
+            gecko: 160.0.20261116130455
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: '13114758'
+          packages: 'platform-tools build-tools;36.0.0 platforms;android-37.2'
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.0'
+      - name: Build ${{ matrix.tag }} (GeckoView ${{ matrix.gecko }})
+        run: gradle -PcompareTag=${{ matrix.tag }} -PgeckoVersion=${{ matrix.gecko }} :app:assembleDebug --stacktrace
+      - name: Verify package, label and embedded GeckoView version
+        run: |
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          AAPT=$(ls "$ANDROID_HOME"/build-tools/*/aapt2 | tail -1)
+          "$AAPT" dump badging "$APK" | grep -E "^package|application-label:"
+          "$AAPT" dump badging "$APK" | grep -q "name='com.adownloader.app.${{ matrix.tag }}'"
+          "$AAPT" dump badging "$APK" | grep -q "application-label:'AD ${{ matrix.tag }}'"
+          grep -q '"${{ matrix.gecko }}"' app/build/generated/source/buildConfig/debug/com/adownloader/app/BuildConfig.java
+          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libxul.so'
+          mv "$APK" "Adownloader-compare-${{ matrix.tag }}-arm64.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Adownloader-compare-${{ matrix.tag }}-arm64
+          retention-days: 14
+          path: Adownloader-compare-${{ matrix.tag }}-arm64.apk

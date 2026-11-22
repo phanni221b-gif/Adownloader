@@ -39,6 +39,26 @@ android {
                 "proguard-rules.pro"
             )
         }
+        // Opt-in side-by-side comparison build (regression A/B), e.g.
+        //   -PcompareTag=gk1104 -PgeckoVersion=160.0.20261104181552 :app:assembleDebug
+        // gives a debug-signed build with its own applicationId and launcher label, so it installs
+        // beside the release app without replacing it or touching its data. Without compareTag the
+        // debug build (and every CI/test build) is unchanged.
+        debug {
+            providers.gradleProperty("compareTag").orNull?.let { tag ->
+                require(tag.matches(Regex("[a-z][a-z0-9]{1,15}"))) { "compareTag must be [a-z][a-z0-9]{1,15}" }
+                applicationIdSuffix = ".$tag"
+                versionNameSuffix = "-$tag"
+            }
+        }
+    }
+    providers.gradleProperty("compareTag").orNull?.let { tag ->
+        val labelDir = layout.buildDirectory.dir("generated/compareLabel/res").get().asFile
+        File(labelDir, "values").mkdirs()
+        File(labelDir, "values/strings.xml").writeText(
+            "<resources><string name=\"app_name\">AD $tag</string></resources>\n")
+        // The debug source set overrides main resources, so only this build's launcher label changes.
+        sourceSets.getByName("debug").res.srcDir(labelDir)
     }
 
     compileOptions {
