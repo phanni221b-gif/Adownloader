@@ -29,9 +29,22 @@ public final class AccessPresentation {
     return stage
         + " · HTTP "
         + d.status
-        + (d.redirects > 0 ? " · 서버 이동 후" : "")
+        + (d.redirects > 0 ? " · 서버 이동 후" + (d.host.isEmpty() ? "" : "(" + d.host + ")") : "")
         + " · "
-        + label(error.category.name());
+        + cause(d, error.category.name());
+  }
+
+  /**
+   * An HTTP 2xx whose body is HTML is not a playlist: say what was received rather than a generic
+   * "site request blocked", which wrongly implies the server refused the request.
+   */
+  static String cause(HlsDiagnostic d, String category) {
+    return switch (d.body) {
+      case "challenge" -> "재생목록 대신 접근 보호 페이지(HTML) 수신";
+      case "login" -> "재생목록 대신 로그인 페이지(HTML) 수신";
+      case "page" -> "재생목록 대신 웹페이지(HTML) 수신";
+      default -> label(category);
+    };
   }
 
   public static String preview(String category) {
