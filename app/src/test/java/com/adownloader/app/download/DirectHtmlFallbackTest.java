@@ -112,6 +112,35 @@ public class DirectHtmlFallbackTest {
   }
 
   @Test
+  @SuppressWarnings("unchecked")
+  public void theReportNamesTheBrowserStackAndInventsNoDirectStackBlock() throws Exception {
+    // On-device report F-6a32de2c (v0.8.9): the failure block said transport "native", and the
+    // history ended with a "native 403" on the first-party host that never happened.
+    FailureDiagnostics.Session session =
+        new FailureDiagnostics.Session(185, "HLS", candidate(), "http://127.0.0.1/", Map.of());
+    try (FailureDiagnostics.Scope scope = FailureDiagnostics.activate(session);
+        HttpSource source = new HttpSource(candidate(), Map.of(), new TransferControl())) {
+      DownloadError e =
+          assertThrows(DownloadError.class, () -> source.document(candidate(), null, "root"));
+      Map<String, Object> report = session.report(e, e.category, "ACCESS_BLOCKED");
+      Map<String, Object> failure = (Map<String, Object>) report.get("failure");
+      assertEquals("the stack that was refused", "gecko", failure.get("transport"));
+      assertEquals(403L, ((Number) failure.get("httpStatus")).longValue());
+      assertEquals(1L, ((Number) failure.get("redirects")).longValue());
+      List<Map<String, Object>> history = (List<Map<String, Object>>) report.get("eventHistory");
+      assertTrue(history.stream().anyMatch(ev -> "DIRECT_HTML_DISCARDED".equals(ev.get("action"))));
+      assertFalse(
+          "no direct-stack 403 is invented for a request the direct stack answered with 200",
+          history.stream()
+              .anyMatch(
+                  ev ->
+                      "native".equals(ev.get("transport"))
+                          && ev.get("status") instanceof Number n
+                          && n.intValue() == 403));
+    }
+  }
+
+  @Test
   public void withoutABrowserStackTheHtmlPageIsStillClassifiedAsBefore() throws Exception {
     HttpConnections.installBrowser(null);
     try (HttpSource source = new HttpSource(candidate(), Map.of(), new TransferControl())) {
