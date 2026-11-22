@@ -461,15 +461,23 @@ public final class HttpSource implements AutoCloseable {
   private final Object transportLock = new Object();
   private volatile boolean transportDecided;
 
+  // The browser stack's access refusal from the most recent browser-then-direct attempt on this
+  // thread. The direct stack lacks the live browsing session, so when it then "succeeds" with an
+  // HTML page where a manifest was expected, that page is the server's no-session response and the
+  // browser stack's refusal is the real block — see rejectHtmlManifest.
+  private final ThreadLocal<Exception> browserStackRefusal = new ThreadLocal<>();
+
   private HttpURLConnection browserThenDirect(
       String url, long offset, long length, String validator, boolean resume, Document previous)
       throws Exception {
+    browserStackRefusal.remove();
     try {
       return nativeRequest(url, offset, length, validator, resume, previous, true);
     } catch (Exception browserFailure) {
       // Only access and transport failures may differ between the stacks; anything else
       // (404, range mismatch, storage) is a property of the resource itself.
       if (!access(browserFailure) && !transport(browserFailure)) throw browserFailure;
+      if (access(browserFailure)) browserStackRefusal.set(browserFailure);
       FailureDiagnostics.event(
           diagnosticSession, Map.of("action", "BROWSER_TRANSPORT_FALLBACK", "stage", stage(url)));
     }
@@ -566,6 +574,19 @@ public final class HttpSource implements AutoCloseable {
       } catch (Exception error) {
         release(connection);
         control.check();
+        // No HTTP response at all. Record which stack failed, on which host and how (address lookup,
+        // refused, reset, timeout, TLS), so the report does not fall back to an unrelated earlier
+        // event and a network-level block can be told apart from a slow or offline network.
+        FailureDiagnostics.event(
+            diagnosticSession,
+            Map.of(
+                "action", actionLabel,
+                "stage", stage(current),
+                "transport", transportLabel,
+                "host", hostOf(current),
+                "status", 0,
+                "redirects", hop,
+                "netError", NetworkFailure.kind(error)));
         throw new DownloadError(DownloadError.Category.NETWORK)
             .diagnostic(
                 new HlsDiagnostic(
@@ -1075,6 +1096,7 @@ public final class HttpSource implements AutoCloseable {
     }
     if (capturedOnly) throw new DownloadError(DownloadError.Category.ACCESS_BLOCKED);
     try {
+      browserStackRefusal.remove();
       Document d = nativeDocument(url, previous);
       record(
           url,
@@ -1089,7 +1111,7 @@ public final class HttpSource implements AutoCloseable {
           .stripLeading()
           .toLowerCase(java.util.Locale.ROOT)
           .matches("(?s)<(?:!doctype|html|head|body|form).*"))
-        HlsDiagnostic.body(d, documentRole.isEmpty() ? "root" : documentRole);
+        rejectHtmlManifest(d, documentRole.isEmpty() ? "root" : documentRole);
 
       if (d.text.contains("#EXT-X-STREAM-INF:")) {
         var proof = MediaNetworkSession.latest(url, topPage, topTab, topFrame);
@@ -1111,8 +1133,9 @@ public final class HttpSource implements AutoCloseable {
       if (!access(first)) throw first;
       if (refreshContext(url))
         try {
+          browserStackRefusal.remove();
           Document d = nativeDocument(url, null);
-          if (bodyKind(d.text).startsWith("HTML")) HlsDiagnostic.body(d, documentRole);
+          if (bodyKind(d.text).startsWith("HTML")) rejectHtmlManifest(d, documentRole);
           return d;
         } catch (Exception retry) {
           if (!access(retry)) throw retry;
@@ -1178,6 +1201,24 @@ public final class HttpSource implements AutoCloseable {
         throw first;
       }
     }
+  }
+
+  // An HTML page came back where a manifest was expected. If the browser stack — which carries the
+  // live browsing session — was refused on this same request before the direct stack produced that
+  // page, the page is the server's response to a session-less request, not the media and not the
+  // real block. Report the browser stack's refusal instead (its host, status and redirect hop are
+  // the actual block), and stop pinning the transfer to the direct stack, whose HTTP 200 was not
+  // the media. Otherwise classify the HTML page itself as before.
+  private void rejectHtmlManifest(Document d, String role) throws Exception {
+    Exception refusal = browserStackRefusal.get();
+    browserStackRefusal.remove();
+    if (refusal != null) {
+      preferDirect = false;
+      FailureDiagnostics.event(
+          diagnosticSession, Map.of("action", "DIRECT_HTML_DISCARDED", "stage", stage(d.url)));
+      throw refusal;
+    }
+    HlsDiagnostic.body(d, role);
   }
 
   private Document adoptManifest(MediaNetworkSession.Bootstrap response, String requested)

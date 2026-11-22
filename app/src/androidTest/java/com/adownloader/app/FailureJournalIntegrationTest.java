@@ -387,7 +387,16 @@ public class FailureJournalIntegrationTest {
     }
     if (!file.isFile()) return;
     byte[] previous = new byte[0], buffer = new byte[65536];
-    try (InputStream in = new FileInputStream(file)) {
+    InputStream opened;
+    try {
+      opened = new FileInputStream(file);
+    } catch (java.io.FileNotFoundException vanished) {
+      // Gecko deletes its own transient files (IndexedDB journals) concurrently; a file that is
+      // gone by the time it is opened holds nothing to scan.
+      if (!file.exists()) return;
+      throw vanished;
+    }
+    try (InputStream in = opened) {
       int n;
       while ((n = in.read(buffer)) != -1) {
         byte[] block = new byte[previous.length + n];

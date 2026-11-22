@@ -152,6 +152,7 @@ public final class FailureDiagnostics {
           "SEGMENT_NATIVE_BLOCKED",
           "BROWSER_INITIAL",
           "BROWSER_TRANSPORT_FALLBACK",
+          "DIRECT_HTML_DISCARDED",
           "HOST_ACCESS_BLOCKED",
           "CONTENT_SCRIPT_BLOCKED",
           "SEGMENT_CONTENT_SCRIPT",
@@ -354,6 +355,7 @@ public final class FailureDiagnostics {
     return switch (key) {
       case "type" -> TYPES.contains(v) ? v : "UNKNOWN";
       case "detectionSource" -> SOURCES.contains(v) ? v : "UNKNOWN";
+      case "netError" -> NetworkFailure.KINDS.contains(v) ? v : "other";
       case "candidateMediaProof" ->
           Set.of("observed", "not-applicable", "none").contains(v) ? v : "none";
       case "stage" -> {
@@ -673,6 +675,8 @@ public final class FailureDiagnostics {
       failure.put("redirects", evidence.getOrDefault("redirects", 0));
       failure.put("transport", evidence.getOrDefault("transport", "UNKNOWN"));
       failure.put("httpStatus", evidence.getOrDefault("status", 0));
+      // How a connection-level failure happened (dns, refused, reset, timeout, tls…), when known.
+      if (evidence.get("netError") instanceof String kind) failure.put("netError", kind);
       if (error instanceof DownloadError d && d.diagnostic != null) {
         failure.put("httpStatus", d.diagnostic.status);
         failure.put("redirects", d.diagnostic.redirects);

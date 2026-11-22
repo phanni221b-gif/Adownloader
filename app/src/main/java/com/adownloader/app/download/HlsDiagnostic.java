@@ -22,6 +22,10 @@ public final class HlsDiagnostic {
   }
 
   public final String host, mime, playlist, tag, category;
+  // What came back instead of a playlist when the body is the problem: "page" (an ordinary HTML
+  // page), "challenge" (an access-protection/challenge page), "login" (a sign-in page); "" when the
+  // body is not the issue. Lets the UI say what was actually received instead of a generic block.
+  public final String body;
   public final Stage stage;
   public final int status, redirects;
 
@@ -34,6 +38,20 @@ public final class HlsDiagnostic {
       Stage stage,
       String tag,
       DownloadError.Category category) {
+    this(url, status, mime, redirects, playlist, stage, tag, category, "");
+  }
+
+  public HlsDiagnostic(
+      String url,
+      int status,
+      String mime,
+      int redirects,
+      String playlist,
+      Stage stage,
+      String tag,
+      DownloadError.Category category,
+      String body) {
+    this.body = Set.of("page", "challenge", "login").contains(body) ? body : "";
     String h;
     try {
       h = URI.create(url).getHost();
@@ -72,13 +90,16 @@ public final class HlsDiagnostic {
     if (text.trim().startsWith("#EXTM3U")) return text;
     String prefix = text.substring(0, Math.min(8192, text.length())).toLowerCase(Locale.ROOT);
     DownloadError.Category category = DownloadError.Category.MANIFEST_INVALID;
-    if (prefix.matches("(?s).*<(?:!doctype|html|head|body|form).*"))
-      category =
+    String received = "";
+    if (prefix.matches("(?s).*<(?:!doctype|html|head|body|form).*")) {
+      received =
           prefix.matches("(?s).*(?:challenge|captcha|access.denied|cloudflare|forbidden).*")
-              ? DownloadError.Category.ACCESS_BLOCKED
-              : prefix.matches("(?s).*(?:password|login|sign.in|로그인).*")
-                  ? DownloadError.Category.AUTH
-                  : DownloadError.Category.ACCESS_BLOCKED;
+              ? "challenge"
+              : prefix.matches("(?s).*(?:password|login|sign.in|로그인).*") ? "login" : "page";
+      // The category drives recovery (an access failure still tries the page-context bootstrap),
+      // so it is unchanged; "received" only makes the reported cause precise.
+      category = received.equals("login") ? DownloadError.Category.AUTH : DownloadError.Category.ACCESS_BLOCKED;
+    }
     throw new DownloadError(category)
         .diagnostic(
             new HlsDiagnostic(
@@ -89,7 +110,8 @@ public final class HlsDiagnostic {
                 role,
                 role.equals("root") ? Stage.ROOT_BODY : Stage.VARIANT_BODY,
                 "",
-                category));
+                category,
+                received));
   }
 
   public static DownloadError parse(
