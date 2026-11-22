@@ -574,6 +574,19 @@ public final class HttpSource implements AutoCloseable {
       } catch (Exception error) {
         release(connection);
         control.check();
+        // No HTTP response at all. Record which stack failed, on which host and how (address lookup,
+        // refused, reset, timeout, TLS), so the report does not fall back to an unrelated earlier
+        // event and a network-level block can be told apart from a slow or offline network.
+        FailureDiagnostics.event(
+            diagnosticSession,
+            Map.of(
+                "action", actionLabel,
+                "stage", stage(current),
+                "transport", transportLabel,
+                "host", hostOf(current),
+                "status", 0,
+                "redirects", hop,
+                "netError", NetworkFailure.kind(error)));
         throw new DownloadError(DownloadError.Category.NETWORK)
             .diagnostic(
                 new HlsDiagnostic(

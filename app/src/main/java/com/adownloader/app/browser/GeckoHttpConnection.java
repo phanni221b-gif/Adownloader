@@ -84,7 +84,11 @@ public final class GeckoHttpConnection extends HttpURLConnection {
         }
       }
     } catch (WebRequestError failure) {
-      throw new SocketException("Gecko request failed: " + failure.category + "/" + failure.code);
+      // Keep the failure kind (DNS, refused, reset, timeout, TLS…) so a report can tell them apart;
+      // still a SocketException, so callers' retry/fallback handling is unchanged.
+      throw new com.adownloader.app.download.NetworkFailure.Typed(
+          "Gecko request failed: " + failure.category + "/" + failure.code,
+          com.adownloader.app.download.NetworkFailure.geckoKind(failure.code));
     } catch (IOException io) {
       throw io;
     } catch (Throwable unexpected) {
