@@ -18,8 +18,8 @@ android {
         applicationId = "com.adownloader.app"
         minSdk = 30
         targetSdk = 36
-        versionCode = 39
-        versionName = "0.8.9"
+        versionCode = 40
+        versionName = "0.8.10"
         buildConfigField("String", "GECKO_VERSION", "\"$geckoVersion\"")
         buildConfigField("String", "COMMIT_SHA", "\"$sourceCommit\"")
 

@@ -466,6 +466,9 @@ public final class HttpSource implements AutoCloseable {
   // HTML page where a manifest was expected, that page is the server's no-session response and the
   // browser stack's refusal is the real block — see rejectHtmlManifest.
   private final ThreadLocal<Exception> browserStackRefusal = new ThreadLocal<>();
+  // The browser-stack refusal that rejectHtmlManifest rethrew, so the caller does not relabel it as
+  // a direct-stack block: that refusal is already recorded with its real transport, host and hop.
+  private final ThreadLocal<Exception> rethrownBrowserRefusal = new ThreadLocal<>();
 
   private HttpURLConnection browserThenDirect(
       String url, long offset, long length, String validator, boolean resume, Document previous)
@@ -1141,9 +1144,12 @@ public final class HttpSource implements AutoCloseable {
           if (!access(retry)) throw retry;
           first = retry;
         }
+      boolean browserRefusal = first == rethrownBrowserRefusal.get();
+      rethrownBrowserRefusal.remove();
       var observed = MediaNetworkSession.latest(url, topPage, topTab, topFrame);
       var provider = MediaNetworkSession.provider();
-      record(
+      if (!browserRefusal)
+        record(
           url,
           first instanceof DownloadError && ((DownloadError) first).diagnostic != null
               ? ((DownloadError) first).diagnostic.status
@@ -1216,6 +1222,7 @@ public final class HttpSource implements AutoCloseable {
       preferDirect = false;
       FailureDiagnostics.event(
           diagnosticSession, Map.of("action", "DIRECT_HTML_DISCARDED", "stage", stage(d.url)));
+      rethrownBrowserRefusal.set(refusal);
       throw refusal;
     }
     HlsDiagnostic.body(d, role);
