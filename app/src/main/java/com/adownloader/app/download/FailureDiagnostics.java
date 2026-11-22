@@ -152,6 +152,7 @@ public final class FailureDiagnostics {
           "SEGMENT_NATIVE_BLOCKED",
           "BROWSER_INITIAL",
           "BROWSER_TRANSPORT_FALLBACK",
+          "DIRECT_HTML_DISCARDED",
           "HOST_ACCESS_BLOCKED",
           "CONTENT_SCRIPT_BLOCKED",
           "SEGMENT_CONTENT_SCRIPT",
