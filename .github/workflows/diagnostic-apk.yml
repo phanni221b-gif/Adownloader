@@ -1,0 +1,38 @@
+name: Diagnostic APK (remote debugging)
+# On-demand developer build for independent playback-network verification with Firefox
+# about:debugging. Installs beside the release app (applicationId com.adownloader.app.diag).
+# Never attached to a GitHub Release; release builds keep Gecko remote debugging off.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  diagnostic:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: '13114758'
+          packages: 'platform-tools build-tools;36.0.0 platforms;android-37.2'
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.0'
+      - name: Build ARM64 diagnostic APK
+        run: gradle :app:assembleDiagnostic --stacktrace
+      - name: Confirm remote debugging is compiled in and release stays off
+        run: |
+          APK=app/build/outputs/apk/diagnostic/app-diagnostic.apk
+          test -f "$APK"
+          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libxul.so'
+          grep -qE 'DEBUG = .*true' app/build/generated/source/buildConfig/diagnostic/com/adownloader/app/BuildConfig.java
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Adownloader-diagnostic-arm64
+          retention-days: 7
+          path: app/build/outputs/apk/diagnostic/app-diagnostic.apk
