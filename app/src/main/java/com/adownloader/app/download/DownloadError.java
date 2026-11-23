@@ -37,6 +37,14 @@ public final class DownloadError extends IOException {
 
   public HlsDiagnostic diagnostic;
 
+  /** Server-requested wait (Retry-After, capped) before this transient failure is retried; 0 = none. */
+  public long retryAfterMs;
+
+  public DownloadError retryAfter(long millis) {
+    retryAfterMs = Math.max(0, Math.min(RetryPolicy.MAX_SERVER_WAIT_MS, millis));
+    return this;
+  }
+
   public DownloadError diagnostic(HlsDiagnostic detail) {
     diagnostic = detail;
     return this;

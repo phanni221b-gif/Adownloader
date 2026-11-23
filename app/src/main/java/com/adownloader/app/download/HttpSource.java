@@ -258,6 +258,50 @@ public final class HttpSource implements AutoCloseable {
       return "";
     }
   }
+  private final java.util.Set<String> liveCookieRecorded =
+      java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+  /** The live browser cookie header for exactly {@code url} in this page's context, or "". */
+  private String liveCookies(String url) {
+    if (topPage == null || !BrowserCookies.available()) return "";
+    String value = BrowserCookies.forUrl(url, topPage);
+    String host = hostOf(url);
+    if (!host.isEmpty() && liveCookieRecorded.size() < 32 && liveCookieRecorded.add(host))
+      FailureDiagnostics.event(
+          diagnosticSession,
+          Map.of(
+              "action", "BROWSER_COOKIE_LOOKUP",
+              "stage", stage(url),
+              "host", host,
+              "browserCookieApplied", !value.isEmpty()));
+    return value;
+  }
+
+  /**
+   * The Referer a browser sends by default (strict-origin-when-cross-origin) for a subresource of
+   * {@code page}: the full page URL to the same origin, only the page origin across origins, and
+   * nothing on an HTTPS-to-HTTP downgrade. Used only when no observed Referer exists.
+   */
+  static String defaultReferer(String page, String target) {
+    if (page == null || page.isEmpty()) return "";
+    try {
+      URI p = URI.create(page), t = URI.create(target);
+      if (p.getHost() == null
+          || p.getUserInfo() != null
+          || !java.util.Set.of("http", "https").contains(p.getScheme())) return "";
+      if ("https".equalsIgnoreCase(p.getScheme()) && "http".equalsIgnoreCase(t.getScheme()))
+        return "";
+      String origin = MediaHeaders.origin(page);
+      if (!origin.isEmpty() && origin.equals(MediaHeaders.origin(target))) {
+        String full = page.split("#", 2)[0];
+        return full;
+      }
+      return p.resolve("/").toString().split("[?#]", 2)[0];
+    } catch (RuntimeException invalid) {
+      return "";
+    }
+  }
+
   private volatile String responseDisposition = "";
   private boolean acceptedResource;
   private int lastRedirects;
@@ -528,7 +572,13 @@ public final class HttpSource implements AutoCloseable {
           headers.put(e.getKey(), e.getValue());
         }
       // The browser transport sends Gecko's own live cookies; a replayed snapshot would be stale.
-      String cookie = viaBrowser ? "" : cookies.header(URI.create(current), observedCookie);
+      // The direct transport asks the live browser jar for exactly this URL on every hop (what a
+      // WebView downloader gets from CookieManager.getCookie), so a redirect to a CDN host or a
+      // DOM-discovered candidate still carries the session cookies the browser holds for that host.
+      String cookie =
+          viaBrowser
+              ? ""
+              : cookies.header(URI.create(current), observedCookie, liveCookies(current));
       if (!cookie.isEmpty()) headers.put("Cookie", cookie);
       lastRequestUrl.set(current);
       HttpURLConnection connection = HttpConnections.open(current, viaBrowser);
@@ -547,13 +597,10 @@ public final class HttpSource implements AutoCloseable {
       boolean hasReferer = headers.keySet().stream().anyMatch(k -> k.equalsIgnoreCase("referer"));
       boolean hasUserAgent =
           headers.keySet().stream().anyMatch(k -> k.equalsIgnoreCase("user-agent"));
-      if (!hasReferer && topPage != null && !topPage.isEmpty())
-        try {
-          URI p = URI.create(topPage);
-          if (p.getHost() != null && java.util.Set.of("http", "https").contains(p.getScheme()))
-            connection.setRequestProperty("Referer", p.resolve("/").toString());
-        } catch (RuntimeException ignored) {
-        }
+      if (!hasReferer) {
+        String referer = defaultReferer(topPage, current);
+        if (!referer.isEmpty()) connection.setRequestProperty("Referer", referer);
+      }
       if (!hasUserAgent && !HttpConnections.userAgent().isEmpty())
         connection.setRequestProperty("User-Agent", HttpConnections.userAgent());
       lastHeaders.put(current, new java.util.LinkedHashMap<>(headers));
@@ -711,6 +758,10 @@ public final class HttpSource implements AutoCloseable {
         DownloadError failure =
             DownloadError.http(
                 code, current, acceptedResource, challenge, System.currentTimeMillis());
+        if (code == 408 || code == 429 || code == 503)
+          failure.retryAfter(
+              RetryPolicy.parseRetryAfter(
+                  connection.getHeaderField("Retry-After"), System.currentTimeMillis()));
         failure.diagnostic(
             new HlsDiagnostic(
                 current,
@@ -865,7 +916,7 @@ public final class HttpSource implements AutoCloseable {
 
   public byte[] bytes(String url, long offset, long length, int limit) throws Exception {
     Exception last = null;
-    for (int attempt = 0; attempt < 3; attempt++) {
+    for (int attempt = 0; attempt < RetryPolicy.ATTEMPTS; attempt++) {
       HttpURLConnection connection = null;
       try {
         connection = open(url, offset, length);
@@ -882,6 +933,7 @@ public final class HttpSource implements AutoCloseable {
           }
         }
         byte[] data = out.toByteArray();
+        rejectHtml(url, connection, data, data.length);
         if (data.length == 0
             || (expected >= 0 && data.length != expected)
             || (length > 0 && data.length != length)) throw new IOException("누락되거나 잘린 세그먼트");
@@ -890,9 +942,9 @@ public final class HttpSource implements AutoCloseable {
         control.check();
         DownloadError storageFailure = DownloadError.storage(error);
         if (storageFailure.category == DownloadError.Category.STORAGE_FULL) throw storageFailure;
-        if (error instanceof DownloadError) throw error;
+        if (!RetryPolicy.retryable(error)) throw error;
         last = error;
-        if (attempt < 2) Thread.sleep(300L * (attempt + 1));
+        if (attempt + 1 < RetryPolicy.ATTEMPTS) backoff(url, error, attempt + 1);
       } finally {
         if (connection != null) connection.disconnect();
       }
@@ -904,36 +956,98 @@ public final class HttpSource implements AutoCloseable {
     InputStream wrap(InputStream input) throws Exception;
   }
 
-  /** Segments stream to a staging file; retries always replace an incomplete attempt. */
+  private static final int HEAD_BYTES = 1024;
+
+  /** HTTP 200 is not success: an HTML document where media was expected is rejected, not saved. */
+  private void rejectHtml(String url, HttpURLConnection connection, byte[] head, int length)
+      throws Exception {
+    DownloadError html =
+        HlsDiagnostic.htmlInsteadOfMedia(
+            url,
+            connection.getResponseCode(),
+            connection.getContentType(),
+            lastRedirects,
+            head,
+            length);
+    if (html == null) return;
+    FailureDiagnostics.event(
+        diagnosticSession,
+        Map.of(
+            "action", "SEGMENT_HTML_REJECTED",
+            "stage", stage(url),
+            "host", hostOf(url),
+            "status", connection.getResponseCode(),
+            "body", "challenge".equals(html.diagnostic.body) ? "HTML_CHALLENGE" : "HTML"));
+    throw html;
+  }
+
+  private void backoff(String url, Exception error, int failures) throws Exception {
+    long wait = RetryPolicy.delayMs(error, failures);
+    FailureDiagnostics.event(
+        diagnosticSession,
+        Map.of("action", "RETRY_BACKOFF", "stage", stage(url), "host", hostOf(url), "delayMs", wait));
+    long until = System.currentTimeMillis() + wait;
+    for (long left = wait; left > 0; left = until - System.currentTimeMillis()) {
+      control.check();
+      Thread.sleep(Math.min(200, left));
+    }
+    control.check();
+  }
+
+  /**
+   * Segments stream to a staging file. A transient failure is retried with backoff; when the body
+   * is plain (no decoder) and its size is known, the retry continues from the bytes already on
+   * disk with a validated Range request instead of downloading the segment again. A server that
+   * will not honour that Range is answered with a full restart, never a spliced file.
+   */
   public void stream(String url, long offset, long length, File file, Decoder decoder)
       throws Exception {
     Exception last = null;
-    for (int attempt = 0; attempt < 3; attempt++) {
+    long knownTotal = length > 0 ? length : -1;
+    long onDisk = 0;
+    for (int attempt = 0; attempt < RetryPolicy.ATTEMPTS; attempt++) {
       HttpURLConnection connection = null;
+      boolean resuming = decoder == null && onDisk > 0 && knownTotal > onDisk;
+      boolean wroteThisAttempt = false;
       try {
-        connection = open(url, offset, length);
+        connection =
+            resuming ? open(url, offset + onDisk, knownTotal - onDisk) : open(url, offset, length);
         long expected = connection.getContentLengthLong();
+        if (!resuming && length <= 0 && expected > 0) knownTotal = expected;
         if (expected > 0 && expected > file.getParentFile().getUsableSpace() - 8L * 1024 * 1024)
           throw new DownloadError(DownloadError.Category.STORAGE_FULL);
         CountingInput raw = new CountingInput(connection.getInputStream());
         try (InputStream input = decoder == null ? raw : decoder.wrap(raw);
-            FileOutputStream output = new FileOutputStream(file)) {
+            FileOutputStream output = new FileOutputStream(file, resuming)) {
           byte[] buffer = new byte[128 * 1024];
-          int n;
-          long written = 0;
+          byte[] head = resuming ? null : new byte[HEAD_BYTES];
+          int headUsed = 0, n;
+          long written = resuming ? onDisk : 0;
           while ((n = input.read(buffer)) != -1) {
             control.check();
+            if (head != null) {
+              int take = Math.min(n, HEAD_BYTES - headUsed);
+              System.arraycopy(buffer, 0, head, headUsed, take);
+              headUsed += take;
+              if (headUsed >= HEAD_BYTES) {
+                rejectHtml(url, connection, head, headUsed);
+                head = null;
+              }
+            }
             try {
               output.write(buffer, 0, n);
             } catch (IOException storage) {
               throw DownloadError.storage(storage);
             }
+            wroteThisAttempt = true;
             written += n;
           }
+          if (head != null) rejectHtml(url, connection, head, headUsed);
           control.check();
           if (written <= 0
               || expected >= 0 && raw.count != expected
-              || length > 0 && raw.count != length)
+              || !resuming && length > 0 && raw.count != length
+              || decoder == null && knownTotal > 0 && written != knownTotal)
             throw new DownloadError(DownloadError.Category.NETWORK);
           try {
             output.getFD().sync();
@@ -946,11 +1060,15 @@ public final class HttpSource implements AutoCloseable {
         control.check();
         DownloadError storageFailure = DownloadError.storage(error);
         if (storageFailure.category == DownloadError.Category.STORAGE_FULL) throw storageFailure;
-        if (error instanceof DownloadError
-            && ((DownloadError) error).category != DownloadError.Category.NETWORK
-            && ((DownloadError) error).category != DownloadError.Category.SERVER) throw error;
+        if (!RetryPolicy.retryable(error)) throw error;
         last = error;
-        if (attempt < 2) Thread.sleep(300L * (attempt + 1));
+        // Keep what reached the disk only for a plain body of known size; a resume attempt that
+        // produced nothing (Range refused or mismatched) falls back to a full restart.
+        onDisk =
+            decoder == null && knownTotal > 0 && (wroteThisAttempt || !resuming)
+                ? Math.min(file.length(), knownTotal)
+                : 0;
+        if (attempt + 1 < RetryPolicy.ATTEMPTS) backoff(url, error, attempt + 1);
       } finally {
         if (connection != null) release(connection);
       }
