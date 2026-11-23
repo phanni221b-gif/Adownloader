@@ -111,7 +111,9 @@ public class ManifestRequestContextTest {
     }
     // The request now presents the page (origin) as Referer and the engine's own User-Agent —
     // exactly what the in-page player sends — so the hotlink gate serves the manifest.
-    assertEquals("http://127.0.0.1:" + server.getLocalPort() + "/", seenReferer);
+    // Page and manifest share an origin here, so the browser default (strict-origin-when-cross-
+    // origin) sends the full page URL; a cross-origin CDN would receive only the page origin.
+    assertEquals(page, seenReferer);
     assertEquals("Mozilla/5.0 (Android) TestEngine/160", seenUserAgent);
   }
 

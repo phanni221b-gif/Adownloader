@@ -18,7 +18,38 @@ public final class HlsDiagnostic {
     REDIRECT,
     REQUEST_CONTEXT_UNAVAILABLE,
     UNSUPPORTED,
-    MALFORMED
+    MALFORMED,
+    SEGMENT_BODY
+  }
+
+  /**
+   * A segment, key or direct-media response whose body is an HTML document is not media, whatever
+   * its HTTP status. Returns the classified failure, or null when {@code head} is not HTML. Binary
+   * media (TS sync byte, ISO-BMFF boxes, ADTS, ID3, AES ciphertext) never starts with an HTML tag.
+   */
+  public static DownloadError htmlInsteadOfMedia(
+      String url, int status, String mime, int redirects, byte[] head, int length) {
+    int start = 0;
+    if (length >= 3 && (head[0] & 0xff) == 0xef && (head[1] & 0xff) == 0xbb && (head[2] & 0xff) == 0xbf)
+      start = 3;
+    while (start < length && (head[start] == ' ' || head[start] == '\t' || head[start] == '\r' || head[start] == '\n'))
+      start++;
+    if (start >= length || head[start] != '<') return null;
+    String prefix =
+        new String(head, start, Math.min(length - start, 8192), java.nio.charset.StandardCharsets.ISO_8859_1)
+            .toLowerCase(Locale.ROOT);
+    if (!prefix.matches("(?s)<(?:!doctype\\s+html|html|head|body|form|script|meta|title)[\\s>/].*"))
+      return null;
+    String received =
+        prefix.matches("(?s).*(?:challenge|captcha|access.denied|cloudflare|forbidden).*")
+            ? "challenge"
+            : prefix.matches("(?s).*(?:password|login|sign.in).*") ? "login" : "page";
+    DownloadError.Category category =
+        received.equals("login") ? DownloadError.Category.AUTH : DownloadError.Category.ACCESS_BLOCKED;
+    return new DownloadError(category)
+        .diagnostic(
+            new HlsDiagnostic(
+                url, status, mime, redirects, "segment", Stage.SEGMENT_BODY, "", category, received));
   }
 
   public final String host, mime, playlist, tag, category;

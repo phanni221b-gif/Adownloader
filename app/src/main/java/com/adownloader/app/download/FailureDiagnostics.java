@@ -166,7 +166,10 @@ public final class FailureDiagnostics {
           "RESUME",
           "PAUSE",
           "FAILURE",
-          "PROTECTED_RESPONSE");
+          "PROTECTED_RESPONSE",
+          "BROWSER_COOKIE_LOOKUP",
+          "SEGMENT_HTML_REJECTED",
+          "RETRY_BACKOFF");
   private static final Set<String> BODIES =
       Set.of("HLS", "DASH", "HTML", "HTML_CHALLENGE", "MEDIA", "ENCRYPTED", "UNKNOWN");
   private static final Set<String> REASONS =
@@ -256,6 +259,7 @@ public final class FailureDiagnostics {
           "authorizationPresent",
           "customAuthPresent",
           "setCookieObserved",
+          "browserCookieApplied",
           "cookieRefreshed",
           "contentLengthPresent",
           "etagPresent",
@@ -313,7 +317,8 @@ public final class FailureDiagnostics {
           "cookieEntryCount",
           "occurrenceCount",
           "eventCount",
-          "observedPlayerMediaRequestCount");
+          "observedPlayerMediaRequestCount",
+          "delayMs");
   private static final Set<String> FILES =
       Set.of(
           "HttpSource.java",

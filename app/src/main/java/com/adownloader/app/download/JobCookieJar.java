@@ -167,11 +167,28 @@ public final class JobCookieJar implements AutoCloseable {
   }
 
   public synchronized String header(URI target, String observed) {
+    return header(target, observed, null);
+  }
+
+  /**
+   * {@code live} is the browser's own cookie header for exactly this URL (BrowserCookies). It is
+   * newer than the observed/seed snapshot and older than this job's Set-Cookie answers, so it sits
+   * between them; it is never stored in the jar or its snapshot.
+   */
+  public synchronized String header(URI target, String observed, String live) {
     LinkedHashMap<String, String> cookies = new LinkedHashMap<>();
     if (observed != null || sourceOrigin.equals(origin(target)))
       for (String pair : (observed == null ? initial : observed).split(";")) {
         String[] kv = pair.trim().split("=", 2);
         if (kv.length == 2 && !kv[0].isEmpty()) cookies.put(kv[0], kv[1]);
+      }
+    if (live != null)
+      for (String pair : live.split(";")) {
+        String[] kv = pair.trim().split("=", 2);
+        if (kv.length == 2 && !kv[0].isEmpty()) {
+          cookies.remove(kv[0]);
+          cookies.put(kv[0], kv[1]);
+        }
       }
 
     List<Entry> selected = new ArrayList<>();

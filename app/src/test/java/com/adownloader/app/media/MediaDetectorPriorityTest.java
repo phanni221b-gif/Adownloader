@@ -89,6 +89,24 @@ public class MediaDetectorPriorityTest {
   }
 
   @Test
+  public void aStreamThePlayerFetchedSuccessfullyIsOfferedBeforeAnUnverifiedDomHint() {
+    var d = new MediaDetector(null);
+    String page = "https://page.test/watch";
+    d.capture("https://page.test/hls/relay.m3u8", "application/vnd.apple.mpegurl", "dom-media", page, Map.of());
+    d.capture(
+        "https://cdn.test/v/master.m3u8",
+        "application/vnd.apple.mpegurl",
+        "response-signature",
+        page,
+        Map.of(),
+        Map.of("requestContextVerified", "true"));
+    var list = d.snapshot();
+    assertEquals("both stay listed: hints are not dropped", 2, list.size());
+    assertEquals("https://cdn.test/v/master.m3u8", list.get(0).getUrl());
+    assertEquals("dom-media", list.get(1).getSource());
+  }
+
+  @Test
   public void aNewVerifiedResponseReplacesCredentialsThatWereRemovedFromTheRequest() {
     var d = new MediaDetector(null);
     String url = "https://cdn.test/m/master.m3u8", page = "https://page.test/post";

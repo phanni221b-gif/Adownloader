@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Adownloader Media Sniffer",
-  "version": "2.7.0",
+  "version": "2.8.0",
   "description": "Observes media network requests and page media resources for Adownloader.",
   "browser_specific_settings": {
     "gecko": {
@@ -14,12 +14,14 @@
     "nativeMessaging",
     "geckoViewAddons",
     "nativeMessagingFromContent",
-    "webRequestBlocking"
+    "webRequestBlocking",
+    "cookies"
   ],
   "background": {
     "scripts": [
       "request_context.js",
-      "background.js"
+      "background.js",
+      "cookie_bridge.js"
     ]
   },
   "content_scripts": [

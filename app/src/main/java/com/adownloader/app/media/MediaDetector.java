@@ -256,8 +256,26 @@ public final class MediaDetector {
 
   public synchronized List<MediaCandidate> snapshot() {
     List<MediaCandidate> ordered = new ArrayList<>(groups.values());
-    ordered.sort((a, b) -> Integer.compare(frameScore(b), frameScore(a)));
+    ordered.sort(
+        Comparator.comparingInt(MediaDetector::evidence)
+            .reversed()
+            .thenComparing((a, b) -> Integer.compare(frameScore(b), frameScore(a))));
     return ordered;
+  }
+
+  /**
+   * How strongly a candidate is known to be a working media response, used only for ordering so the
+   * stream the player actually fetched successfully is offered first; unverified hints stay listed.
+   * 2: the browser received this URL with a success status and a confirmed media body or a
+   * successful media response context; 1: a network response with a media type; 0: a page hint
+   * (DOM attribute, resource timing) that may be a placeholder or relay never fetched as media.
+   */
+  static int evidence(MediaCandidate item) {
+    String source = item.getSource();
+    if ("response-signature".equals(source)
+        || "redirect-observation".equals(source)
+        || "true".equals(item.getMetadata().get("requestContextVerified"))) return 2;
+    return networkSource(source) ? 1 : 0;
   }
 
   private static int frameScore(MediaCandidate item) {

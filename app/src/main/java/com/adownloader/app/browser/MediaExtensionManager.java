@@ -30,6 +30,7 @@ public final class MediaExtensionManager implements AutoCloseable {
   }
 
   private final GeckoManifestBridge bridge;
+  private final GeckoCookieBridge cookies = new GeckoCookieBridge();
   private final DetectionFailureWatchdog detectionWatchdog;
   private final GeckoRuntime runtime;
   private final BrowserSessionManager browser;
@@ -65,6 +66,16 @@ public final class MediaExtensionManager implements AutoCloseable {
               installed = extension;
               extension.setMessageDelegate(
                   new WebExtension.MessageDelegate() {
+                    @Override
+                    public void onConnect(WebExtension.Port port) {
+                      // Only the bundled extension's own background page opens this port
+                      // (cookie_bridge.js); content-script ports are bound per session below.
+                      if (closed
+                          || port.sender.environmentType
+                              != WebExtension.MessageSender.ENV_TYPE_EXTENSION) return;
+                      cookies.connect(port);
+                    }
+
                     @Override
                     public GeckoResult<Object> onMessage(
                         String nativeApp, Object message, WebExtension.MessageSender sender) {
@@ -252,6 +263,7 @@ public final class MediaExtensionManager implements AutoCloseable {
     closed = true;
     detectionWatchdog.close();
     bridge.close();
+    cookies.close();
     browser.setSessionObserver(null);
     for (var tab : browser.tabs())
       if (installed != null)
