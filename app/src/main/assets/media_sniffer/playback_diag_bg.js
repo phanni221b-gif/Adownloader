@@ -6,7 +6,7 @@
 // Cookie/Referer/Origin/Range header was sent: never a URL, query, header value or body.
 (()=>{
  const NATIVE='adownloader',TYPES=new Set(['media','xmlhttprequest','other','object','main_frame','sub_frame']);
- let active=false,salt='',session='',net=[],media=[],dropped=0;const tabs=new Set(),sentHeaders=new Map(),started=new Map();
+ let pollFailed=false,active=false,salt='',session='',net=[],media=[],dropped=0;const tabs=new Set(),sentHeaders=new Map(),started=new Map();
  const fnv=(s,h)=>{for(let i=0;i<s.length;i++)h=Math.imul(h^s.charCodeAt(i),16777619);return(h>>>0).toString(16).padStart(8,'0');};
  const keyOf=u=>{try{const x=new URL(u);if(x.protocol!=='https:'&&x.protocol!=='http:')return'';const b=x.protocol+'//'+x.host+(x.pathname||'/');return fnv(salt+'|'+b,2166136261)+fnv(b+'|'+salt,2166136261);}catch(_){return'';}};
  const parts=u=>{try{const x=new URL(u);const m=/\.([a-z0-9]{1,5})$/i.exec(x.pathname);return{host:x.hostname,ext:m?m[1].toLowerCase():''};}catch(_){return{host:'',ext:''};}};
@@ -37,7 +37,7 @@
  });
  async function poll(){
   const batch={kind:'diag-poll',session,net,media,dropped};net=[];media=[];dropped=0;
-  try{apply(await browser.runtime.sendNativeMessage(NATIVE,batch));}catch(_){}
+  try{apply(await browser.runtime.sendNativeMessage(NATIVE,batch));}catch(e){if(!pollFailed){pollFailed=true;console.warn('playback-diag poll failed: '+String(e&&e.message||e).slice(0,120));}}
   setTimeout(poll,active?1000:3000);
  }
  poll();

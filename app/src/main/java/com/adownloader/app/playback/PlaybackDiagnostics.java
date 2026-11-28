@@ -58,6 +58,7 @@ public final class PlaybackDiagnostics {
   public static Map<String, Object> poll(Map<String, Object> batch) {
     Session s = current();
     boolean live = s != null && s.stoppedAt == 0;
+    if (live) s.polled();
     if (live && batch != null && s.id.equals(batch.get("session"))) s.ingest(batch);
     Map<String, Object> state = new LinkedHashMap<>();
     state.put("active", live);
@@ -102,6 +103,9 @@ public final class PlaybackDiagnostics {
     final Map<String, Long> process = new TreeMap<>();
     double sessionPosition = -1, sessionDuration = -1;
     long netDropped;
+    // Whether the extension is actually connected to this session: polls answered while active,
+    // batches carrying this session's id, and the records those batches held.
+    long polls, batches, netReceived, mediaReceived;
     List<Map<String, Object>> candidates = List.of();
     PlaybackProbe probe;
 
@@ -118,7 +122,14 @@ public final class PlaybackDiagnostics {
       return stoppedAt != 0;
     }
 
+    synchronized void polled() {
+      polls++;
+    }
+
     public synchronized void ingest(Map<String, Object> batch) {
+      batches++;
+      if (batch.get("net") instanceof List<?> l) netReceived += l.size();
+      if (batch.get("media") instanceof List<?> l) mediaReceived += l.size();
       if (batch.get("dropped") instanceof Number n) netDropped += Math.max(0, n.longValue());
       if (batch.get("net") instanceof List<?> records)
         for (Object o : records) {
@@ -276,6 +287,12 @@ public final class PlaybackDiagnostics {
       r.put("stages", stages());
       r.put("playback", playback());
       r.put("playerNetwork", network());
+      Map<String, Object> ext = new LinkedHashMap<>();
+      ext.put("pollsWhileActive", polls);
+      ext.put("sessionBatches", batches);
+      ext.put("networkRecordsReceived", netReceived);
+      ext.put("mediaFramesReceived", mediaReceived);
+      r.put("extensionLink", ext);
       Map<String, Object> det = new LinkedHashMap<>();
       det.put("candidateCount", candidates.size());
       det.put("candidates", candidates);
