@@ -18,7 +18,8 @@ const flush=()=>new Promise(r=>setImmediate(r));
  req('0',URL1);
  timers.shift()();await flush();
  assert.deepEqual(sentNative[1].net,[],'nothing is recorded before a session is active');
- nativeState={active:true,salt:SALT,session:'P-1'};
+ // GeckoView can deliver the app's JSONObject reply as JSON text; both shapes must activate.
+ nativeState=JSON.stringify({active:true,salt:SALT,session:'P-1'});
  timers.shift()();await flush(); // this poll activates
  req('1',URL1);
  listeners.error({requestId:'2',url:'https://cdn.test/b.m3u8?token=SECRET',type:'xmlhttprequest',tabId:-1,frameId:0,timeStamp:5,error:'NS_ERROR_NET_RESET'});

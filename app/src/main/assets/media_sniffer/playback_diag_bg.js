@@ -24,6 +24,8 @@
  browser.webRequest.onErrorOccurred.addListener(d=>record(d,0,'',d.error||'NETWORK_ERROR'),filter);
  function broadcast(){const state={kind:'diag-state',active,salt};for(const id of tabs)browser.tabs.sendMessage(id,state).catch(()=>tabs.delete(id));}
  function apply(r){
+  // GeckoView may hand the app's JSONObject reply over as its JSON text.
+  if(typeof r==='string')try{r=JSON.parse(r);}catch(_){return;}
   if(!r||typeof r.active!=='boolean')return;
   const nextSalt=r.active&&/^[a-f0-9]{16,64}$/.test(r.salt||'')?r.salt:'';
   const changed=(r.active&&!!nextSalt)!==active||nextSalt!==salt;
