@@ -85,6 +85,15 @@ public final class MediaExtensionManager implements AutoCloseable {
                       JSONObject json = (JSONObject) message;
                       if (json.optString("kind").startsWith("manifest-capture-"))
                         return GeckoResult.fromValue(bridge.capture(json));
+                      // The live playback diagnostic's poll from playback_diag_bg.js: ingest
+                      // its reduced batch and answer whether a session is active.
+                      if ("diag-poll".equals(json.optString("kind"))
+                          && sender.environmentType
+                              == WebExtension.MessageSender.ENV_TYPE_EXTENSION)
+                        return GeckoResult.fromValue(
+                            JsonMaps.toJson(
+                                com.adownloader.app.playback.PlaybackDiagnostics.poll(
+                                    JsonMaps.toMap(json))));
                       route(json);
                       return null;
                     }

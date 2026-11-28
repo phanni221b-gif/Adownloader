@@ -99,16 +99,42 @@ public final class BrowserSessionManager {
           public void onActivated(GeckoSession session, MediaSession media) {
             tab.playback = media;
             if (!appForeground) media.pause();
+            diagnostic("activated", -1, -1);
           }
 
           @Override
           public void onPlay(GeckoSession session, MediaSession media) {
             if (!appForeground) media.pause();
+            diagnostic("play", -1, -1);
+          }
+
+          @Override
+          public void onPause(GeckoSession session, MediaSession media) {
+            diagnostic("pause", -1, -1);
+          }
+
+          @Override
+          public void onStop(GeckoSession session, MediaSession media) {
+            diagnostic("stop", -1, -1);
+          }
+
+          @Override
+          public void onPositionState(
+              GeckoSession session, MediaSession media, MediaSession.PositionState state) {
+            diagnostic("position", state.position, state.duration);
           }
 
           @Override
           public void onDeactivated(GeckoSession session, MediaSession media) {
             if (tab.playback == media) tab.playback = null;
+            diagnostic("deactivated", -1, -1);
+          }
+
+          // GeckoView's official media state for the live playback diagnostic (active tab only).
+          private void diagnostic(String event, double position, double duration) {
+            if (active == tab)
+              com.adownloader.app.playback.PlaybackDiagnostics.mediaSession(
+                  event, position, duration);
           }
         });
     tab.session.setNavigationDelegate(
@@ -213,11 +239,13 @@ public final class BrowserSessionManager {
 
           @Override
           public void onCrash(GeckoSession source) {
+            com.adownloader.app.playback.PlaybackDiagnostics.contentProcess("crash");
             if (active == tab && listener != null) listener.onBrowserCrashed();
           }
 
           @Override
           public void onKill(GeckoSession source) {
+            com.adownloader.app.playback.PlaybackDiagnostics.contentProcess("killed");
             if (active == tab && listener != null) listener.onBrowserCrashed();
           }
         });
