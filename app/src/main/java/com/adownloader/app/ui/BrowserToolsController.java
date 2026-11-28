@@ -26,7 +26,8 @@ public final class BrowserToolsController implements AutoCloseable {
       CLEAR_SITE = 6206,
       CLEAR_ALL = 6207,
       TABS = 6208,
-      NEW_TAB = 6209;
+      NEW_TAB = 6209,
+      DIAGNOSE = 6210;
   private final AppCompatActivity activity;
   private final BrowserSessionManager browser;
   private final BrowserDataStore data;
@@ -36,6 +37,7 @@ public final class BrowserToolsController implements AutoCloseable {
   private RecyclerView.Adapter<Holder> tabsAdapter;
   private final Handler handler = new Handler(Looper.getMainLooper());
   private boolean closed;
+  private final PlaybackDiagnosticsUi diagnostics;
 
   public BrowserToolsController(
       AppCompatActivity activity,
@@ -46,6 +48,9 @@ public final class BrowserToolsController implements AutoCloseable {
     this.browser = browser;
     this.data = data;
     this.url = url;
+    diagnostics = new PlaybackDiagnosticsUi(activity, browser);
+    // A diagnostic started before this controller was recreated keeps its stop control visible.
+    handler.post(diagnostics::resume);
   }
 
   public void addMenu(PopupMenu menu) {
@@ -61,6 +66,7 @@ public final class BrowserToolsController implements AutoCloseable {
     menu.getMenu().add(0, SAVE, 14, "현재 페이지 북마크");
     menu.getMenu().add(0, CLEAR_SITE, 15, "현재 사이트 데이터 삭제");
     menu.getMenu().add(0, CLEAR_ALL, 16, "전체 브라우징 데이터 삭제");
+    menu.getMenu().add(0, DIAGNOSE, 17, diagnostics.menuTitle());
   }
 
   public boolean handle(int id) {
@@ -103,6 +109,9 @@ public final class BrowserToolsController implements AutoCloseable {
         return true;
       case CLEAR_ALL:
         clear(true);
+        return true;
+      case DIAGNOSE:
+        diagnostics.toggle();
         return true;
       default:
         return false;
@@ -390,6 +399,7 @@ public final class BrowserToolsController implements AutoCloseable {
   @Override
   public void close() {
     closed = true;
+    diagnostics.close();
     handler.removeCallbacksAndMessages(null);
     if (dialog != null) dialog.dismiss();
     dialog = null;

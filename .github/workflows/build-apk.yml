@@ -42,6 +42,7 @@ jobs:
           node ci/test-media-observation.cjs
           node ci/test-protected-transport.cjs
           node ci/test-cookie-bridge.cjs
+          node ci/test-playback-diag.cjs
           git fetch --no-tags --depth=1 origin a13c305e91592daa8f617c09e97d29ce9640edcf
           node ci/benchmark-response-capture.cjs
           gradle :app:testDebugUnitTest :app:lintRelease :app:assembleRelease --stacktrace

@@ -387,12 +387,26 @@ public final class HttpSource implements AutoCloseable {
     // sent, so a download does not hammer a hotlink/anti-bot CDN with all 1000+ remaining segments.
     // Scoped to segments (documentRole empty); a manifest can still recover through the content-
     // script bridge, so it is never fast-failed here.
-    if (documentRole.isEmpty() && blockedHosts.contains(hostOf(url)))
-      throw new DownloadError(DownloadError.Category.ACCESS_BLOCKED)
-          .diagnostic(
-              new HlsDiagnostic(
-                  url, 403, "", 0, "segment",
-                  HlsDiagnostic.Stage.VARIANT_HTTP, "", DownloadError.Category.ACCESS_BLOCKED));
+    failIfHostBlocked(url);
+    // Until the first segment request has decided the transport, concurrent segment workers wait
+    // for its complete outcome — including the fallbacks that may prove the host blocked — so they
+    // never repeat attempts the server has already refused.
+    if (documentRole.isEmpty()
+        && resourceStages.containsKey(url)
+        && !transportDecided
+        && !preferDirect
+        && HttpConnections.browserAvailable())
+      synchronized (transportLock) {
+        failIfHostBlocked(url);
+        if (!transportDecided && !preferDirect)
+          return attempt(url, offset, length, validator, resume, previous);
+      }
+    return attempt(url, offset, length, validator, resume, previous);
+  }
+
+  private HttpURLConnection attempt(
+      String url, long offset, long length, String validator, boolean resume, Document previous)
+      throws Exception {
     try {
       // A host already shown to need the browser stack is served through it directly, so later
       // segments on that anti-bot CDN do not each repeat a blocked direct attempt.
@@ -407,6 +421,10 @@ public final class HttpSource implements AutoCloseable {
           // The first request decides which stack serves this transfer; concurrent segment
           // workers wait for it instead of each sending a request the server may reject.
           synchronized (transportLock) {
+            // A worker that waited here while another proved this host blocked on every transport
+            // must not repeat the same blocked attempts (F-3d5b0023: 3 waiting segments each re-sent
+            // 5 requests to a host already recorded as HOST_ACCESS_BLOCKED).
+            failIfHostBlocked(url);
             if (!transportDecided && !preferDirect) {
               HttpURLConnection decided =
                   browserThenDirect(url, offset, length, validator, resume, previous);
@@ -414,12 +432,16 @@ public final class HttpSource implements AutoCloseable {
               return decided;
             }
           }
+        failIfHostBlocked(url);
         if (!preferDirect)
           return browserThenDirect(url, offset, length, validator, resume, previous);
       }
       return nativeRequest(url, offset, length, validator, resume, previous, false);
     } catch (Exception first) {
       if (!access(first)) throw first;
+      // Another worker finished proving the host blocked while this request was in flight: report
+      // this refusal as is instead of repeating the browser, refresh and bridge fallbacks.
+      if (documentRole.isEmpty() && blockedHosts.contains(hostOf(url))) throw first;
       // The direct stack pinned by preferDirect was blocked for this request. A segment CDN
       // different from the manifest host may run an anti-bot challenge the direct stack cannot pass
       // while the browser stack — carrying the cleared browsing session's cookies — can. Try it, and
@@ -500,6 +522,25 @@ public final class HttpSource implements AutoCloseable {
       }
       throw first;
     }
+  }
+
+  private void failIfHostBlocked(String url) throws DownloadError {
+    if (documentRole.isEmpty() && blockedHosts.contains(hostOf(url))) {
+      blockedSkips.incrementAndGet();
+      throw new DownloadError(DownloadError.Category.ACCESS_BLOCKED)
+          .diagnostic(
+              new HlsDiagnostic(
+                  url, 403, "", 0, "segment",
+                  HlsDiagnostic.Stage.VARIANT_HTTP, "", DownloadError.Category.ACCESS_BLOCKED));
+    }
+  }
+
+  private final java.util.concurrent.atomic.AtomicInteger blockedSkips =
+      new java.util.concurrent.atomic.AtomicInteger();
+
+  /** Segment requests not sent because their host was already proven blocked on every transport. */
+  public int blockedRequestsSkipped() {
+    return blockedSkips.get();
   }
 
   private final Object transportLock = new Object();

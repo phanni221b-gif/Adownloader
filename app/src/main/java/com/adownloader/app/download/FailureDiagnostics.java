@@ -361,6 +361,8 @@ public final class FailureDiagnostics {
       case "type" -> TYPES.contains(v) ? v : "UNKNOWN";
       case "detectionSource" -> SOURCES.contains(v) ? v : "UNKNOWN";
       case "netError" -> NetworkFailure.KINDS.contains(v) ? v : "other";
+      case "observedPlayerMediaRequestScope" ->
+          v.equals("recognized-media-only") ? v : null;
       case "candidateMediaProof" ->
           Set.of("observed", "not-applicable", "none").contains(v) ? v : "none";
       case "stage" -> {
@@ -718,6 +720,11 @@ public final class FailureDiagnostics {
       // count with no host tokens below would mean the hosts were observed but dropped by the host
       // allowlist. Distinguishes a genuine zero from a serialization/filtering artifact.
       report.put("observedPlayerMediaRequestCount", playerMedia.size());
+      // Counted here: player responses recognized as media (a successful response the extension
+      // proved to be media, or a failed request to a media-looking URL). A player request whose URL
+      // and type look like neither — or one outside webRequest's view — is not counted, so 0 does not
+      // mean the player made no request. The live playback diagnostic records every player request.
+      report.put("observedPlayerMediaRequestScope", "recognized-media-only");
       if (!playerMedia.isEmpty()) {
         List<String> tokens = new ArrayList<>();
         for (var e : playerMedia.entrySet()) {
